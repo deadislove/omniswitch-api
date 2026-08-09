@@ -211,3 +211,48 @@ depend on guessing at the runner's available headroom — e.g. splitting
 the e2e run into a few smaller `jest --shard` invocations (bounding how
 much any one process accumulates) instead of recycling workers by a
 memory threshold.
+
+### A second attempt that also didn't work: forcing GC
+
+Before landing on sharding, a second idea was tried and measured, not
+just assumed: run Jest with `--expose-gc` and call `global.gc()` in an
+`afterAll` hook (`setupFilesAfterEnv`) after each spec file's own
+`app.close()`, on the theory that heap simply wasn't being reclaimed
+promptly enough between files.
+
+This one was actually falsified *locally*, before ever reaching CI —
+`jest --logHeapUsage` showed heap climbing at essentially the same rate
+with the GC hook active as without it (471MB → 670MB across the 19
+files, ~10MB/file, same trajectory that previously tripped the
+threshold). The explicit `global.gc()` calls were confirmed to actually
+run (`--expose-gc` verified present via `typeof global.gc ===
+'function'`) — they just didn't help, because the growth isn't
+reclaimable garbage. It's live, still-referenced state — most likely
+`reflect-metadata`'s global metadata registry and ts-jest's compiled-
+module cache, both of which grow with every fresh
+`Test.createTestingModule({ imports: [AppModule] }).compile()` call and
+have no reason to ever be garbage-collected within the same process.
+This ruled out any same-process fix and is why sharding (separate OS
+processes, not memory management within one process) is the current
+approach.
+
+### Current approach: `jest --shard`
+
+`ci.yml`'s e2e job now runs `npm run pretest:e2e` once (migrations),
+then four separate `npx jest --config ./test/jest-e2e.json
+--shard=$i/4` invocations in sequence — each a genuinely fresh Node
+process, so at most ~5 files' worth of NestJS/reflect-metadata state
+accumulates in any one process instead of all 19. The four shards still
+run sequentially against the same Docker Compose stack, preserving the
+existing no-concurrent-state guarantee (`maxWorkers: 1` already made
+every file within a shard sequential; this doesn't change that, it just
+adds process boundaries between groups of files).
+
+Verified locally: all 4 shards pass (19/19 suites, 170/170 tests). Per
+this document's own lesson two sections up, that is **not** sufficient
+evidence this fixes the CI failure — it only confirms the sharding
+mechanism itself works. Whether it actually prevents the heap threshold
+from being crossed depends on the CI runner's memory profile, which can
+only be confirmed by an actual CI run. If a shard still fails the
+health check, the next lever is a higher shard count (smaller groups
+per process) rather than another same-process trick.
