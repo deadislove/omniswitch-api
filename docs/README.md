@@ -50,6 +50,11 @@ compliance posture. Read this if you're changing code.
   means for `k8s/hpa.yaml`'s CPU/memory thresholds, and why a
   single-machine load generator can't measure the charge endpoint's own
   ceiling (a route-level rate limit gets there first)
+- [`ci-cd.md`](./technical/ci-cd.md) — what the GitHub Actions workflows
+  and Dependabot actually do, the known flaky-test classes, and two real
+  CI incidents: a master/replica read race a routine dependency-bump PR
+  surfaced, and a heap-flake fix that passed locally three times and then
+  broke 61 tests on the actual CI runner
 
 ## [`business-domain/`](./business-domain/)
 

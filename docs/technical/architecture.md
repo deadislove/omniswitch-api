@@ -231,3 +231,7 @@ helpers matching exactly what the guards being tested verify).
 - [`database-migrations.md`](./database-migrations.md) — the migration
   workflow, and why every entity has to be registered in both
   `app.module.ts` *and* `database/data-source.ts`
+- [`ci-cd.md`](./ci-cd.md) — what the GitHub Actions workflows actually
+  run, the known flaky-test classes on top of the ones described above,
+  and two real CI incidents worth reading before touching either
+  workflow file or `test/jest-e2e.json`
