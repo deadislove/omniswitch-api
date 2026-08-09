@@ -46,8 +46,34 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       .send(body);
   }
 
+  // Every plain repository read in this file goes through the ambient
+  // DataSource, which app.module.ts configures for master/replica
+  // `replication` — reads get routed to the replica by default. Every test
+  // here reads immediately after a write it just made (or a relay tick it
+  // just triggered), which races the replica's ~1s streaming lag
+  // (confirmed live — see reserve.service.ts's release() and
+  // payment-typeorm.repository.ts's findPending() for the same issue in
+  // application code). These helpers force the read onto master instead.
+  async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object, order?: object): Promise<T | null> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.findOne(entityClass, { where, ...(order ? { order } : {}) });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async function countOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<number> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.count(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async function ledgerEntryCount(paymentId: string): Promise<number> {
-    return dataSource.getRepository(LedgerOutboxEntity).count({ where: { paymentId } });
+    return countOnMaster(LedgerOutboxEntity, { paymentId });
   }
 
   it('immediate-capture success books exactly one ledger entry', async () => {
@@ -98,8 +124,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
     // FAILED with no ledger entry, which is what this test actually cares about.
     expect([201, 500]).toContain(res.status);
 
-    const paymentRepo = dataSource.getRepository(PaymentEntity);
-    const payment = await paymentRepo.findOne({ where: { merchantId: merchant.merchantId }, order: { createdAt: 'DESC' } });
+    const payment = await findOneOnMaster(PaymentEntity, { merchantId: merchant.merchantId }, { createdAt: 'DESC' });
     expect(payment?.status).toBe('FAILED');
     expect(await ledgerEntryCount(payment!.id)).toBe(0);
   });
@@ -131,8 +156,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       .send(body)
       .expect(201);
 
-    const outboxRepo = dataSource.getRepository(LedgerOutboxEntity);
-    const event = await outboxRepo.findOne({ where: { paymentId: res.body.paymentId } });
+    const event = await findOneOnMaster(LedgerOutboxEntity, { paymentId: res.body.paymentId });
     const feeEntry = (event?.entries as any[]).find((e) => e.accountType === 'FEE');
     // $100 at 5% = $5.00 = 500 minor units, not the default 1.5% ($150).
     expect(feeEntry.amountMinorUnits).toBe('500');
@@ -160,8 +184,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
         .set('Content-Type', 'application/json')
         .send(JSON.parse(bodyStr))
         .expect(201);
-      const outboxRepo = dataSource.getRepository(LedgerOutboxEntity);
-      const event = await outboxRepo.findOne({ where: { paymentId: res.body.paymentId } });
+      const event = await findOneOnMaster(LedgerOutboxEntity, { paymentId: res.body.paymentId });
       return (event?.entries as any[]).find((e) => e.accountType === 'FEE');
     }
 
@@ -243,8 +266,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       binInfo: USD_BIN,
     }).expect(201);
 
-    const outboxRepo = dataSource.getRepository(LedgerOutboxEntity);
-    const beforeRelay = await outboxRepo.findOne({ where: { paymentId: res.body.paymentId } });
+    const beforeRelay = await findOneOnMaster(LedgerOutboxEntity, { paymentId: res.body.paymentId });
     expect(beforeRelay?.status).toBe('PENDING');
 
     // Invoke the exact method the @Cron schedule calls — same code path,
@@ -252,7 +274,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
     const relay = app.get(LedgerOutboxRelayService);
     await relay.relayPendingEvents();
 
-    const afterRelay = await outboxRepo.findOne({ where: { paymentId: res.body.paymentId } });
+    const afterRelay = await findOneOnMaster(LedgerOutboxEntity, { paymentId: res.body.paymentId });
     expect(afterRelay?.status).toBe('PUBLISHED');
     expect(afterRelay?.processedAt).not.toBeNull();
   });
@@ -272,8 +294,11 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       }).expect(201);
 
       const outboxRepo = dataSource.getRepository(LedgerOutboxEntity);
-      const event = await outboxRepo.findOne({ where: { paymentId: chargeRes.body.paymentId } });
+      const event = await findOneOnMaster(LedgerOutboxEntity, { paymentId: chargeRes.body.paymentId });
       expect(event).not.toBeNull();
+      // .update() itself is a write, always routed to master by TypeORM's
+      // replication mode regardless of which repository issues it — no
+      // master-forcing needed here, only for the reads above/below.
       await outboxRepo.update(event!.id, { status: 'FAILED', lastError: 'simulated downstream publish failure', retryCount: 1 });
 
       const listRes = await request(app.getHttpServer())
@@ -296,7 +321,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 
-      const afterRetry = await outboxRepo.findOne({ where: { id: event!.id } });
+      const afterRetry = await findOneOnMaster(LedgerOutboxEntity, { id: event!.id });
       expect(afterRetry?.status).toBe('PENDING');
       expect(afterRetry?.lastError).toBeNull();
 
@@ -311,7 +336,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       const relay = app.get(LedgerOutboxRelayService);
       await relay.relayPendingEvents();
 
-      const afterRelay = await outboxRepo.findOne({ where: { id: event!.id } });
+      const afterRelay = await findOneOnMaster(LedgerOutboxEntity, { id: event!.id });
       expect(afterRelay?.status).toBe('PUBLISHED');
     });
 

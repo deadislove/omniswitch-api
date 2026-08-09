@@ -1,0 +1,16 @@
+title = "omniswitch-api gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known local dev/e2e test placeholder values — never real credentials. See test/setup-env.ts's own header comment and docker-compose.yml's STRIPE_SECRET_KEY comment."
+regexes = [
+  '''sk_test_placeholder''',
+  '''sk_test_e2e_placeholder''',
+  '''whsec_e2e_test_placeholder''',
+  '''adyen_e2e_test_placeholder''',
+  '''00112233445566778899aabbccddeeff00112233445566778899aabbccddee''',
+  '''test-idempotency-key-12345''',
+  '''eyJhbGciOiJIUzI1NiIs\.\.\.''',
+]

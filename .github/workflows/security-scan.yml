@@ -1,0 +1,127 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Catches newly-disclosed CVEs against unchanged code — dependency and
+    # base-image vulnerabilities don't wait for a push to exist.
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ─── Trivy: dependency CVEs, Dockerfile/compose/k8s misconfig, secrets ──────
+  trivy:
+    name: Trivy (dependencies, IaC, secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Full findings, for visibility — does not fail the job. CRITICAL is
+      # the enforced gate (see below); HIGH-severity findings currently
+      # include pre-existing transitive dependency CVEs (js-yaml, lodash,
+      # multer — see package-lock.json) and one k8s hardening
+      # recommendation (missing readOnlyRootFilesystem), none introduced
+      # by this workflow. Fixing those is a separate task, not something
+      # to gate merges on until addressed.
+      - name: Full scan (report only)
+        run: |
+          docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \
+            --scanners vuln,misconfig,secret \
+            --secret-config /repo/trivy-secret.yaml \
+            --severity CRITICAL,HIGH \
+            /repo || true
+
+      # Blocking gate, CRITICAL only — currently a clean baseline (0
+      # findings), so this actually catches new critical issues instead of
+      # permanently failing on day one.
+      - name: Critical-only gate (blocking)
+        run: |
+          docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \
+            --scanners vuln,misconfig,secret \
+            --secret-config /repo/trivy-secret.yaml \
+            --severity CRITICAL \
+            --exit-code 1 \
+            /repo
+
+  # ─── Bearer: application-level SAST (sensitive data flows, OWASP-style) ────
+  bearer:
+    name: Bearer (application security SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bearer scan
+        run: |
+          docker run --rm -v "$PWD:/tmp/scan" bearer/bearer:latest-amd64 \
+            scan /tmp/scan --severity critical,high
+
+  # ─── Gitleaks: secret scanning across full git history ─────────────────────
+  gitleaks:
+    name: Gitleaks (secret scan, full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks scan
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            detect --source=/repo --config=/repo/.gitleaks.toml -v --exit-code 1
+
+  # ─── eslint-plugin-security: Node.js-specific unsafe-pattern lint ──────────
+  eslint-security:
+    name: ESLint security rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Separate from ci.yml's general (report-only) lint step — this one
+      # only loads eslint-plugin-security's rules (see
+      # .eslintrc.security.cjs for why detect-object-injection is off),
+      # is blocking, and doesn't hit the general config's
+      # tsconfig/test-file parsing gap since it skips type-aware parsing.
+      - run: npx eslint --no-eslintrc -c .eslintrc.security.cjs "src/**/*.ts" --max-warnings=0
+
+  # ─── npm audit: known vulnerabilities in npm dependencies ──────────────────
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Full report (moderate+, prod deps only) for visibility — currently
+      # 4 pre-existing HIGH findings (js-yaml, lodash, multer, transitive
+      # via @nestjs/typeorm), none critical. Not gated on until addressed.
+      - name: Full report (report only)
+        run: npm audit --audit-level=moderate --omit=dev || true
+
+      # Blocking gate, critical only — clean baseline today.
+      - name: Critical-only gate (blocking)
+        run: npm audit --audit-level=critical --omit=dev

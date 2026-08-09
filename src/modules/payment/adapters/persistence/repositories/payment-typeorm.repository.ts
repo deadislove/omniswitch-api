@@ -227,11 +227,28 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
   }
 
   async findPending(limit = 100): Promise<LedgerOutboxEvent[]> {
-    const entities = await this.outboxRepo.find({
-      where: { status: 'PENDING' },
-      order: { createdAt: 'ASC' },
-      take: limit,
-    });
+    // Forced onto master, not the ambient replica-routed connection (see
+    // app.module.ts's `replication` config) — this is a low-volume
+    // internal poll (every 10s, batch of `limit`) whose whole job is to
+    // notice new PENDING events as fast as possible. It has nothing to
+    // gain from replica routing but is fully exposed to its ~1s lag: an
+    // event a write just committed to master (e.g. the outbox admin retry
+    // endpoint resetting a FAILED event back to PENDING) can be invisible
+    // here for up to one lag window, silently delaying pickup by a full
+    // relay tick. Confirmed live via test/ledger-and-outbox.e2e-spec.ts's
+    // dead-letter recovery test, which calls this synchronously right
+    // after that reset and expects it picked up in the same tick.
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: LedgerOutboxEntity[];
+    try {
+      entities = await queryRunner.manager.find(LedgerOutboxEntity, {
+        where: { status: 'PENDING' },
+        order: { createdAt: 'ASC' },
+        take: limit,
+      });
+    } finally {
+      await queryRunner.release();
+    }
     return entities.map(this.toDomain);
   }
 

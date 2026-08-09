@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # App dependencies (package.json / package-lock.json).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # Patch/minor bumps are low-risk — batch them into one PR instead of
+      # one-PR-per-package, since this is a single-maintainer project.
+      # Majors (which can be breaking) still get their own individual PRs.
+      npm-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Base images in Dockerfile and docker-compose.yml (node:20-alpine,
+  # postgres:16-alpine, redis:7-alpine, hashicorp/vault, etc.).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(docker)"
+
+  # Actions pinned in .github/workflows/*.yml (e.g. actions/checkout@v4).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(ci)"

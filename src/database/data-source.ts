@@ -25,12 +25,22 @@ import { MerchantEntity } from '../modules/merchant/merchant.entity';
  * "whatever synchronize would auto-generate," specifically so migrations
  * generated here are the actual source of truth going forward.
  */
+
+// No hardcoded fallback, same reasoning as JWT_SECRET/HMAC_SECRET (see
+// jwt.strategy.ts) — a well-known default password would silently connect
+// to a real Postgres instance using guessable credentials for anyone who
+// forgot to set DB_PASSWORD, instead of failing loudly at CLI startup.
+const dbPassword = process.env.DB_PASSWORD;
+if (!dbPassword) {
+  throw new Error('DB_PASSWORD must be set. Refusing to connect with a missing/default password.');
+}
+
 export const AppDataSource = new DataSource({
   type: 'postgres',
   host: process.env.DB_MASTER_HOST || 'localhost',
   port: Number(process.env.DB_MASTER_PORT) || 5432,
   username: process.env.DB_USERNAME || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
+  password: dbPassword,
   database: process.env.DB_NAME || 'omniswitch',
   ssl:
     process.env.DB_SSL === 'true'
