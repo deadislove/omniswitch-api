@@ -303,3 +303,73 @@ test's pass/fail boundary is a hardcoded number, it's worth asking
 early whether that number's calibration context still applies to the
 environment actually running the test — not just whether the code
 under test can be made to fit under it.
+
+## Incident: the replica-lag race was in the login path itself
+
+**Date**: 2026-08-09.
+
+Once the heap-threshold fix above was confirmed working on a real CI
+run (`api-versioning.e2e-spec.ts` passed), the same run surfaced a
+*different* failure in `reserve.e2e-spec.ts`: `lists reserve holds
+filtered by merchant and status` failed with `401 Unauthorized` on a
+`login()` call, immediately after that test's own `seedMerchant()`
+call — not on a stale `login()` helper, not on a flaky rate limit,
+and not reproducing locally on the first few tries.
+
+This is the same replica-lag bug class as the "replica-lag races
+surfaced by a routine Dependabot PR" incident above — but that
+incident's fix only ever touched **test files** and one repository
+method (`LedgerOutboxTypeOrmRepository.findPending()`). This one is in
+`MerchantService.verifyCredentials()` — the method behind `POST
+/auth/token`, i.e. **every login, in both tests and real production
+deployments**:
+
+```ts
+async verifyCredentials(apiKeyId: string, apiKeySecret: string) {
+  const merchant = await this.merchantRepo.findOne({ where: { apiKeyId } });
+  // ...
+}
+```
+
+`seedMerchant()` (the test helper) calls `MerchantService.createMerchant()`
+directly — an in-process call, no HTTP round trip — which commits to
+master. `login()` then immediately fires `POST /auth/token`, which
+calls `verifyCredentials()` above, whose plain (replica-routed)
+`findOne()` can lose the race against the replica's lag and return
+`null` — indistinguishable, by design (see that method's own docblock
+on why it doesn't leak the difference), from a genuinely wrong
+password. Locally, the gap between `seedMerchant()`'s `await` and
+`login()`'s HTTP call is usually enough wall-clock time for the
+replica to catch up, so this rarely reproduced there; on CI hardware,
+it did.
+
+**Why this matters beyond tests**: an admin creating a merchant and
+that merchant immediately trying to log in — a completely ordinary
+onboarding sequence — could hit this exact race in a real deployment.
+This was a genuine, if narrow-window, production bug, not just a test
+artifact.
+
+**Fix**: `MerchantService` now injects `DataSource` and reads through
+`dataSource.createQueryRunner('master')` in `verifyCredentials()`. The
+same fix was applied to the shared `getOrThrow()` private helper —
+used by 10+ admin mutation endpoints (`updateFeeRate`,
+`updateSettlementCurrency`, `setActive`, ...) — on the same reasoning:
+any of them could plausibly run immediately after `createMerchant()`
+in a real flow, not just a test.
+
+**Verified**: `tsc --noEmit` clean; `reserve.e2e-spec.ts` and
+`auth.e2e-spec.ts` both pass in isolation; full suite passing aside
+from the pre-existing rate-limit-burst flake (unconnected, reconfirmed
+clean on immediate re-run).
+
+**The lesson this time**: the earlier replica-lag incident's fix swept
+every *test file*, but master/replica routing is an ambient property
+of the whole app's `DataSource` — it doesn't stop at the test
+boundary. Any application code that reads a row shortly after writing
+it (or shortly after *anything else* wrote it) is exposed, and the
+places most worth auditing for this are exactly the ones a test
+harness exercises tightly and back-to-back (`create` immediately
+followed by `read`) even though a real caller might naturally insert
+more of a gap — `login()` right after `seedMerchant()` being the
+tightest case in this codebase, which is exactly why it was the one
+that found the bug.

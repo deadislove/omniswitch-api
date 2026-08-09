@@ -1,6 +1,6 @@
 import { Injectable, Logger, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { randomBytes, randomUUID } from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { MerchantEntity } from './merchant.entity';
@@ -27,10 +27,33 @@ export class MerchantService {
   constructor(
     @InjectRepository(MerchantEntity)
     private readonly merchantRepo: Repository<MerchantEntity>,
+    private readonly dataSource: DataSource,
     private readonly tokenRevocation: TokenRevocationService,
     private readonly vaultTransit: VaultTransitService,
     private readonly kycProvider: KYCProviderPort,
   ) {}
+
+  // Forced onto master, not the ambient replica-routed connection (see
+  // app.module.ts's `replication` config) — this app's DataSource routes
+  // plain repository reads to the Postgres replica, which has ~1s
+  // streaming lag behind master (same issue documented in
+  // reserve.service.ts's release() and payment-typeorm.repository.ts's
+  // findPending()). A merchant created via createMerchant() and looked up
+  // again moments later — POST /auth/token immediately after creation
+  // being the sharpest real-world case, since nothing else forces a delay
+  // between the two — can race that lag and come back not-found. Confirmed
+  // live: test/reserve.e2e-spec.ts's seedMerchant() → login() sequence
+  // failed with a spurious 401 in CI (though not locally, where I/O is
+  // fast enough that the gap between the two calls usually — not
+  // always — outlasts the lag) — see docs/technical/ci-cd.md.
+  private async findMerchantOnMaster(where: Record<string, unknown>): Promise<MerchantEntity | null> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.findOne(MerchantEntity, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
 
   /**
    * Verifies an API Key ID + Secret pair (used by POST /auth/token).
@@ -39,7 +62,7 @@ export class MerchantService {
    * auth endpoint can't be used to enumerate valid API key ids.
    */
   async verifyCredentials(apiKeyId: string, apiKeySecret: string): Promise<MerchantEntity | null> {
-    const merchant = await this.merchantRepo.findOne({ where: { apiKeyId } });
+    const merchant = await this.findMerchantOnMaster({ apiKeyId });
 
     // Always run bcrypt.compare, even when the key doesn't exist — skipping
     // it turns "unknown key" into a fast DB-miss path and "wrong secret"
@@ -339,7 +362,12 @@ export class MerchantService {
   }
 
   private async getOrThrow(merchantId: string): Promise<MerchantEntity> {
-    const merchant = await this.merchantRepo.findOne({ where: { merchantId } });
+    // Same master-read reasoning as verifyCredentials() above — this is
+    // the shared lookup behind 10+ admin mutation endpoints
+    // (updateFeeRate, updateSettlementCurrency, setActive, ...), any of
+    // which could plausibly be called immediately after createMerchant()
+    // in a real onboarding flow, not just in tests.
+    const merchant = await this.findMerchantOnMaster({ merchantId });
     if (!merchant) {
       throw new NotFoundException({
         statusCode: 404,
