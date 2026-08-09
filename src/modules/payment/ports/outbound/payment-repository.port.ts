@@ -18,6 +18,22 @@ export interface FindPaymentsFilter {
 export abstract class PaymentRepositoryPort {
   abstract save(payment: PaymentAggregate): Promise<void>;
   abstract findById(id: string): Promise<PaymentAggregate | null>;
+
+  /**
+   * Same as findById(), but forced onto master instead of the ambient
+   * replica-routed connection — for internal call sites that look up a
+   * payment immediately after writing it (or after another write in the
+   * same business flow), where the read genuinely can't tolerate the
+   * replica's ~1s streaming lag. Unlike findById() (used by GET
+   * /payments/:id and the SSE status stream — read-only, latency-
+   * insensitive, fine to serve off the replica), this is for the
+   * refund/capture/cancel lookup (PaymentLifecycleService.getOwnedPayment())
+   * and dispute-resolution webhook processing (DisputeService's own
+   * payment lookup) — see docs/technical/ci-cd.md for the incident this
+   * was split out to fix without moving every payment read onto master.
+   */
+  abstract findByIdOnMaster(id: string): Promise<PaymentAggregate | null>;
+
   abstract findByIdempotencyKey(key: string): Promise<PaymentAggregate | null>;
   abstract findByPspTransactionId(pspTransactionId: string): Promise<PaymentAggregate | null>;
   abstract findByMerchantId(merchantId: string, filter?: FindPaymentsFilter): Promise<PaymentAggregate[]>;

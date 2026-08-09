@@ -35,7 +35,11 @@ export class PaymentLifecycleService {
   ) {}
 
   async getOwnedPayment(paymentId: string): Promise<PaymentAggregate> {
-    const payment = await this.paymentRepository.findById(paymentId);
+    // Forced onto master (findByIdOnMaster(), not findById()) — this backs
+    // refund/capture/cancel, which a caller can (and this project's own
+    // e2e suite does) call immediately after the charge that created this
+    // payment. See PaymentRepositoryPort.findByIdOnMaster()'s docblock.
+    const payment = await this.paymentRepository.findByIdOnMaster(paymentId);
     if (!payment) {
       throw new NotFoundException({ statusCode: 404, error: 'Payment not found', code: 'PAYMENT_NOT_FOUND' });
     }
