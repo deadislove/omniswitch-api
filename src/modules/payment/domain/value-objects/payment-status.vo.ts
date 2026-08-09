@@ -1,0 +1,71 @@
+/**
+ * Payment Status Value Object
+ * Represents the lifecycle state of a payment with valid transitions.
+ */
+export enum PaymentStatus {
+  PENDING = 'PENDING',
+  PROCESSING = 'PROCESSING',
+  REQUIRES_ACTION = 'REQUIRES_ACTION',   // 3DS challenge required
+  REQUIRES_CAPTURE = 'REQUIRES_CAPTURE', // Auth succeeded, awaiting capture
+  PARTIALLY_CAPTURED = 'PARTIALLY_CAPTURED', // Some, but not all, of the authorized amount has been captured
+  SUCCEEDED = 'SUCCEEDED',
+  FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED',
+  REFUNDED = 'REFUNDED',
+  PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED',
+  DISPUTED = 'DISPUTED',
+}
+
+const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
+  // FAILED is reachable directly from PENDING because the saga can fail
+  // before ever reaching a PSP (e.g. no PSP available for the currency/
+  // country). Without it, PaymentCheckoutSaga.compensate_markFailed() throws
+  // on assertValidTransition, the exception is swallowed, and the payment is
+  // silently stuck in PENDING forever with no failure ever recorded.
+  [PaymentStatus.PENDING]: [PaymentStatus.PROCESSING, PaymentStatus.FAILED, PaymentStatus.CANCELLED],
+  [PaymentStatus.PROCESSING]: [
+    PaymentStatus.REQUIRES_ACTION,
+    PaymentStatus.REQUIRES_CAPTURE,
+    PaymentStatus.SUCCEEDED,
+    PaymentStatus.FAILED,
+  ],
+  [PaymentStatus.REQUIRES_ACTION]: [
+    PaymentStatus.PROCESSING,
+    PaymentStatus.FAILED,
+    PaymentStatus.CANCELLED,
+  ],
+  [PaymentStatus.REQUIRES_CAPTURE]: [
+    PaymentStatus.SUCCEEDED,
+    PaymentStatus.PARTIALLY_CAPTURED,
+    PaymentStatus.CANCELLED,
+  ],
+  // Deliberately can't reach CANCELLED from here: once any capture has
+  // happened, "cancel" would mean "void the remaining authorization" — a
+  // different operation from voiding an untouched auth (REQUIRES_CAPTURE ->
+  // CANCELLED above) that isn't implemented. Attempting it fails loudly via
+  // isValidTransition rather than silently doing nothing.
+  [PaymentStatus.PARTIALLY_CAPTURED]: [PaymentStatus.SUCCEEDED],
+  [PaymentStatus.SUCCEEDED]: [
+    PaymentStatus.REFUNDED,
+    PaymentStatus.PARTIALLY_REFUNDED,
+    PaymentStatus.DISPUTED,
+  ],
+  [PaymentStatus.FAILED]: [],
+  [PaymentStatus.CANCELLED]: [],
+  [PaymentStatus.REFUNDED]: [],
+  [PaymentStatus.PARTIALLY_REFUNDED]: [PaymentStatus.REFUNDED],
+  [PaymentStatus.DISPUTED]: [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED],
+};
+
+export function isValidTransition(from: PaymentStatus, to: PaymentStatus): boolean {
+  return VALID_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+export function assertValidTransition(from: PaymentStatus, to: PaymentStatus): void {
+  if (!isValidTransition(from, to)) {
+    throw new Error(
+      `Invalid payment status transition: ${from} -> ${to}. ` +
+      `Allowed transitions from ${from}: [${VALID_TRANSITIONS[from]?.join(', ') || 'none'}]`,
+    );
+  }
+}

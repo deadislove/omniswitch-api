@@ -1,0 +1,44 @@
+# Without this file, `docker build`'s context (and every `COPY . .` in
+# Dockerfile) includes the entire working directory as-is — node_modules
+# with host-specific native bindings, a stale dist/ and tsconfig.tsbuildinfo
+# that can make the builder stage's `nest build` silently skip re-emitting
+# JS (tsc's incremental cache treating the copied-in .tsbuildinfo as
+# up-to-date), and potentially .env.local secrets. Found the hard way: a
+# build produced an image with only .d.ts files and no .js in dist/,
+# entirely because a host-side tsconfig.tsbuildinfo leaked into the image.
+
+node_modules
+dist
+build
+coverage
+.nyc_output
+
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+
+.git
+.gitignore
+
+logs
+*.log
+npm-debug.log*
+
+.vscode
+.idea
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+
+.claude
+
+test
+docs
+k8s
+*.md

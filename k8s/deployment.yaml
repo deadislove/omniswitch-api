@@ -1,0 +1,211 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omniswitch-api
+  namespace: payments
+  labels:
+    app: omniswitch-api
+    version: "1.0.0"
+    component: payment-gateway
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: omniswitch-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0   # Zero-downtime rolling update
+  template:
+    metadata:
+      labels:
+        app: omniswitch-api
+        version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Security Context - run as non-root
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      # Service Account
+      serviceAccountName: omniswitch-api-sa
+
+      # Graceful termination
+      terminationGracePeriodSeconds: 60
+
+      # Anti-affinity: spread pods across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - omniswitch-api
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: omniswitch-api
+          image: omniswitch/payment-gateway:1.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          # ─── Resource Requests & Limits ──────────────────────────────────
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+
+          # ─── Environment Variables ────────────────────────────────────────
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            # Database from ConfigMap
+            - name: DB_MASTER_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_MASTER_HOST
+            - name: DB_REPLICA_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_REPLICA_HOST
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_NAME
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: REDIS_PORT
+            - name: RATE_LIMIT_MAX
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: RATE_LIMIT_MAX
+            # Secrets
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: REDIS_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: JWT_SECRET
+            - name: HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: HMAC_SECRET
+            - name: STRIPE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: STRIPE_SECRET_KEY
+            - name: ADYEN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: ADYEN_API_KEY
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: STRIPE_WEBHOOK_SECRET
+            - name: ADYEN_HMAC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: ADYEN_HMAC_KEY
+
+          # ─── Liveness Probe ───────────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # ─── Readiness Probe ──────────────────────────────────────────────
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # ─── Startup Probe ────────────────────────────────────────────────
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12  # 60 seconds max startup time
+
+          # ─── Security Context ─────────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+
+          # ─── Volume Mounts ────────────────────────────────────────────────
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+
+      volumes:
+        - name: logs
+          emptyDir: {}
+
+      # Image pull secrets (if using private registry)
+      # imagePullSecrets:
+      #   - name: registry-credentials

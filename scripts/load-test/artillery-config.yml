@@ -1,0 +1,36 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    - duration: 30
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 60
+      arrivalRate: 5
+      rampTo: 40
+      name: "Ramp up"
+    - duration: 120
+      arrivalRate: 40
+      name: "Sustained load"
+  processor: "./processor.js"
+  http:
+    timeout: 10
+
+scenarios:
+  - name: "Charge then read"
+    weight: 90
+    flow:
+      - post:
+          url: "/api/v1/payments/charge"
+          beforeRequest: "signCharge"
+          capture:
+            - json: "$.paymentId"
+              as: "paymentId"
+      - get:
+          url: "/api/v1/payments/{{ paymentId }}"
+          beforeRequest: "addAuthHeader"
+
+  - name: "Health check"
+    weight: 10
+    flow:
+      - get:
+          url: "/health/ready"

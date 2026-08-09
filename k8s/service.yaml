@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: omniswitch-api
+  namespace: payments
+  labels:
+    app: omniswitch-api
+    component: payment-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app: omniswitch-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+  sessionAffinity: None

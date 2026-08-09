@@ -1,0 +1,23 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    - duration: 20
+      arrivalRate: 10
+      name: "Warm up"
+    - duration: 40
+      arrivalRate: 10
+      rampTo: 150
+      name: "Ramp up"
+    - duration: 90
+      arrivalRate: 150
+      name: "Sustained load"
+  processor: "./read-processor.js"
+  http:
+    timeout: 10
+
+scenarios:
+  - name: "Read payment"
+    flow:
+      - get:
+          url: "/api/v1/payments/placeholder"
+          beforeRequest: "pickAndAuth"

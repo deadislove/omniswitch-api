@@ -1,0 +1,330 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OmniSwitch Payment Gateway - Local Development Stack
+# Services: NestJS API, PostgreSQL Master+Replica, Redis, LocalStack (Mock PSP)
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  omniswitch-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres-master-data:
+  postgres-replica-data:
+  redis-data:
+  localstack-data:
+
+services:
+
+  # ─── NestJS Payment Gateway API ─────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: omniswitch-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      # Database
+      DB_MASTER_HOST: postgres-master
+      DB_MASTER_PORT: 5432
+      DB_REPLICA_HOST: postgres-replica
+      DB_REPLICA_PORT: 5432
+      DB_USERNAME: omniswitch
+      DB_PASSWORD: omniswitch_secret
+      DB_NAME: omniswitch_payments
+      DB_SSL: "false"
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_secret
+      REDIS_DB: 0
+      # JWT
+      JWT_SECRET: dev-jwt-secret-change-in-production-min-32-chars
+      # HMAC
+      HMAC_SECRET: dev-hmac-secret-change-in-production
+      # Rate Limiting — both overridable so a load test can measure this
+      # app's own processing ceiling separately from the rate limiter's
+      # ceiling (they're two different, both real, findings — see
+      # docs/technical/load-testing.md).
+      RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-100}"
+      RATE_LIMIT_BURST_MAX: "${RATE_LIMIT_BURST_MAX:-10}"
+      # Separate, much stricter anti-brute-force limit on POST /auth/token
+      # specifically (AuthController) — defaults to 10 login attempts/min
+      # regardless of RATE_LIMIT_MAX above. Exposed here as an env override
+      # (default preserves that same 10) so it can be raised for local
+      # load-testing (many merchants logging in back-to-back looks
+      # identical to credential-stuffing to this guard) without editing
+      # this file — see docs/technical/load-testing.md.
+      AUTH_LOGIN_RATE_LIMIT: "${AUTH_LOGIN_RATE_LIMIT:-10}"
+      # PSP Keys (mock/test) — both base URLs point at mock-psp; without
+      # STRIPE_BASE_URL here, the Stripe adapter falls back to the real
+      # api.stripe.com and would try to make live calls with a placeholder key.
+      STRIPE_SECRET_KEY: sk_test_placeholder
+      STRIPE_BASE_URL: http://mock-psp:4000/v1
+      ADYEN_API_KEY: adyen_test_placeholder
+      ADYEN_MERCHANT_ACCOUNT: TestMerchant
+      ADYEN_BASE_URL: http://mock-psp:4000/adyen
+      # Same pattern as STRIPE_BASE_URL/ADYEN_BASE_URL — mock-psp also
+      # serves a /fx/rates endpoint (see docs/business-domain/ledger-and-settlement.md).
+      FX_RATE_PROVIDER_URL: http://mock-psp:4000/fx
+      # Same pattern again — mock-psp also serves /kyc/verify and
+      # /bank/transfers (see docs/business-domain/ledger-and-settlement.md).
+      KYC_PROVIDER_URL: http://mock-psp:4000/kyc
+      BANK_TRANSFER_PROVIDER_URL: http://mock-psp:4000/bank
+      # CORS
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:4200"
+      # App
+      APP_VERSION: "1.0.0"
+      # Vault (envelope-encrypts merchants.hmac_secret_ciphertext)
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: omniswitch-dev-root-token
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      postgres-replica:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── PostgreSQL Master ───────────────────────────────────────────────────────
+  postgres-master:
+    image: postgres:16-alpine
+    container_name: omniswitch-postgres-master
+    restart: unless-stopped
+    ports:
+      # Host-side port is remapped off the default 5432 — a locally
+      # installed Postgres (Homebrew/Postgres.app) commonly already owns
+      # 127.0.0.1:5432, and connections silently land on the wrong instance
+      # instead of failing loudly. Internal container-to-container traffic
+      # (the `api` service, the replica's basebackup/streaming) still uses
+      # port 5432 on the Docker network — only the host-facing side moves.
+      - "15432:5432"
+    environment:
+      POSTGRES_USER: omniswitch
+      POSTGRES_PASSWORD: omniswitch_secret
+      POSTGRES_DB: omniswitch_payments
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replication_secret
+    command: >
+      postgres
+        -c wal_level=replica
+        -c max_wal_senders=3
+        -c max_replication_slots=3
+        -c hot_standby=on
+        -c log_connections=on
+        -c log_disconnections=on
+        -c log_duration=off
+        -c log_min_duration_statement=1000
+        -c shared_preload_libraries=pg_stat_statements
+        -c max_connections=200
+    volumes:
+      - postgres-master-data:/var/lib/postgresql/data
+      - ./scripts/postgres/init-master.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./scripts/postgres/init-master-hba.sh:/docker-entrypoint-initdb.d/02-init-hba.sh:ro
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omniswitch -d omniswitch_payments"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─── PostgreSQL Replica ──────────────────────────────────────────────────────
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: omniswitch-postgres-replica
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: omniswitch
+      POSTGRES_PASSWORD: omniswitch_secret
+      POSTGRES_DB: omniswitch_payments
+      PGUSER: replicator
+      PGPASSWORD: replication_secret
+      POSTGRES_MASTER_HOST: postgres-master
+    command: >
+      bash -c "
+        set -e
+        if [ -z \"$(ls -A /var/lib/postgresql/data 2>/dev/null)\" ]; then
+          until pg_basebackup -h postgres-master -D /var/lib/postgresql/data -U replicator -vP -w --wal-method=stream; do
+            echo 'Waiting for master to be ready...'
+            sleep 2
+          done
+          touch /var/lib/postgresql/data/standby.signal
+          echo \"primary_conninfo = 'host=postgres-master port=5432 user=replicator password=replication_secret'\" >> /var/lib/postgresql/data/postgresql.auto.conf
+          chmod 0700 /var/lib/postgresql/data
+          chown -R postgres:postgres /var/lib/postgresql/data
+        fi
+        exec gosu postgres postgres -c max_connections=200
+      "
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omniswitch -d omniswitch_payments"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # ─── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: omniswitch-redis
+    restart: unless-stopped
+    ports:
+      # Host-side port is remapped off the default 6379 for the same reason
+      # postgres-master's is off 5432 (see docker-compose.yml's comment
+      # there): a locally installed Redis commonly already owns
+      # 127.0.0.1:6379, and connections silently land on the wrong instance
+      # instead of failing loudly — confirmed live on this machine (a native
+      # redis-server was answering with no password required, while this
+      # container enforces one; every e2e run's ioredis "default user does
+      # not require a password" warning was that collision, not benign
+      # noise). Internal container-to-container traffic still uses 6379.
+      - "16379:6379"
+    command: >
+      redis-server
+        --requirepass redis_secret
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --save 900 1
+        --save 300 10
+        --save 60 10000
+        --appendonly yes
+        --appendfsync everysec
+        --loglevel notice
+    volumes:
+      - redis-data:/data
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secret", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Vault (dev mode) ────────────────────────────────────────────────────────
+  # Envelope-encrypts merchants.hmac_secret via Vault's Transit engine — see
+  # docs/technical/secret-management.md. Dev mode specifically: in-memory
+  # storage (wiped on restart, which is fine — the transit key itself doesn't
+  # need to survive a local restart any more than a fresh dev DB does), a
+  # fixed root token instead of a real auth method (AppRole, K8s auth), and
+  # auto-unseal. None of that is acceptable for production — see that doc for
+  # what a real deployment needs instead.
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: omniswitch-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: omniswitch-dev-root-token
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    networks:
+      - omniswitch-net
+    healthcheck:
+      # 127.0.0.1, not localhost — inside this container "localhost" resolves
+      # to ::1 first, and Vault's dev-mode listener (0.0.0.0:8200) doesn't
+      # answer on IPv6, so a "localhost" healthcheck reports Connection
+      # refused even though Vault is actually up.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8200/v1/sys/health?standbyok=true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Mock PSP Service (LocalStack / Mock) ────────────────────────────────────
+  # Feature set intentionally mirrors what PaymentLifecycleService/the webhook
+  # flow actually exercise: charge (incl. captureMethod: manual -> requires_
+  # capture/RequiresCapture equivalents), capture, cancel, refund, for both
+  # Stripe-shaped and Adyen-shaped routes. The e2e suite (test/*.e2e-spec.ts)
+  # runs against this exact service.
+  mock-psp:
+    image: node:20-alpine
+    container_name: omniswitch-mock-psp
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    working_dir: /app
+    volumes:
+      - ./scripts/mock-psp/server.js:/app/server.js:ro
+    command: ["node", "server.js"]
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4000/ || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ─── Redis Commander (Dev UI) ────────────────────────────────────────────────
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: omniswitch-redis-ui
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      REDIS_HOSTS: "local:redis:6379:0:redis_secret"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - omniswitch-net
+    profiles:
+      - dev-tools
+
+  # ─── pgAdmin (Dev UI) ────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: omniswitch-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@omniswitch.io
+      PGADMIN_DEFAULT_PASSWORD: admin
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - omniswitch-net
+    profiles:
+      - dev-tools

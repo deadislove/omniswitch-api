@@ -1,0 +1,14 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    - duration: 5
+      arrivalRate: 3
+      name: "Smoke"
+  processor: "./read-processor.js"
+
+scenarios:
+  - name: "Read payment"
+    flow:
+      - get:
+          url: "/api/v1/payments/placeholder"
+          beforeRequest: "pickAndAuth"

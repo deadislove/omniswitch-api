@@ -1,0 +1,64 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: omniswitch-api-ingress
+  namespace: payments
+  labels:
+    app: omniswitch-api
+  annotations:
+    # NGINX Ingress Controller
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # TLS termination
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Rate limiting at ingress level (backup to app-level)
+    nginx.ingress.kubernetes.io/limit-rps: "200"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    # Proxy settings for SSE (Server-Sent Events)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Body size for bulk upload
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+      more_set_headers "Content-Security-Policy: default-src 'none'";
+spec:
+  tls:
+    - hosts:
+        - api.omniswitch.io
+      secretName: omniswitch-tls-cert
+  rules:
+    - host: api.omniswitch.io
+      http:
+        paths:
+          # API v1 routes
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: omniswitch-api
+                port:
+                  number: 80
+          # Health check (no auth required)
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: omniswitch-api
+                port:
+                  number: 80
+          # Swagger docs (only in non-prod)
+          - path: /api/docs
+            pathType: Prefix
+            backend:
+              service:
+                name: omniswitch-api
+                port:
+                  number: 80

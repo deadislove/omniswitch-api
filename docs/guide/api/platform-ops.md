@@ -1,0 +1,114 @@
+# Platform Operations API
+
+Source: `outbox-admin.controller.ts`, `reconciliation-admin.controller.ts`,
+`health.controller.ts`, `metrics.controller.ts`. These endpoints exist
+for operators and infrastructure, not for merchants integrating with the
+API.
+
+---
+
+## Ledger outbox recovery (`/admin/outbox`)
+
+See [`system-design.md`](../system-design.md#4-other-core-flows-worth-knowing-before-you-touch-them)
+for the Outbox pattern this recovers from. A publish failure is
+deliberately **terminal** (`FAILED`, not auto-retried) — these
+endpoints are how an operator brings a dead-lettered event back to life
+after investigating why it failed.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+
+### `GET /admin/outbox/failed`
+
+List dead-lettered events awaiting review. Optional `?limit=`.
+
+**Shape**: `{ id, paymentId, eventType, status, retryCount, lastError?, createdAt, processedAt? }`
+
+### `POST /admin/outbox/:id/retry`
+
+Resets a `FAILED` event back to `PENDING` so the relay (every 10s)
+retries it on its next tick.
+
+**Response `200`**: `{ id, status: "PENDING" }`
+
+- **Errors**: `404` not found; `409` not currently `FAILED` (lost a race
+  with another retry, or already moved on).
+
+---
+
+## Reconciliation (`/admin/reconciliation`)
+
+The ledger/settlement safety net unit and e2e tests structurally can't
+provide — diffs this system's own ledger against each PSP's settlement
+report for a time window. See
+[`../../technical/reconciliation.md`](../../technical/reconciliation.md) for
+the mechanism and a real timezone bug it once surfaced.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+
+### `GET /admin/reconciliation/runs`
+
+List recent runs, optionally filtered by `?pspProvider=STRIPE|ADYEN` and
+`?limit=`.
+
+- **Errors**: `400` unknown `pspProvider`.
+
+### `POST /admin/reconciliation/run`
+
+Triggers a run on demand.
+
+**Body**: `{ pspProvider: 'STRIPE'|'ADYEN', since?: ISO-8601, until?: ISO-8601 }`
+— defaults to the last hour if `since`/`until` are omitted.
+
+**`ReconciliationRunSummaryDto` shape**:
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "pspProvider": "STRIPE",
+  "windowStart": "2026-01-01T00:00:00.000Z",
+  "windowEnd": "2026-01-01T01:00:00.000Z",
+  "transactionsChecked": 42,
+  "status": "CLEAN",
+  "mismatchCount": 0,
+  "mismatches": [],
+  "ranAt": "2026-01-01T01:00:05.000Z"
+}
+```
+
+A mismatch is one of `MISSING_AT_PSP` (we have it, the PSP doesn't),
+`AMOUNT_MISMATCH` (both have it, amounts disagree), or `UNKNOWN_AT_PSP`
+(the PSP has a transaction we don't).
+
+---
+
+## Health (`/health`) — unversioned, no `/api` prefix
+
+Kubernetes probe contract — fixed paths owned by infrastructure, not
+this API's versioned surface.
+
+- **Public**, no auth.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Readiness: DB ping + heap/RSS thresholds. `503` if any indicator is down. |
+| `GET /health/live` | Liveness: just confirms the process is running. Always `200` if reachable at all. |
+| `GET /health/ready` | Readiness: DB ping only (narrower than `/health`). |
+
+## Metrics (`/metrics`) — unversioned, no `/api` prefix
+
+Prometheus scrape endpoint (`text/plain; version=0.0.4`).
+
+- **Public**, no auth (matches the Prometheus scrape convention — access
+  control belongs at the network layer for a metrics endpoint).
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `omniswitch_psp_circuit_breaker_state` | `provider` | 0=CLOSED, 1=HALF_OPEN, 2=OPEN |
+| `omniswitch_psp_success_rate_percent` | `provider` | Rolling 15-minute window |
+| `omniswitch_psp_avg_latency_ms` | `provider` | |
+| `omniswitch_ledger_outbox_pending_total` | — | Events awaiting relay |
+| `omniswitch_ledger_outbox_failed_total` | — | Dead-lettered events |
+| `omniswitch_payments_total` | `status`, `provider` | Payment volume — pull-computed from the `payments` table at scrape time, not an in-process counter (see [`system-design.md`](../system-design.md#5-cross-cutting-infrastructure-concerns) for why that distinction matters across replicas) |
+
+Plus default Node.js/process metrics from `prom-client`'s
+`collectDefaultMetrics()` (heap, event loop lag, GC, CPU).
