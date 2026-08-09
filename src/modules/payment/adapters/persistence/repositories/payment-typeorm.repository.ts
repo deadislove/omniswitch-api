@@ -37,6 +37,20 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return PaymentMapper.toDomain(entity);
   }
 
+  // See PaymentRepositoryPort.findByIdOnMaster()'s docblock for which
+  // call sites use this instead of findById() and why.
+  async findByIdOnMaster(id: string): Promise<PaymentAggregate | null> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entity: PaymentEntity | null;
+    try {
+      entity = await queryRunner.manager.findOne(PaymentEntity, { where: { id } });
+    } finally {
+      await queryRunner.release();
+    }
+    if (!entity) return null;
+    return PaymentMapper.toDomain(entity);
+  }
+
   async findByIdempotencyKey(key: string): Promise<PaymentAggregate | null> {
     const entity = await this.paymentRepo.findOne({
       where: { idempotencyKey: key },

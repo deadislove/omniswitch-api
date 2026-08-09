@@ -25,6 +25,7 @@ import { ChargeLedgerParamsResolverService } from '../services/charge-ledger-par
 const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
   save: jest.fn().mockResolvedValue(undefined),
   findById: jest.fn(),
+  findByIdOnMaster: jest.fn(),
   findByIdempotencyKey: jest.fn(),
   findByPspTransactionId: jest.fn(),
   findByMerchantId: jest.fn(),
