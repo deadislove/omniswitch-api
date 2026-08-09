@@ -2,7 +2,7 @@
 # Stage 1: Dependencies
 # Install all dependencies (including devDependencies for build)
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:26-alpine AS deps
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN npm ci --frozen-lockfile
 # Stage 2: Builder
 # Compile TypeScript to JavaScript
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:26-alpine AS builder
 
 WORKDIR /app
 
@@ -40,7 +40,7 @@ RUN npm prune --production
 # Minimal production image with non-root user
 # Target: < 150MB image size
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:26-alpine AS production
 
 # Security: Set non-root user
 ARG UID=1001
