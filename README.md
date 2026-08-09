@@ -2,6 +2,25 @@
 
 > Enterprise-grade, high-reliability Payment Gateway API Service built with **NestJS (TypeScript)**, following **Modular Monolith + Hexagonal Architecture (Ports & Adapters)** and **Domain-Driven Design (DDD)**.
 
+A payment gateway sits between a merchant and the card networks — the
+layer that routes a charge to whichever payment processor (PSP) makes
+sense, books the accounting, and absorbs the money-movement edge cases
+(refunds, disputes, retries, payouts) instead of leaving them to the
+business. OmniSwitch is a from-scratch reference implementation of that
+layer, covering more than a single "charge a card" endpoint: smart
+multi-PSP routing (Stripe + Adyen, BIN-aware), a real double-entry
+ledger, subscriptions with decline-aware dunning, marketplace splits
+with connected-account payouts, dispute/chargeback handling, merchant
+risk-based reserves, and delegated "agentic payment" credentials — see
+[Key Features](#key-features) below for the full list.
+
+This is a **portfolio/reference project**, built to show how these
+pieces fit together end-to-end — including real, verified
+infrastructure (Postgres replication, Redis, Vault), not just
+mocked-out unit tests — rather than a production payment system. See
+[Known Limitations](#known-limitations) and [`LICENSE`](./LICENSE)
+before assuming any part of it is production-ready.
+
 ---
 
 ## 🏗️ Architecture Overview
