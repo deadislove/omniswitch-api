@@ -8,5 +8,6 @@
   },
   "setupFiles": ["<rootDir>/test/setup-env.ts"],
   "testTimeout": 30000,
-  "maxWorkers": 1
+  "maxWorkers": 1,
+  "workerIdleMemoryLimit": "400MB"
 }
