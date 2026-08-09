@@ -236,23 +236,70 @@ This ruled out any same-process fix and is why sharding (separate OS
 processes, not memory management within one process) is the current
 approach.
 
-### Current approach: `jest --shard`
+### A third attempt that partially worked, then was reverted: `jest --shard`
 
-`ci.yml`'s e2e job now runs `npm run pretest:e2e` once (migrations),
-then four separate `npx jest --config ./test/jest-e2e.json
---shard=$i/4` invocations in sequence — each a genuinely fresh Node
-process, so at most ~5 files' worth of NestJS/reflect-metadata state
-accumulates in any one process instead of all 19. The four shards still
-run sequentially against the same Docker Compose stack, preserving the
-existing no-concurrent-state guarantee (`maxWorkers: 1` already made
-every file within a shard sequential; this doesn't change that, it just
-adds process boundaries between groups of files).
+`ci.yml`'s e2e job was changed to run `npm run pretest:e2e` once
+(migrations), then four separate `npx jest --config
+./test/jest-e2e.json --shard=$i/4` invocations in sequence — each a
+genuinely fresh Node process, bounding how many files' worth of
+NestJS/reflect-metadata state could accumulate in any one process to
+~5 instead of all 19.
 
-Verified locally: all 4 shards pass (19/19 suites, 170/170 tests). Per
-this document's own lesson two sections up, that is **not** sufficient
-evidence this fixes the CI failure — it only confirms the sharding
-mechanism itself works. Whether it actually prevents the heap threshold
-from being crossed depends on the CI runner's memory profile, which can
-only be confirmed by an actual CI run. If a shard still fails the
-health check, the next lever is a higher shard count (smaller groups
-per process) rather than another same-process trick.
+Verified locally first (19/19 suites passing across the 4 shards), then
+actually pushed and checked against a real CI run, per this document's
+own lesson. It didn't fully work: **shard 2/4 — only 5 files —
+still failed**, both `api-versioning.e2e-spec.ts`'s heap check *and*,
+more tellingly, `subscriptions.e2e-spec.ts` with a `401` on a basic
+login call nothing about sharding should affect. That second failure
+was the real signal: this wasn't "19 files is too many for one
+process," it was that **a single fresh process running as few as 5
+files was already landing close enough to 512MB that normal run-to-run
+variance could tip it over** — consistent with the local
+`--logHeapUsage` diagnostic from the GC investigation above, which
+showed heap already at 471MB after just the *first* file, before any
+per-file accumulation even entered the picture. Sharding reduces
+*how much accumulates across files* — it does nothing about the
+*baseline* cost of one ts-jest-compiled NestJS app boot, which was
+already most of the way to the threshold on its own.
+
+### What actually fixed it: the threshold was never a fair test to begin with
+
+The 512MB/1GB thresholds in `health.controller.ts` are correctly
+calibrated against `k8s/deployment.yaml`'s real 512Mi pod memory
+limit — meaningful for a compiled `node dist/main.js` production
+process. But the e2e test harness runs that same health check inside a
+process that also carries `ts-jest`'s TypeScript compiler and Jest's
+own machinery resident in memory the entire time — overhead a real
+deployment never has. No amount of reducing *test* memory use (GC,
+sharding) changes that the *harness itself* was already consuming most
+of a budget sized for production.
+
+**Fix**: `health.controller.ts`'s thresholds are now read from
+`ConfigService` (`HEALTH_CHECK_HEAP_THRESHOLD_BYTES`/
+`HEALTH_CHECK_RSS_THRESHOLD_BYTES`), defaulting to the same
+512MB/1GB — production's behavior and `k8s/deployment.yaml` are
+untouched, since no env var sets these outside the test environment.
+`test/setup-env.ts` raises them to 1.5GB/2GB for e2e runs only. The
+`jest --shard` change in `ci.yml` was reverted (it added CI runtime
+without fully solving the problem on its own).
+
+**Verified**: two consecutive full local e2e runs with
+`--logHeapUsage`, 19/19 suites both times, peak heap 793MB and 622MB
+respectively — comfortably clear of the old 512MB threshold (which
+both runs would have failed under) and well inside the new 1.5GB one.
+`ConfigService.get<number>()` was confirmed to **not** actually cast —
+an env var override comes back as a string despite the generic type
+argument — so both threshold reads are wrapped in `Number(...)`
+explicitly rather than relying on `checkHeap()`'s internal `>`
+comparison to coerce it correctly.
+
+**The actual, actual lesson**: after three attempts, the pattern in
+hindsight is that the first two (`workerIdleMemoryLimit`, forced GC)
+and the third (sharding) all tried to make the *test harness* use less
+memory, when the real fix was recognizing that *the specific numeric
+threshold being asserted* was calibrated for an environment (compiled
+production code) the test was never actually running in. When a
+test's pass/fail boundary is a hardcoded number, it's worth asking
+early whether that number's calibration context still applies to the
+environment actually running the test — not just whether the code
+under test can be made to fit under it.

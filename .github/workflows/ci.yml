@@ -80,21 +80,8 @@ jobs:
           docker compose up -d --wait \
             postgres-master postgres-replica redis vault mock-psp
 
-      - run: npm run pretest:e2e
-
-      # Sharded into separate `jest` CLI invocations (own OS process each),
-      # not one process running all 19 files — see docs/technical/ci-cd.md's
-      # "heap-flake fix that broke CI" incident. maxWorkers: 1 means every
-      # file already runs sequentially within a shard, so this preserves
-      # the existing no-concurrent-state guarantee (see architecture.md's
-      # Testing section) while bounding how many files' worth of
-      # NestJS/reflect-metadata heap accumulates in any one process to
-      # ~1/4 of the full suite instead of all of it.
-      - name: Run e2e tests (sharded)
-        run: |
-          for i in 1 2 3 4; do
-            npx jest --config ./test/jest-e2e.json --shard=$i/4
-          done
+      - name: Run e2e tests
+        run: npm run test:e2e
 
       - name: Show service logs on failure
         if: failure()

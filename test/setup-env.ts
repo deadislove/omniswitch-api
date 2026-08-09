@@ -63,6 +63,24 @@ setDefault('RATE_LIMIT_BURST_MAX', '50');
 // isolated test rather than relying on hitting this ambient limit.
 setDefault('AUTH_LOGIN_RATE_LIMIT', '1000');
 
+// GET /health's memory_heap/memory_rss checks default to thresholds
+// calibrated against k8s/deployment.yaml's real 512Mi pod memory limit
+// (see health.controller.ts) — appropriate for a compiled
+// `node dist/main.js` production process, not this test harness. With
+// maxWorkers: 1, every e2e spec file's own full NestJS/TypeORM compile
+// runs in the same process as ts-jest's TypeScript compiler and Jest's
+// own machinery, none of which a real deployment ever carries; heap
+// climbs by design across the run and occasionally crossed the
+// production-calibrated 512MB threshold, failing whichever spec file
+// happened to run last with a 503 on /health
+// (api-versioning.e2e-spec.ts, most often). This isn't a real leak —
+// see docs/technical/ci-cd.md's heap-flake incident, including two
+// same-process fixes (workerIdleMemoryLimit, forced GC) that were tried
+// and didn't hold up. Raised here, in the test environment only —
+// production's own default stays at 512MB/1GB.
+setDefault('HEALTH_CHECK_HEAP_THRESHOLD_BYTES', String(1536 * 1024 * 1024)); // 1.5GB
+setDefault('HEALTH_CHECK_RSS_THRESHOLD_BYTES', String(2048 * 1024 * 1024)); // 2GB
+
 // docker-compose's mock-psp service, exposed on the host at :4000.
 setDefault('STRIPE_SECRET_KEY', 'sk_test_e2e_placeholder');
 setDefault('STRIPE_BASE_URL', 'http://localhost:4000/v1');

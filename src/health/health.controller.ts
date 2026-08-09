@@ -1,5 +1,6 @@
 import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common';
 import { HealthCheck, HealthCheckService, TypeOrmHealthIndicator, MemoryHealthIndicator } from '@nestjs/terminus';
+import { ConfigService } from '@nestjs/config';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Public } from '../shared/decorators/public.decorator';
 
@@ -20,6 +21,7 @@ export class HealthController {
     private readonly health: HealthCheckService,
     private readonly db: TypeOrmHealthIndicator,
     private readonly memory: MemoryHealthIndicator,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -34,10 +36,24 @@ export class HealthController {
   @ApiResponse({ status: 200, description: 'Terminus HealthCheckResult — database, heap and RSS all within threshold' })
   @ApiResponse({ status: 503, description: 'Terminus HealthCheckResult — at least one indicator is down' })
   async check() {
+    // Overridable via env var, defaulting to the values calibrated against
+    // k8s/deployment.yaml's real 512Mi pod memory limit — but the e2e test
+    // harness runs this same check inside a process that also carries
+    // ts-jest's TypeScript compiler and Jest's own machinery, memory a
+    // compiled `node dist/main.js` production process never has resident.
+    // test/setup-env.ts raises both thresholds for exactly that reason —
+    // see docs/technical/ci-cd.md's heap-flake incident for the full story
+    // and why this was the actual fix, not sharding or forcing GC.
+    // ConfigService.get<number>() doesn't actually cast — an env-var
+    // override comes back as a string despite the generic, so this is
+    // wrapped in Number() explicitly rather than relying on checkHeap()'s
+    // internal `>` comparison to coerce it correctly.
+    const heapThresholdBytes = Number(this.config.get('HEALTH_CHECK_HEAP_THRESHOLD_BYTES', 512 * 1024 * 1024));
+    const rssThresholdBytes = Number(this.config.get('HEALTH_CHECK_RSS_THRESHOLD_BYTES', 1024 * 1024 * 1024));
     return this.health.check([
       () => this.db.pingCheck('database', { timeout: 3000 }),
-      () => this.memory.checkHeap('memory_heap', 512 * 1024 * 1024), // 512MB
-      () => this.memory.checkRSS('memory_rss', 1024 * 1024 * 1024),  // 1GB
+      () => this.memory.checkHeap('memory_heap', heapThresholdBytes),
+      () => this.memory.checkRSS('memory_rss', rssThresholdBytes),
     ]);
   }
 
