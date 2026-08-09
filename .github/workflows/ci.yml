@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel a still-running run for the same branch/PR when a new push
+# supersedes it, instead of letting both finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Matches Dockerfile's node:20-alpine base — see that file's three build
+  # stages (deps/builder/production).
+  NODE_VERSION: '20'
+
+jobs:
+  build-and-unit-test:
+    name: Lint, build, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Non-blocking, deliberately: this codebase was never actually run
+      # through `eslint --fix` and committed in that state (no
+      # .prettierrc means prettier's default double-quote style fights
+      # the codebase's existing single-quote convention), and
+      # tsconfig.json's `"exclude": ["test"]` means parserOptions.project
+      # can't type-check test/**/*.ts at all — so a strict, no-fix lint
+      # run currently reports ~8.7k pre-existing formatting diffs plus a
+      # parsing error on every test file. Fixing that is a real, separate
+      # cleanup task (repo-wide reformat, plus a tsconfig/.eslintrc
+      # adjustment) — not something to do silently as a side effect of
+      # adding CI. Until then, this step reports lint findings without
+      # blocking merges on them.
+      - name: Lint (report-only)
+        run: npx eslint "{src,apps,libs,test}/**/*.ts"
+        continue-on-error: true
+
+      - run: npx tsc --noEmit
+
+      - run: npm run build
+
+      - run: npm test
+
+  e2e:
+    name: E2E tests (full Docker stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Same services + same host-mapped ports (15432/5433/16379/8200/4000)
+      # that test/setup-env.ts's defaults assume — this is the exact
+      # workflow documented there and in README's Quick Start, just run
+      # on a GitHub-hosted runner instead of a laptop. `api` itself is
+      # deliberately excluded: the e2e suite talks to a Nest app started
+      # in-process by Jest/Supertest, not to the containerized api service.
+      - name: Start infrastructure (Postgres, Redis, Vault, mock-psp)
+        run: |
+          docker compose up -d --wait \
+            postgres-master postgres-replica redis vault mock-psp
+
+      - name: Run e2e tests
+        run: npm run test:e2e
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down infrastructure
+        if: always()
+        run: docker compose down -v

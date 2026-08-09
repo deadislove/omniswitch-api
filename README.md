@@ -411,4 +411,11 @@ Request → BIN Lookup → Country Detection
 
 ## 📝 License
 
-UNLICENSED - Proprietary
+**All Rights Reserved** — see [`LICENSE`](./LICENSE) for the full text.
+This is a proprietary reference project: viewing and reading the code is
+welcome, reuse or redistribution is not, without permission.
+
+See also [`CONTRIBUTING.md`](./CONTRIBUTING.md) (what kind of issues are
+welcome, and why this isn't set up for external code contributions),
+[`SECURITY.md`](./SECURITY.md) (how to report a vulnerability privately),
+and [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).

@@ -2,7 +2,7 @@
   "name": "omniswitch-api",
   "version": "1.0.0",
   "description": "Enterprise-grade Payment Gateway API Service - Modular Monolith + Hexagonal Architecture",
-  "author": "OmniSwitch Engineering",
+  "author": "Ta-Wei Lin",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
