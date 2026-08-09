@@ -51,8 +51,23 @@ describe('FX conversion: merchant settlement currency (e2e)', () => {
       .send(body);
   }
 
+  // Every read here follows a write it just made — that races the
+  // ambient DataSource's replica routing (app.module.ts's `replication`
+  // config sends plain repository reads to the replica, which has ~1s
+  // streaming lag behind master; see reserve.service.ts's release() and
+  // test/ledger-and-outbox.e2e-spec.ts for the same issue confirmed
+  // live elsewhere). This forces the read onto master instead.
+  async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.findOne(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async function ledgerEntries(paymentId: string): Promise<any[]> {
-    const event = await dataSource.getRepository(LedgerOutboxEntity).findOne({ where: { paymentId } });
+    const event = await findOneOnMaster(LedgerOutboxEntity, { paymentId });
     return (event?.entries as any[]) ?? [];
   }
 
@@ -173,8 +188,7 @@ describe('FX conversion: merchant settlement currency (e2e)', () => {
         .expect(200);
       expect(setRes.body.settlementCurrency).toBe('JPY');
 
-      const merchantRepo = dataSource.getRepository(MerchantEntity);
-      const afterSet = await merchantRepo.findOne({ where: { merchantId: merchant.merchantId } });
+      const afterSet = await findOneOnMaster(MerchantEntity, { merchantId: merchant.merchantId });
       expect(afterSet?.settlementCurrency).toBe('JPY');
 
       const clearRes = await request(app.getHttpServer())
@@ -189,7 +203,7 @@ describe('FX conversion: merchant settlement currency (e2e)', () => {
       // TypeORM's save() silently skipping an `undefined` property (instead
       // of writing NULL) would pass every check above and still leave
       // stale data in Postgres.
-      const afterClear = await merchantRepo.findOne({ where: { merchantId: merchant.merchantId } });
+      const afterClear = await findOneOnMaster(MerchantEntity, { merchantId: merchant.merchantId });
       expect(afterClear?.settlementCurrency == null).toBe(true);
     });
 

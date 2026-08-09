@@ -50,10 +50,22 @@ describe('Cross-border settlement remainder (e2e)', () => {
       .send(body);
   }
 
+  // This read follows a write it just made — that races the ambient
+  // DataSource's replica routing (app.module.ts's `replication` config
+  // sends plain repository reads to the replica, which has ~1s streaming
+  // lag behind master; see reserve.service.ts's release() and
+  // test/ledger-and-outbox.e2e-spec.ts for the same issue confirmed live
+  // elsewhere). This forces the read onto master instead.
   async function ledgerEntries(paymentId: string, eventType?: string): Promise<any[]> {
     const where: any = { paymentId };
     if (eventType) where.eventType = eventType;
-    const event = await dataSource.getRepository(LedgerOutboxEntity).findOne({ where, order: { createdAt: 'DESC' } });
+    const queryRunner = dataSource.createQueryRunner('master');
+    let event: LedgerOutboxEntity | null;
+    try {
+      event = await queryRunner.manager.findOne(LedgerOutboxEntity, { where, order: { createdAt: 'DESC' } });
+    } finally {
+      await queryRunner.release();
+    }
     return (event?.entries as any[]) ?? [];
   }
 

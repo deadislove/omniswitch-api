@@ -52,8 +52,32 @@ describe('Marketplace & split payments (e2e)', () => {
       .send(body);
   }
 
+  // Every read in this file follows a write it just made — that races
+  // the ambient DataSource's replica routing (app.module.ts's
+  // `replication` config sends plain repository reads to the replica,
+  // which has ~1s streaming lag behind master; see reserve.service.ts's
+  // release() and test/ledger-and-outbox.e2e-spec.ts for the same issue
+  // confirmed live elsewhere). These helpers force the read onto master.
+  async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.findOne(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async function findOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T[]> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.find(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async function ledgerEntries(paymentId: string): Promise<any[]> {
-    const event = await dataSource.getRepository(LedgerOutboxEntity).findOne({ where: { paymentId } });
+    const event = await findOneOnMaster(LedgerOutboxEntity, { paymentId });
     return (event?.entries as any[]) ?? [];
   }
 
@@ -191,16 +215,11 @@ describe('Marketplace & split payments (e2e)', () => {
     }).expect(422);
     expect(res.body.code).toBe('SPLIT_EXCEEDS_NET_AMOUNT');
 
-    const outboxCount = await dataSource.getRepository(LedgerOutboxEntity).count();
-    const paymentRepo = dataSource.getRepository(PaymentEntity);
-    const payments = await paymentRepo.find({ where: { merchantId: platform.merchantId } });
+    const payments = await findOnMaster(PaymentEntity, { merchantId: platform.merchantId });
     expect(payments).toHaveLength(1);
     expect(payments[0].status).toBe('FAILED');
-    const event = await dataSource.getRepository(LedgerOutboxEntity).findOne({ where: { paymentId: payments[0].id } });
+    const event = await findOneOnMaster(LedgerOutboxEntity, { paymentId: payments[0].id });
     expect(event).toBeNull();
-    // Sanity: this assertion doesn't depend on outboxCount, just documents
-    // that no new outbox row exists for the failed payment specifically.
-    void outboxCount;
   });
 
   it('splitting to a merchant that is not a connected account of the charging merchant is rejected with 422', async () => {
@@ -249,7 +268,7 @@ describe('Marketplace & split payments (e2e)', () => {
 
     // Rejected before PaymentCheckoutSaga.execute() was ever called — no
     // payment row at all, not even a FAILED one.
-    const payments = await dataSource.getRepository(PaymentEntity).find({ where: { merchantId: platform.merchantId } });
+    const payments = await findOnMaster(PaymentEntity, { merchantId: platform.merchantId });
     expect(payments).toHaveLength(0);
   });
 

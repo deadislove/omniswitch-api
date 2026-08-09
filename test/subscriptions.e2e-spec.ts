@@ -99,6 +99,33 @@ describe('Recurring billing / subscriptions (e2e)', () => {
     });
   }
 
+  // Every read in this file follows a write it just made (or a billing
+  // sweep that just ran) — that races the ambient DataSource's replica
+  // routing (app.module.ts's `replication` config sends plain repository
+  // reads to the replica, which has ~1s streaming lag behind master; see
+  // reserve.service.ts's release() and test/ledger-and-outbox.e2e-spec.ts
+  // for the same issue confirmed live elsewhere). These helpers force the
+  // read onto master. .update()/.save() calls above don't need it —
+  // TypeORM's replication mode always routes writes to master regardless
+  // of which repository issues them.
+  async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.findOne(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async function countOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<number> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.count(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async function runBillingNow(): Promise<{ charged: number; canceled: number; failed: number }> {
     const res = await request(app.getHttpServer())
       .post('/api/v1/admin/subscriptions/run-billing')
@@ -132,7 +159,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
     expect(periodEnd - periodStart).toBeGreaterThan(27 * DAY_MS);
     expect(periodEnd - periodStart).toBeLessThan(32 * DAY_MS);
 
-    const paymentCount = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+    const paymentCount = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
     expect(paymentCount).toBe(1);
   });
 
@@ -154,7 +181,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
     const periodStart = new Date(res.body.currentPeriodStart).getTime();
     expect(Math.round((periodEnd - periodStart) / DAY_MS)).toBe(14);
 
-    const paymentCount = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+    const paymentCount = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
     expect(paymentCount).toBe(0);
   });
 
@@ -185,7 +212,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
 
       // No PaymentAggregate is created for a trial at all (verification
       // doesn't move money, and the trial itself was never created either).
-      const paymentCount = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+      const paymentCount = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
       expect(paymentCount).toBe(0);
     });
 
@@ -254,7 +281,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       // recomputing it — the two are only guaranteed to match if this
       // test's own arithmetic exactly mirrors pushPeriodEndIntoPast()'s,
       // which is exactly the kind of assumption worth not making twice.
-      const pushedPeriodEnd = (await dataSource.getRepository(SubscriptionEntity).findOne({ where: { id: createRes.body.id } }))!.currentPeriodEnd.getTime();
+      const pushedPeriodEnd = (await findOneOnMaster(SubscriptionEntity, { id: createRes.body.id }))!.currentPeriodEnd.getTime();
 
       const sweep = await runBillingNow();
       expect(sweep.charged).toBeGreaterThanOrEqual(1);
@@ -271,7 +298,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       const newPeriodEnd = new Date(afterRes.body.currentPeriodEnd).getTime();
       expect(newPeriodEnd).toBe(pushedPeriodEnd + DAY_MS);
 
-      const paymentCount = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+      const paymentCount = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
       expect(paymentCount).toBe(2); // original + renewal
     });
 
@@ -288,7 +315,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       }).expect(201);
 
       await pushPeriodEndIntoPast(createRes.body.id, 5 * 60_000);
-      const afterPush = await dataSource.getRepository(SubscriptionEntity).findOne({ where: { id: createRes.body.id } });
+      const afterPush = await findOneOnMaster(SubscriptionEntity, { id: createRes.body.id });
 
       // Fabricate the exact deterministic payment id the sweep would use
       // for this subscription+period, already SUCCEEDED — simulating a
@@ -325,7 +352,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       // the period as already charged, PaymentAggregate.create() would
       // have overwritten this row via its own save() and wiped the
       // sentinel value.
-      const paymentAfter = await dataSource.getRepository(PaymentEntity).findOne({ where: { id: periodPaymentId } });
+      const paymentAfter = await findOneOnMaster(PaymentEntity, { id: periodPaymentId });
       expect(paymentAfter!.pspTransactionId).toBe(SENTINEL);
     });
 
@@ -596,7 +623,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
 
       // Only the original creation charge — the period-end cancellation
       // must not have attempted one more renewal charge first.
-      const paymentCount = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+      const paymentCount = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
       expect(paymentCount).toBe(1);
     });
 

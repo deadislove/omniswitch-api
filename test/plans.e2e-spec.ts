@@ -58,6 +58,33 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     return res.body;
   }
 
+  // Every read in this file follows a write it just made — that races
+  // the ambient DataSource's replica routing (app.module.ts's
+  // `replication` config sends plain repository reads to the replica,
+  // which has ~1s streaming lag behind master; see reserve.service.ts's
+  // release() and test/ledger-and-outbox.e2e-spec.ts for the same issue
+  // confirmed live elsewhere). This helper forces the read onto master.
+  // .update()/.save() calls don't need it — TypeORM's replication mode
+  // always routes writes to master regardless of which repository issues
+  // them.
+  async function countOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<number> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.count(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async function findOnMaster<T extends object>(entityClass: new () => T, where: object, order?: object): Promise<T[]> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.find(entityClass, { where, ...(order ? { order } : {}) });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   /** Sets the subscription's current period to an exact, known midpoint (50% elapsed) for deterministic proration math. */
   async function setPeriodToMidpoint(subscriptionId: string, periodDays: number): Promise<void> {
     const now = Date.now();
@@ -160,7 +187,7 @@ describe('Subscription plan catalog & proration (e2e)', () => {
       expect(changeRes.body.subscription.interval).toBe('day');
 
       // A real charge happened — 2 payments total (the original + the proration).
-      const paymentCount = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+      const paymentCount = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
       expect(paymentCount).toBe(2);
     });
 
@@ -189,7 +216,7 @@ describe('Subscription plan catalog & proration (e2e)', () => {
       // No new charge — still just the original payment. The credit is
       // only ever applied against a *future* period's charge, not
       // refunded now.
-      const paymentCount = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+      const paymentCount = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
       expect(paymentCount).toBe(1);
     });
 
@@ -225,7 +252,7 @@ describe('Subscription plan catalog & proration (e2e)', () => {
       expect(afterRes.body.pendingCredit).toBeUndefined(); // fully consumed ($10 credit < $20 charge)
 
       // The renewal charge should be $20 - $10 = $10, not the full $20.
-      const payments = await dataSource.getRepository(PaymentEntity).find({ where: { merchantId: merchant.merchantId }, order: { createdAt: 'ASC' } });
+      const payments = await findOnMaster(PaymentEntity, { merchantId: merchant.merchantId }, { createdAt: 'ASC' });
       expect(payments).toHaveLength(2); // original $40 charge + this $10 renewal
       expect(payments[1].amountMinorUnits).toBe('1000');
     });

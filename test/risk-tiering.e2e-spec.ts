@@ -93,8 +93,24 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
     return res.body;
   }
 
+  // Every read in this file follows a write it just made (or an admin
+  // sweep that just ran) — that races the ambient DataSource's replica
+  // routing (app.module.ts's `replication` config sends plain repository
+  // reads to the replica, which has ~1s streaming lag behind master; see
+  // reserve.service.ts's release() and test/ledger-and-outbox.e2e-spec.ts
+  // for the same issue confirmed live elsewhere). This helper forces the
+  // read onto master.
+  async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.findOne(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async function getMerchant(merchantId: string): Promise<MerchantEntity> {
-    return (await dataSource.getRepository(MerchantEntity).findOne({ where: { merchantId } }))!;
+    return (await findOneOnMaster(MerchantEntity, { merchantId }))!;
   }
 
   it('a merchant with fewer than the minimum sample size of settled charges is skipped — reserve policy stays untouched', async () => {
@@ -187,9 +203,8 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
     // Push the dispute's createdAt to 100 days ago — outside the 90-day
     // trailing window RiskTieringService actually looks at — simulating
     // time passing without touching real wall-clock time.
-    const disputeRepo = dataSource.getRepository(DisputeEntity);
-    const disputeEntity = await disputeRepo.findOne({ where: { pspDisputeId: disputeId } });
-    await disputeRepo.update(disputeEntity!.id, { createdAt: new Date(Date.now() - 100 * DAY_MS) });
+    const disputeEntity = await findOneOnMaster(DisputeEntity, { pspDisputeId: disputeId });
+    await dataSource.getRepository(DisputeEntity).update(disputeEntity!.id, { createdAt: new Date(Date.now() - 100 * DAY_MS) });
 
     await runTieringNow();
 

@@ -35,6 +35,30 @@ describe('Agentic payments — delegated agent credentials & spend policy (e2e)'
     await app.close();
   });
 
+  // Every read here follows a write it just made — that races the
+  // ambient DataSource's replica routing (app.module.ts's `replication`
+  // config sends plain repository reads to the replica, which has ~1s
+  // streaming lag behind master; see reserve.service.ts's release() and
+  // test/ledger-and-outbox.e2e-spec.ts for the same issue confirmed live
+  // elsewhere). This forces the read onto master instead.
+  async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.findOne(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async function countOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<number> {
+    const queryRunner = dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.count(entityClass, { where });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async function createDelegation(token: string, body: object) {
     const res = await request(app.getHttpServer())
       .post('/api/v1/delegations')
@@ -80,7 +104,7 @@ describe('Agentic payments — delegated agent credentials & spend policy (e2e)'
     // the response DTO — verify it directly against the DB, same posture
     // as this codebase's other "verified via a fresh DB read" reserve/
     // payout assertions.
-    const payment = await dataSource.getRepository(PaymentEntity).findOne({ where: { id: chargeRes.body.paymentId } });
+    const payment = await findOneOnMaster(PaymentEntity, { id: chargeRes.body.paymentId });
     expect(payment?.paymentMetadata).toEqual({ delegationId: created.delegation.id, initiatedBy: 'agent' });
 
     const afterRes = await request(app.getHttpServer())
@@ -100,7 +124,7 @@ describe('Agentic payments — delegated agent credentials & spend policy (e2e)'
     }).expect(422);
     expect(res.body.code).toBe('DELEGATION_PER_TRANSACTION_LIMIT_EXCEEDED');
 
-    const count = await dataSource.getRepository(PaymentEntity).count({ where: { merchantId: merchant.merchantId } });
+    const count = await countOnMaster(PaymentEntity, { merchantId: merchant.merchantId });
     expect(count).toBe(0);
   });
 
@@ -115,7 +139,7 @@ describe('Agentic payments — delegated agent credentials & spend policy (e2e)'
     const res = await agentCharge(created.agentToken, { amount: 40, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order') }).expect(422);
     expect(res.body.code).toBe('DELEGATION_MONTHLY_LIMIT_EXCEEDED');
 
-    const delegation = await dataSource.getRepository(DelegationEntity).findOne({ where: { id: created.delegation.id } });
+    const delegation = await findOneOnMaster(DelegationEntity, { id: created.delegation.id });
     expect(delegation?.currentMonthSpentMinorUnits).toBe('8000');
   });
 

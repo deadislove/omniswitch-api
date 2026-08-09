@@ -368,8 +368,21 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .send(createBody)
         .expect(200);
 
-      const outboxRepo = dataSource.getRepository(LedgerOutboxEntity);
-      const entriesBeforeResolution = await outboxRepo.count({ where: { paymentId: payment.paymentId } });
+      // Forced onto master, not the ambient replica-routed connection
+      // (app.module.ts's `replication` config) — this is a
+      // before/after count straddling two writes, each exposed to the
+      // replica's ~1s streaming lag (see reserve.service.ts's release()
+      // and test/ledger-and-outbox.e2e-spec.ts for the same issue
+      // confirmed live elsewhere).
+      const countOnMaster = async (paymentId: string) => {
+        const queryRunner = dataSource.createQueryRunner('master');
+        try {
+          return await queryRunner.manager.count(LedgerOutboxEntity, { where: { paymentId } });
+        } finally {
+          await queryRunner.release();
+        }
+      };
+      const entriesBeforeResolution = await countOnMaster(payment.paymentId);
 
       const closeBody = JSON.stringify({
         id: 'evt_' + uniqueId('test'),
@@ -389,7 +402,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .expect(200);
       expect(getRes.body.status).toBe('REFUNDED');
 
-      const entriesAfterResolution = await outboxRepo.count({ where: { paymentId: payment.paymentId } });
+      const entriesAfterResolution = await countOnMaster(payment.paymentId);
       // The original charge entry, plus a new one for the lost-dispute payout.
       expect(entriesAfterResolution).toBe(entriesBeforeResolution + 1);
 

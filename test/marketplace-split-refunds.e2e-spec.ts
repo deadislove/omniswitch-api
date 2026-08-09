@@ -51,8 +51,20 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
       .send(body);
   }
 
+  // This read follows a write it just made — that races the ambient
+  // DataSource's replica routing (app.module.ts's `replication` config
+  // sends plain repository reads to the replica, which has ~1s streaming
+  // lag behind master; see reserve.service.ts's release() and
+  // test/ledger-and-outbox.e2e-spec.ts for the same issue confirmed live
+  // elsewhere). This forces the read onto master instead.
   async function ledgerEntries(paymentId: string): Promise<any[]> {
-    const events = await dataSource.getRepository(LedgerOutboxEntity).find({ where: { paymentId }, order: { createdAt: 'ASC' } });
+    const queryRunner = dataSource.createQueryRunner('master');
+    let events: LedgerOutboxEntity[];
+    try {
+      events = await queryRunner.manager.find(LedgerOutboxEntity, { where: { paymentId }, order: { createdAt: 'ASC' } });
+    } finally {
+      await queryRunner.release();
+    }
     return events.flatMap((e) => e.entries as any[]);
   }
 
