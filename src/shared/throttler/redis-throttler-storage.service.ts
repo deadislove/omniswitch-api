@@ -3,6 +3,16 @@ import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { ThrottlerStorage } from '@nestjs/throttler';
 
+// @nestjs/throttler's own ThrottlerStorageRecord type isn't re-exported
+// from the package's public entry point (only ThrottlerStorage is) —
+// declared locally instead of a fragile deep import into its dist/ layout.
+interface ThrottlerStorageRecord {
+  totalHits: number;
+  timeToExpire: number;
+  isBlocked: boolean;
+  timeToBlockExpire: number;
+}
+
 /**
  * Redis-Backed Throttler Storage
  *
@@ -53,16 +63,32 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
     });
   }
 
-  async increment(key: string, ttl: number): Promise<{ totalHits: number; timeToExpire: number }> {
+  // @nestjs/throttler v6 widened this interface to support a separate
+  // "block duration" beyond the counting window (isBlocked/
+  // timeToBlockExpire) — and, more importantly, ThrottlerGuard now trusts
+  // isBlocked entirely to decide whether to throw 429, instead of
+  // comparing totalHits > limit itself. This implementation deliberately
+  // doesn't add a real block-duration feature (still the same fixed-window
+  // design this class's docblock describes) — it just computes isBlocked
+  // from the same totalHits > limit check the guard used to do, so a
+  // blocked key un-blocks exactly when the counting window itself expires,
+  // preserving this app's actual behavior instead of silently defaulting
+  // to "never blocked" (which would have made every rate limit a no-op).
+  async increment(key: string, ttl: number, limit: number): Promise<ThrottlerStorageRecord> {
     const prefixedKey = `throttle:${key}`;
     const [totalHits, pttl] = (await (this.client as any).throttlerIncrement(
       prefixedKey,
       ttl,
     )) as [number, number];
 
+    const timeToExpire = Math.max(0, Math.ceil(pttl / 1000));
+    const isBlocked = totalHits > limit;
+
     return {
       totalHits,
-      timeToExpire: Math.max(0, Math.ceil(pttl / 1000)),
+      timeToExpire,
+      isBlocked,
+      timeToBlockExpire: isBlocked ? timeToExpire : 0,
     };
   }
 
