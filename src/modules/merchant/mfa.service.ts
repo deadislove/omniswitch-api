@@ -1,6 +1,6 @@
 import { Injectable, Logger, ConflictException, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { authenticator } from 'otplib';
 import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcryptjs';
@@ -33,6 +33,7 @@ export class MfaService {
   constructor(
     @InjectRepository(MerchantEntity)
     private readonly merchantRepo: Repository<MerchantEntity>,
+    private readonly dataSource: DataSource,
     private readonly vaultTransit: VaultTransitService,
   ) {}
 
@@ -169,8 +170,26 @@ export class MfaService {
     return { plaintextCodes, hashes };
   }
 
+  // Forced onto master, not the ambient replica-routed connection (see
+  // app.module.ts's `replication` config) — every caller of getOrThrow()
+  // here (generateEnrollment, confirmEnrollment, verifyCode, disableMfa)
+  // reads a merchant row that a *previous* call in the same real-world
+  // sequence (enroll then confirm; login then verify) may have just
+  // written. That sequence has no artificial time compression the way
+  // e.g. subscription dunning retries do — a user enrolling MFA and
+  // immediately entering the code is completely normal — so the ~1s
+  // replica lag is a genuine production race, not just a test artifact.
+  // Confirmed live: test/mfa.e2e-spec.ts's enroll → confirm sequence
+  // failed with a false 409 "no enrollment in progress" in CI — see
+  // docs/technical/ci-cd.md.
   private async getOrThrow(merchantId: string): Promise<MerchantEntity> {
-    const merchant = await this.merchantRepo.findOne({ where: { merchantId } });
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let merchant: MerchantEntity | null;
+    try {
+      merchant = await queryRunner.manager.findOne(MerchantEntity, { where: { merchantId } });
+    } finally {
+      await queryRunner.release();
+    }
     if (!merchant) {
       throw new NotFoundException({
         statusCode: 404,
