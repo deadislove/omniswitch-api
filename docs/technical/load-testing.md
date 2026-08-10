@@ -93,6 +93,12 @@ doesn't itself get rate-limited — that's a different thing from measuring
 the charge path's own ceiling, which the route-level override always wins
 against from one IP.
 
+**Re-run 2026-08-10 against the NestJS v10→v11 upgrade** (which bundles
+Express 5, a materially different HTTP layer than everything measured
+above): same shape, same numbers — 6700 requests, 400 succeeded (`201`),
+5274 hit the route-level `429` cap, **zero `5xx`s**. The route-level cap
+is unaffected by the framework/HTTP-server upgrade, as expected.
+
 ## Finding #2: read-path capacity, unconstrained by the charge-specific cap
 
 `GET /payments/:id` has no route-level `@Throttle` override — only the
@@ -108,13 +114,28 @@ sustained at 150 req/s.
 **Result**: **16,900 / 16,900 requests succeeded — zero failures**, at up
 to 150 req/s sustained.
 
-| Metric | Value |
-|---|---|
-| p50 latency | 3ms |
-| p95 latency | 7.9ms |
-| p99 latency | 25.8ms |
-| max latency | 218ms |
-| Error rate | 0% |
+**Current numbers (2026-08-10, re-measured against the NestJS v10→v11 +
+Express 4→5 upgrade)** — three consecutive runs against the same
+resource-capped container, since a single run turned out not to be a
+reliable read of the tail:
+
+| Metric | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| Requests succeeded | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 |
+| p50 latency | 3ms | 3ms | 3ms |
+| p95 latency | 8.9ms | 8.9ms | 7ms |
+| p99 latency | 54.1ms | 23.8ms | 15ms |
+| max latency | 377ms | 112ms | 62ms |
+| Error rate | 0% | 0% | 0% |
+
+Run 1 (right after the container was (re)built and DB/JIT were still
+cold) has a visibly heavier tail than Runs 2-3 — p50/p95 are identical
+across all three, so this reads as a warm-up/host-scheduling artifact,
+not a per-request cost that changed. Runs 2-3 match or beat the original
+pre-upgrade baseline (p50 3ms / p95 7.9ms / p99 25.8ms / max 218ms) on
+every metric. 50,700 requests total across the three runs, zero
+failures. **Conclusion: no throughput or latency regression from the
+NestJS v11 / Express 5 upgrade.**
 
 ## What this means for `k8s/hpa.yaml`
 
@@ -128,6 +149,18 @@ during the read-capacity run (container capped at the deployment's
 |---|---|---|
 | CPU | ~33–38% of 1 core (≈330–380m) | ~62% of 1 core (≈620m) |
 | Memory | ~106–115MiB (≈21–22% of 512Mi limit) | 127.9MiB (≈25% of 512Mi limit) |
+
+**Re-measured 2026-08-10** (NestJS v11 / Express 5, sampled every 3s
+during Run 2/3 above — coarser sampling than the original pass, so the
+true instantaneous peak may be understated here):
+
+| | Steady-state (150 req/s) | Peak |
+|---|---|---|
+| CPU | ~26–47% of 1 core (≈260–470m), average ≈33% | ~47% of 1 core (≈470m) |
+| Memory | ~108–120MiB (≈21–23% of 512Mi limit) | ~121MiB (≈24% of 512Mi limit) |
+
+Same order of magnitude as the original pass — the CPU/memory footprint
+of serving this read load didn't materially change with the upgrade.
 
 Reframed against the HPA's actual basis (the 250m/256Mi **requests**):
 

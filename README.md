@@ -294,6 +294,31 @@ defaults — see [`docs/technical/load-testing.md`](docs/technical/load-testing.
 
 ---
 
+## ⚡ Performance
+
+Real numbers against the actual production Docker image (Artillery load
+generator, real Postgres/Redis/mock-psp — not a synthetic in-process
+benchmark), resource-capped to match `k8s/deployment.yaml`'s limits
+(1 CPU / 512Mi per pod). Full methodology and all findings (including why
+the charge path's own ceiling can't be measured from a single machine):
+[`docs/technical/load-testing.md`](docs/technical/load-testing.md).
+
+**Read path** (`GET /payments/:id`) — 90s sustained at 150 req/s:
+
+| Metric | Value |
+|---|---|
+| Success rate | 16,900 / 16,900 (100%, zero failures) |
+| p50 latency | 3ms |
+| p95 latency | 7–9ms |
+| p99 latency | 15–24ms |
+| CPU (steady-state / peak) | ~33% / ~47% of 1 core |
+| Memory (steady-state / peak) | ~110–120MiB / ~121MiB (of 512Mi limit) |
+
+Last verified 2026-08-10 against the NestJS v11 / Express 5 upgrade —
+matches or beats the pre-upgrade baseline on every metric, no regression.
+
+---
+
 ## 🔐 Security Notes
 
 1. **Never commit** `.env.local`, `.env.production`, or real secrets

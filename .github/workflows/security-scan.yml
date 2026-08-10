@@ -117,8 +117,12 @@ jobs:
       - run: npm ci
 
       # Full report (moderate+, prod deps only) for visibility — currently
-      # 4 pre-existing HIGH findings (js-yaml, lodash, multer, transitive
-      # via @nestjs/typeorm), none critical. Not gated on until addressed.
+      # 4 pre-existing findings (js-yaml HIGH via @nestjs/swagger, qs
+      # MODERATE, uuid MODERATE — no fix available for uuid), none
+      # critical. Not gated on until addressed. This list shifts with the
+      # dependency tree (e.g. the NestJS v11 upgrade replaced the prior
+      # lodash/multer/typeorm-transitive findings with these) — expect it
+      # to drift again on future dependency bumps.
       - name: Full report (report only)
         run: npm audit --audit-level=moderate --omit=dev || true
 
