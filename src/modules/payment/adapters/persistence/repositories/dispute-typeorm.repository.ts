@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { DisputePort, FindDisputesFilter } from '../../../ports/outbound/dispute.port';
 import { Dispute, DisputeStatus } from '../../../domain/aggregates/dispute.aggregate';
 import { Money } from '../../../domain/value-objects/money.vo';
@@ -11,6 +11,7 @@ export class DisputeTypeOrmRepository implements DisputePort {
   constructor(
     @InjectRepository(DisputeEntity)
     private readonly repo: Repository<DisputeEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async save(dispute: Dispute): Promise<void> {
@@ -40,16 +41,30 @@ export class DisputeTypeOrmRepository implements DisputePort {
     return entity ? this.toDomain(entity) : null;
   }
 
+  // Forced onto master, not the ambient replica-routed connection (see
+  // app.module.ts's `replication` config) — GET /admin/disputes is
+  // routinely called right after a webhook just wrote a new dispute (an
+  // operator opening the list after being notified, or — as
+  // test/webhooks.e2e-spec.ts does — a test listing immediately after
+  // processing charge.dispute.created), which can lose the race against
+  // the replica's ~1s streaming lag and simply not show the dispute yet.
+  // Confirmed live in CI — see docs/technical/ci-cd.md.
   async findMany(filter?: FindDisputesFilter): Promise<Dispute[]> {
-    const qb = this.repo.createQueryBuilder('d');
-    if (filter?.merchantId) {
-      qb.andWhere('d.merchantId = :merchantId', { merchantId: filter.merchantId });
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: DisputeEntity[];
+    try {
+      const qb = queryRunner.manager.createQueryBuilder(DisputeEntity, 'd');
+      if (filter?.merchantId) {
+        qb.andWhere('d.merchantId = :merchantId', { merchantId: filter.merchantId });
+      }
+      if (filter?.status) {
+        qb.andWhere('d.status = :status', { status: filter.status });
+      }
+      qb.orderBy('d.createdAt', 'DESC').take(filter?.limit ?? 50);
+      entities = await qb.getMany();
+    } finally {
+      await queryRunner.release();
     }
-    if (filter?.status) {
-      qb.andWhere('d.status = :status', { status: filter.status });
-    }
-    qb.orderBy('d.createdAt', 'DESC').take(filter?.limit ?? 50);
-    const entities = await qb.getMany();
     return entities.map((e) => this.toDomain(e));
   }
 
