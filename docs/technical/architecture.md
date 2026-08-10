@@ -81,7 +81,7 @@ src/
 │           ├── controllers/       # PaymentController (also the entry point for an AGENT
 │           │                      # token's delegated charge), WebhookController,
 │           │                      # SubscriptionController, PlanController,
-│           │                      # DelegationController, plus 6 focused admin controllers
+│           │                      # DelegationController, plus 7 focused admin controllers
 │           │                      # (Outbox/Reconciliation/Dispute/Reserve/Subscription/
 │           │                      # RiskTiering/MarketplacePayout)
 │           ├── sagas/             # PaymentCheckoutSaga (charge, compensating txns) — also
@@ -102,6 +102,103 @@ src/
 │           └── dto/               # ChargePaymentDto, RefundPaymentDto, SubscriptionDto,
 │                                  # PlanDto, DelegationDto, ...
 ```
+
+## Module dependency graph
+
+Nest's DI graph, straight from each module's `imports: [...]` array — not
+an idealized version. `AuthModule` has zero dependencies on the other two
+by design (see the section below for why):
+
+```
++--------------------------------------------------------------+
+|                          AppModule                           |
+|       (root -- also wires DB / Redis / Vault clients,        |
+|       ThrottlerGuard, ScheduleModule, TerminusModule)        |
++--------------------------------------------------------------+
+                                |
+              +---------------------------------+---------------------------------+
+              v                                 v                                 v
++--------------------------+      +--------------------------+      +--------------------------+
+|     HealthController     |      |      MerchantModule      |      |      PaymentModule       |
+|    MetricsController     |      |    (modules/merchant)    |      |    (modules/payment)     |
+|  (registered directly,   |      |                          |      |                          |
+|     no module import)    |      |                          |      |                          |
++--------------------------+      +--------------------------+      +--------------------------+
+
++------------------+     +------------------+
+|  PaymentModule   | --> |  MerchantModule  |
++------------------+     +------------------+
+
++------------------+     +------------------+
+|  PaymentModule   | --> |    AuthModule    |
+|                  |     |  (shared/auth)   |
++------------------+     +------------------+
+
++------------------+     +------------------+
+|  PaymentModule   | --> |   VaultModule    |
+|                  |     |  (shared/vault)  |
++------------------+     +------------------+
+
++------------------+     +------------------+
+|  MerchantModule  | --> |    AuthModule    |
+|                  |     |  (shared/auth)   |
++------------------+     +------------------+
+
++------------------+     +------------------+
+|  MerchantModule  | --> |   VaultModule    |
+|                  |     |  (shared/vault)  |
++------------------+     +------------------+
+```
+
+`PaymentModule` importing `MerchantModule` (not the other way around) is
+the one edge worth remembering: `HmacSignatureGuard` (lives in
+`PaymentModule`'s guard chain) needs `MerchantService` to look up a
+merchant's HMAC key. Nothing in `MerchantModule` needs anything from
+`PaymentModule`. If a future feature ever seems to need the reverse edge,
+that's a sign the shared concern belongs in `AuthModule` (or a new leaf
+module) instead of creating a cycle — see the section right below for the
+same reasoning spelled out in prose.
+
+### Inside `PaymentModule`: the hexagonal layering
+
+Dependency direction only ever points inward, toward `domain/` — this is
+the actual enforcement mechanism behind "domain logic never imports
+infrastructure," not just a convention:
+
+```
++------------------------------------------------------------+
+|               application/  (orchestration)                |
+|                                                            |
+|        controllers/   sagas/ (PaymentCheckoutSaga)         |
+|  services/ (AcquirerRoutingService, ...)   interceptors/   |
++------------------------------------------------------------+
+                               | depends on
+                               v
++----------------------------------------------+                      +------------------------------------------+
+|     ports/outbound/  (abstract classes)      |                      |  adapters/  (concrete implementations)   |
+|                                              |  <== implements ==   |                                          |
+|   PaymentRepositoryPort, SubscriptionPort,   |                      |   persistence/ (TypeORM repositories)    |
+| DisputePort, PSPAdapterPort, CachePort, ...  |                      | psp/ (StripePSPAdapter, AdyenPSPAdapter) |
+|                                              |                      |   cache/, circuit-breaker/, fx/, bank/   |
++----------------------------------------------+                      +------------------------------------------+
+                               | depends on
+                               v
++----------------------------------------------+
+|        domain/  (zero external deps)         |
+|                                              |
+|        aggregates/ (PaymentAggregate,        |
+|          Subscription, Dispute, ...)         |
+|    value-objects/ (Money, Currency, ...)     |
+|       services/ (SmartRoutingStrategy)       |
++----------------------------------------------+
+```
+
+The dotted arrow (`Adapters -.implements.-> Ports`) is deliberately not a
+solid dependency arrow — an adapter *implements* a port's interface, the
+port itself never imports or knows about any adapter. Concrete wiring
+(`{ provide: PaymentRepositoryPort, useClass: PaymentTypeOrmRepository }`)
+happens once, in `payment.module.ts`; nothing above the ports layer ever
+names a concrete adapter class.
 
 ## Why two auth-adjacent modules (`shared/auth` vs `modules/merchant`)
 

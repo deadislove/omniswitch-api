@@ -21,7 +21,7 @@ come back to.
 | Layer | Choice | Notes |
 |---|---|---|
 | Language/runtime | TypeScript, Node.js 20 | |
-| Framework | NestJS 10 | DI container, decorators, module system |
+| Framework | NestJS 11 (Express 5) | DI container, decorators, module system |
 | Database | PostgreSQL 16 | Master + read replica (`@nestjs/typeorm`'s `replication` config) |
 | ORM | TypeORM 0.3 | `synchronize: false` everywhere — migrations are the only source of schema truth |
 | Cache / distributed state | Redis (`ioredis`) | Idempotency locks, rate-limit counters, circuit-breaker state, JWT revocation lists |
@@ -142,6 +142,64 @@ The guard order in step 1 is load-bearing, not incidental — each guard
 depends on state the previous one populated (`req.user`, then
 `req.user.merchantId`). If you add a new guard that reads `req.user`, it
 must go after `JwtAuthGuard` in the `@UseGuards()` array.
+
+The same flow as a sequence diagram — useful for seeing *when* each
+piece of state becomes available, and where the two failure branches
+(PSP failure, AGENT reservation release) actually sit:
+
+```
++--------------------+
+|       Client       |
++--------------------+
+        | POST /payments/charge
+        v
++----------------------------------------------------------------+
+|  Guard chain: ThrottlerGuard -> JwtAuthGuard -> RolesGuard ->  |
+|          MerchantThrottlerGuard -> HmacSignatureGuard          |
+|                                                                |
+|        (populates req.user, then req.user.merchantId --        |
+|            short-circuits to 401/403/429 on failure)           |
++----------------------------------------------------------------+
+                              |
+                              v
++----------------------------------------------------------------+
+|                     IdempotencyInterceptor                     |
+|                                                                |
+|               (Redis SETNX on Idempotency-Key --               |
+|        replays prior result if this key was seen before)       |
++----------------------------------------------------------------+
+                              |
+                              v
++----------------------------------+               +--------------------------------+
+|    PaymentController.charge()    |--[if AGENT]-->|       DelegationService        |
+|                                  |               |     .reserveSpendOrThrow()     |
+|                                  |               |   (atomic UPDATE ... WHERE)    |
++----------------------------------+               +--------------------------------+
+                 |
+                 v
++-------------------------------------------------------------+
+| PaymentCheckoutSaga.execute()                               |
+|                                                             |
+| 1. INSERT Payment (PENDING) -- no ledger entry yet          |
+| 2. ChargeLedgerParamsResolverService.resolve()              |
+|    -> fee/FX/reserve/split params, validated before         |
+|       any money moves                                       |
+| 3. Risk score computed (stored for audit only)              |
+| 4. AcquirerRoutingService.selectOptimalAdapter()            |
+|    -> chosen PSP adapter (BIN + amount + live health)       |
+| 5. PSP Adapter.charge():                                    |
+|      succeeds -> UPDATE Payment SUCCEEDED +                 |
+|                  INSERT ledger outbox event (1 transaction) |
+|      throws   -> retry fallback PSP; both fail ->           |
+|                  UPDATE Payment FAILED (+ release AGENT     |
+|                  reservation, if caller was AGENT)          |
++-------------------------------------------------------------+
+                              |
+                              v
++----------------------------------------------+
+|   200/201 response  { paymentId, status }    |
++----------------------------------------------+
+```
 
 ## 4. Other core flows worth knowing before you touch them
 
@@ -335,6 +393,69 @@ for more.
 [`../technical/infra-verification-status.md`](../technical/infra-verification-status.md)
 for exactly what's been proven to work here versus what's an unverified
 assumption before you trust a green e2e run more than it's earned.
+
+**Local dev/test topology** (what `docker-compose.yml` actually wires up):
+
+```
++--------------------------------------------------+
+|     api  (NestJS app, production Dockerfile)     |
++--------------------------------------------------+
+                          |
+           +-------------------------+-------------------------+-------------------------+--------------------------+
+           v                         v                         v                         v                          v
++--------------------+    +--------------------+    +--------------------+    +--------------------+    +----------------------+
+|  postgres-master   |    |  postgres-replica  |    |       redis        |    |       vault        |    |       mock-psp       |
+|                    |    |                    |    |                    |    |  (Transit engine,  |    | (Stripe/Adyen-shaped |
+|                    |    |                    |    |                    |    |      dev-mode)     |    |     HTTP server)     |
++--------------------+    +--------------------+    +--------------------+    +--------------------+    +----------------------+
+
++--------------------+                            +--------------------+
+|  postgres-master   |--[streaming replication]-->|  postgres-replica  |
++--------------------+                            +--------------------+
+```
+
+What each `api` edge above actually carries:
+
+- `-> postgres-master`: writes + forced-master reads (see `architecture.md`'s replica-lag notes)
+- `-> postgres-replica`: plain reads (`TypeOrmModule`'s `replication` config)
+- `-> redis`: idempotency locks, rate-limit counters, circuit-breaker state, JWT revocation lists
+- `-> vault`: encrypt/decrypt `hmac_secret`, TOTP secrets
+- `-> mock-psp`: charge/capture/refund/cancel, FX rates, KYC review, bank transfers
+
+**Production topology** (what the `k8s/` manifests describe — not all of
+this has been run against a real cluster; see
+`infra-verification-status.md` linked above for the honest breakdown):
+
+```
++----------------+    +----------------------+    +----------------------+
+|     Client     |--> |   k8s/ingress.yaml   |--> |   k8s/service.yaml   |
++----------------+    +----------------------+    +----------------------+
+                                                              |
+        +---------------------+---------------------------+---+
+        v                     v                           v
++--------------+      +--------------+      +--------------------------+
+|     Pod      |      |     Pod      |      |           Pod            |
+|              |      |              |      |    (HPA scales to 20     |
+|              |      |              |      |    pods, k8s/hpa.yaml    |
+|              |      |              |      |  -- see load-testing.md  |
+|              |      |              |      |  for the measured basis) |
++--------------+      +--------------+      +--------------------------+
+(every pod talks to all four of the below)
+                                    |
+            +-----------------------+----+-----------------------------+--------------------------------+
+            v                            v                             v                                v
++----------------------+     +----------------------+     +------------------------+     +----------------------------+
+|   Managed Postgres   |     |    Managed Redis     |     |   Real Vault cluster   |     |  Real Stripe / Adyen APIs  |
+|  (master + replica)  |     |                      |     |  (not dev-mode -- see  |     |                            |
+|                      |     |                      |     |  secret-management.md) |     |                            |
++----------------------+     +----------------------+     +------------------------+     +----------------------------+
+```
+
+The shape doesn't change between the two — same app, same dependency
+list — only *what's behind each box* changes: `mock-psp` becomes real PSP
+APIs, dev-mode Vault becomes a real cluster, a single-node Postgres
+container becomes a managed master/replica pair. That's deliberate: the
+app's own code has no idea which one it's talking to.
 
 ## Where to go next
 
