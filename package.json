@@ -79,7 +79,7 @@
     "@types/supertest": "^7.2.1",
     "@types/uuid": "^9.0.7",
     "@typescript-eslint/eslint-plugin": "^8.67.0",
-    "@typescript-eslint/parser": "^8.66.0",
+    "@typescript-eslint/parser": "^8.67.0",
     "artillery": "^2.0.33",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.1.0",
