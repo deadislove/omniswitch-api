@@ -14,6 +14,15 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # v7 is the native Go-rewrite compiler (microsoft/typescript-go); its
+      # programmatic Compiler API — which ts-node and ts-jest both depend on
+      # to transpile .ts on the fly — is officially "not ready" upstream,
+      # and @typescript-eslint/eslint-plugin's peer range (<6.1.0) makes
+      # `npm ci` fail outright on v7 today. Revisit once both catch up.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(deps)"
 
