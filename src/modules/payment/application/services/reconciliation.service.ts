@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { ReconciliationPort } from '../../ports/outbound/reconciliation.port';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
