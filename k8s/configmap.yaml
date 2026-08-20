@@ -12,13 +12,25 @@ data:
   APP_VERSION: "1.0.0"
   LOG_LEVEL: "info"
 
-  # Database
-  DB_MASTER_HOST: "postgres-master.payments.svc.cluster.local"
+  # Database — routed through PgBouncer (pgbouncer.yaml), not directly at
+  # postgres-master/postgres-replica. At maxReplicas: 20 (hpa.yaml) with
+  # extra.max: 20 per pod (app.module.ts), direct connections could reach
+  # 400 against a single Postgres instance — see
+  # docs/spec/future/database-scaling.md (Option 1).
+  DB_MASTER_HOST: "pgbouncer-master.payments.svc.cluster.local"
   DB_MASTER_PORT: "5432"
-  DB_REPLICA_HOST: "postgres-replica.payments.svc.cluster.local"
+  DB_REPLICA_HOST: "pgbouncer-replica.payments.svc.cluster.local"
   DB_REPLICA_PORT: "5432"
   DB_NAME: "omniswitch_payments"
   DB_SSL: "true"
+
+  # Real Postgres backends pgbouncer.yaml's two Deployments pool for —
+  # wherever the master/replica StatefulSet or managed service actually
+  # lives (not defined in this repo). Kept separate from
+  # DB_MASTER_HOST/DB_REPLICA_HOST above, which is what the app itself
+  # connects to (the pooler), not the real database.
+  PGBOUNCER_MASTER_BACKEND_HOST: "postgres-master.payments.svc.cluster.local"
+  PGBOUNCER_REPLICA_BACKEND_HOST: "postgres-replica.payments.svc.cluster.local"
 
   # Redis
   REDIS_HOST: "redis.payments.svc.cluster.local"

@@ -33,10 +33,13 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
-      # Database
-      DB_MASTER_HOST: postgres-master
+      # Database — routed through PgBouncer (transaction-mode pooling),
+      # not directly at postgres-master/postgres-replica. See the
+      # pgbouncer-master/pgbouncer-replica services below and
+      # docs/spec/future/database-scaling.md (Option 1).
+      DB_MASTER_HOST: pgbouncer-master
       DB_MASTER_PORT: 5432
-      DB_REPLICA_HOST: postgres-replica
+      DB_REPLICA_HOST: pgbouncer-replica
       DB_REPLICA_PORT: 5432
       DB_USERNAME: omniswitch
       DB_PASSWORD: omniswitch_secret
@@ -88,9 +91,9 @@ services:
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: omniswitch-dev-root-token
     depends_on:
-      postgres-master:
+      pgbouncer-master:
         condition: service_healthy
-      postgres-replica:
+      pgbouncer-replica:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -156,6 +159,55 @@ services:
       retries: 5
       start_period: 30s
 
+  # ─── PgBouncer (master) ──────────────────────────────────────────────────────
+  # Sits between `api` and postgres-master. Each pod already opens up to
+  # `extra.max: 20` connections (app.module.ts); at k8s/hpa.yaml's
+  # maxReplicas: 20 that's up to 400 potential connections against a
+  # `max_connections=200` server — already over budget at full scale,
+  # independent of data volume. Transaction-mode pooling multiplexes many
+  # app-side connections onto a much smaller, bounded set of real backend
+  # connections. See docs/spec/future/database-scaling.md (Option 1) for
+  # the full reasoning.
+  #
+  # Migrations (`npm run migration:run`, `pretest:e2e`) intentionally keep
+  # connecting directly to postgres-master's own port (15432 on the host)
+  # rather than through this pooler — DDL and transaction-mode pooling
+  # don't mix well, and migrations aren't a connection-count concern.
+  pgbouncer-master:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: omniswitch-pgbouncer-master
+    restart: unless-stopped
+    ports:
+      # Host-side access for local tooling (e.g. running the e2e suite
+      # from the host against the pooler instead of postgres-master
+      # directly) — same remap-off-the-default-port reasoning as
+      # postgres-master's own 15432 above.
+      - "16432:5432"
+    environment:
+      DB_HOST: postgres-master
+      DB_PORT: 5432
+      DB_USER: omniswitch
+      DB_PASSWORD: omniswitch_secret
+      DB_NAME: omniswitch_payments
+      POOL_MODE: transaction
+      # Real backend connections PgBouncer opens to postgres-master — kept
+      # well under max_connections=200, leaving headroom for replication
+      # (max_wal_senders=3), migrations, and dev tools (pgAdmin).
+      DEFAULT_POOL_SIZE: 50
+      MAX_CLIENT_CONN: 1000
+      AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=omniswitch_secret psql -h 127.0.0.1 -p 5432 -U omniswitch -d omniswitch_payments -c 'SELECT 1' >/dev/null 2>&1 || pg_isready -h 127.0.0.1 -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   # ─── PostgreSQL Replica ──────────────────────────────────────────────────────
   postgres-replica:
     image: postgres:16-alpine
@@ -198,6 +250,38 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+  # ─── PgBouncer (replica) ─────────────────────────────────────────────────────
+  # Same reasoning as pgbouncer-master — postgres-replica is configured with
+  # the same max_connections=200, and TypeORM's replication driver opens up
+  # to `extra.max: 20` read connections per pod against it too.
+  pgbouncer-replica:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: omniswitch-pgbouncer-replica
+    restart: unless-stopped
+    ports:
+      - "16433:5432"
+    environment:
+      DB_HOST: postgres-replica
+      DB_PORT: 5432
+      DB_USER: omniswitch
+      DB_PASSWORD: omniswitch_secret
+      DB_NAME: omniswitch_payments
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: 50
+      MAX_CLIENT_CONN: 1000
+      AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres-replica:
+        condition: service_healthy
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=omniswitch_secret psql -h 127.0.0.1 -p 5432 -U omniswitch -d omniswitch_payments -c 'SELECT 1' >/dev/null 2>&1 || pg_isready -h 127.0.0.1 -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # ─── Redis ───────────────────────────────────────────────────────────────────
   redis:

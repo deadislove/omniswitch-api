@@ -1,0 +1,217 @@
+# PgBouncer — transaction-mode connection pooling in front of
+# postgres-master and postgres-replica (whichever StatefulSet/managed
+# service backs them; not defined in this repo — see configmap.yaml's
+# DB_MASTER_HOST/DB_REPLICA_HOST for where they're expected to live).
+#
+# Why: each pod opens up to `extra.max: 20` connections (app.module.ts,
+# one pool for master writes, one for replica reads) — at hpa.yaml's
+# maxReplicas: 20 that's up to 400 potential connections against each of
+# master and replica, both configured for max_connections=200 in the
+# local docker-compose stack. Already over budget at full scale,
+# independent of data volume. See
+# docs/spec/future/database-scaling.md (Option 1) for the full reasoning
+# and docker-compose.yml's pgbouncer-master/pgbouncer-replica services
+# for the equivalent local setup.
+#
+# DEFAULT_POOL_SIZE: 50 per instance — real backend connections PgBouncer
+# opens to Postgres, well under a 200 max_connections budget, leaving
+# headroom for replication streams, migrations, and admin tooling.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer-master
+  namespace: payments
+  labels:
+    app: pgbouncer-master
+    component: connection-pooler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pgbouncer-master
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: pgbouncer-master
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:v1.24.1-p1
+          ports:
+            - containerPort: 5432
+              name: pgbouncer
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: PGBOUNCER_MASTER_BACKEND_HOST
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_PASSWORD
+            - name: POOL_MODE
+              value: "transaction"
+            - name: DEFAULT_POOL_SIZE
+              value: "50"
+            - name: MAX_CLIENT_CONN
+              value: "1000"
+            - name: AUTH_TYPE
+              value: "scram-sha-256"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-master
+  namespace: payments
+  labels:
+    app: pgbouncer-master
+    component: connection-pooler
+spec:
+  type: ClusterIP
+  selector:
+    app: pgbouncer-master
+  ports:
+    - name: pgbouncer
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer-replica
+  namespace: payments
+  labels:
+    app: pgbouncer-replica
+    component: connection-pooler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pgbouncer-replica
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: pgbouncer-replica
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:v1.24.1-p1
+          ports:
+            - containerPort: 5432
+              name: pgbouncer
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: PGBOUNCER_REPLICA_BACKEND_HOST
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_PASSWORD
+            - name: POOL_MODE
+              value: "transaction"
+            - name: DEFAULT_POOL_SIZE
+              value: "50"
+            - name: MAX_CLIENT_CONN
+              value: "1000"
+            - name: AUTH_TYPE
+              value: "scram-sha-256"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-replica
+  namespace: payments
+  labels:
+    app: pgbouncer-replica
+    component: connection-pooler
+spec:
+  type: ClusterIP
+  selector:
+    app: pgbouncer-replica
+  ports:
+    - name: pgbouncer
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
