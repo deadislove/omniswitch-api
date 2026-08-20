@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { PayoutPort, FindPayoutsFilter } from '../../ports/outbound/payout.port';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { BankTransferPort } from '../../ports/outbound/bank-transfer.port';

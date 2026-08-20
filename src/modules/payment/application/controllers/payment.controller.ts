@@ -24,7 +24,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiHeader, ApiRespon
 import { Observable, Subject, fromEvent } from 'rxjs';
 import { map, filter } from 'rxjs/operators';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../shared/guards/roles.guard';
