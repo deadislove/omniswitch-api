@@ -1,7 +1,7 @@
 import { Injectable, Logger, ConflictException, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { authenticator } from 'otplib';
+import { generateSecret, generateURI, verify } from 'otplib';
 import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { MerchantEntity } from './merchant.entity';
@@ -54,11 +54,11 @@ export class MfaService {
       });
     }
 
-    const secret = authenticator.generateSecret();
+    const secret = generateSecret();
     merchant.mfaSecretCiphertext = await this.vaultTransit.encrypt(secret);
     await this.merchantRepo.save(merchant);
 
-    const otpauthUrl = authenticator.keyuri(merchantId, ISSUER, secret);
+    const otpauthUrl = generateURI({ issuer: ISSUER, label: merchantId, secret });
     this.logger.log(`MFA enrollment started for merchant ${merchantId}`);
     return { secret, otpauthUrl };
   }
@@ -81,7 +81,7 @@ export class MfaService {
     }
 
     const secret = await this.vaultTransit.decrypt(merchant.mfaSecretCiphertext);
-    if (!authenticator.check(code, secret)) {
+    if (!(await this.isValidTotp(secret, code))) {
       throw new UnauthorizedException({
         statusCode: 401,
         error: 'Invalid MFA code',
@@ -116,7 +116,7 @@ export class MfaService {
     }
 
     const secret = await this.vaultTransit.decrypt(merchant.mfaSecretCiphertext);
-    if (authenticator.check(code, secret)) {
+    if (await this.isValidTotp(secret, code)) {
       return;
     }
 
@@ -155,6 +155,21 @@ export class MfaService {
     merchant.mfaBackupCodeHashes = [];
     await this.merchantRepo.save(merchant);
     this.logger.warn(`MFA disabled for merchant ${merchantId}`);
+  }
+
+  /**
+   * otplib v13's verify() throws (e.g. TokenLengthError) on malformed
+   * input instead of just returning an invalid result — callers here
+   * pass user-typed input that may well be a backup code, not a TOTP
+   * token, so any throw just means "not a valid TOTP code", same as a
+   * false verify() result.
+   */
+  private async isValidTotp(secret: string, code: string): Promise<boolean> {
+    try {
+      return (await verify({ secret, token: code })).valid;
+    } catch {
+      return false;
+    }
   }
 
   private async generateBackupCodes(): Promise<{ plaintextCodes: string[]; hashes: string[] }> {
