@@ -62,7 +62,7 @@
     "stripe": "^22.5.0",
     "swagger-ui-express": "^5.0.0",
     "typeorm": "^1.1.0",
-    "uuid": "^9.0.1",
+    "uuid": "^14.0.1",
     "winston": "^3.11.0"
   },
   "devDependencies": {
