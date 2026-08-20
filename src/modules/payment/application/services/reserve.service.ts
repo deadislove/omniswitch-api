@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException, ConflictException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { ReserveHoldPort, FindReserveHoldsFilter } from '../../ports/outbound/reserve-hold.port';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { ReserveHold } from '../../domain/aggregates/reserve-hold.aggregate';

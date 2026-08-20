@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { AcquirerRoutingService } from '../services/acquirer-routing.service';

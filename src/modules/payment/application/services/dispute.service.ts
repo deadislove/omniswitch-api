@@ -1,6 +1,6 @@
 import { Injectable, Logger, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DisputePort, FindDisputesFilter } from '../../ports/outbound/dispute.port';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';

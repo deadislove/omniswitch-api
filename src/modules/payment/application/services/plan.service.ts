@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { PlanPort, FindPlansFilter } from '../../ports/outbound/plan.port';
 import { Plan } from '../../domain/aggregates/plan.aggregate';
 import { Money } from '../../domain/value-objects/money.vo';
