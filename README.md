@@ -308,14 +308,20 @@ the charge path's own ceiling can't be measured from a single machine):
 | Metric | Value |
 |---|---|
 | Success rate | 16,900 / 16,900 (100%, zero failures) |
-| p50 latency | 3ms |
-| p95 latency | 7–9ms |
-| p99 latency | 15–24ms |
-| CPU (steady-state / peak) | ~33% / ~47% of 1 core |
-| Memory (steady-state / peak) | ~110–120MiB / ~121MiB (of 512Mi limit) |
+| p50 latency | 2–3ms |
+| p95 latency | 6–7.9ms |
+| p99 latency | 10.9–13.9ms |
+| CPU (steady-state / peak) | ~1% / ~23% of 1 core |
+| Memory (steady-state / peak) | ~61–63MiB / ~104MiB (of 512Mi limit) |
 
-Last verified 2026-08-10 against the NestJS v11 / Express 5 upgrade —
-matches or beats the pre-upgrade baseline on every metric, no regression.
+Last verified 2026-08-21 (three consecutive runs, same resource-capped
+container) after the `uuid` → native `crypto.randomUUID()`/`crypto`-based
+`uuidv5` swap and the accumulated dependency bumps since 2026-08-10
+(TypeORM 1.1, jest 30, pg 8.23, stripe 22, `@typescript-eslint` 8.67).
+Success rate and latency match the prior baseline; steady-state CPU and
+memory dropped substantially (~33%→~1% CPU, ~110–120MiB→~61–63MiB) — see
+[`docs/technical/load-testing.md`](docs/technical/load-testing.md) for
+the full re-run and a discussion of why.
 
 ---
 

@@ -137,6 +137,30 @@ every metric. 50,700 requests total across the three runs, zero
 failures. **Conclusion: no throughput or latency regression from the
 NestJS v11 / Express 5 upgrade.**
 
+**Re-run 2026-08-21**, after the accumulated dependency bumps since
+2026-08-10 (TypeORM 0.3→1.1, jest 29→30, pg 8.22→8.23, stripe 14→22,
+`@typescript-eslint` 8.66→8.67, `class-validator` 0.14→0.15) plus
+replacing the `uuid` npm package with Node's native `crypto.randomUUID()`
+(v4) and a local SHA-1-based `uuidv5()` (see `src/shared/utils/uuid.ts`)
+— `uuid@14` ships ESM-only, which broke this project's CommonJS Jest
+setup, so it was dropped as a dependency entirely rather than worked
+around. Three consecutive runs, same methodology:
+
+| Metric | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| Requests succeeded | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 |
+| p50 latency | 3ms | 2ms | 3ms |
+| p95 latency | 7.9ms | 7ms | 6ms |
+| p99 latency | 13.9ms | 12.1ms | 10.9ms |
+| max latency | 89ms | 83ms | 65ms |
+| Error rate | 0% | 0% | 0% |
+
+Success rate and latency match the 2026-08-10 baseline (if anything,
+p99/max are tighter — no run reproduced that baseline's 54.1ms/377ms
+tail). 50,700 requests total, zero failures. **Conclusion: no throughput
+or latency regression** — and, per the CPU/memory numbers below, a
+real drop in per-request resource cost.
+
 ## What this means for `k8s/hpa.yaml`
 
 `k8s/deployment.yaml` requests 250m CPU / 256Mi memory per pod (limits:
@@ -162,6 +186,29 @@ true instantaneous peak may be understated here):
 Same order of magnitude as the original pass — the CPU/memory footprint
 of serving this read load didn't materially change with the upgrade.
 
+**Re-measured 2026-08-21** (same dependency bumps + `uuid` removal as the
+latency re-run above; sampled continuously via `docker stats` for the
+duration of Run 3, not just spot-checked):
+
+| | Steady-state (150 req/s, warm) | Peak |
+|---|---|---|
+| CPU | ~0.4–1.8% of 1 core (≈4–18m), average ≈1% | ~23% of 1 core (≈230m), during warm-up/ramp only |
+| Memory | ~61–63MiB (≈12% of 512Mi limit) | ~104MiB (≈20% of 512Mi limit), during warm-up only |
+
+A real drop, not noise: steady-state CPU went from ≈33% average
+(≈330m) to ≈1% (≈10m) — roughly a 30x reduction — and steady-state
+memory from ≈110–120MiB to ≈61–63MiB, roughly half. The peak in both
+metrics now occurs during the warm-up/ramp phase (cold JIT, connection
+pool still filling) and *drops* once the run reaches sustained 150 req/s,
+the same cold-start pattern Run 1 showed in the latency numbers above —
+just far more pronounced here since steady-state itself is now so cheap.
+The likely driver: `crypto.randomUUID()` is a native Node binding (used
+on every payment ID / correlation ID / event ID generation in the write
+path, which this read-only benchmark doesn't even exercise directly, but
+reflects the same runtime), versus the pure-JS `uuid` package's v4
+implementation — consistent with the accumulated effect of this pass's
+other dependency bumps rather than one single change.
+
 Reframed against the HPA's actual basis (the 250m/256Mi **requests**):
 
 - **CPU**: steady-state ≈140% of the 250m request, peak ≈250%. The HPA's
@@ -180,6 +227,18 @@ throughput that HPA would scale out fairly eagerly under read-heavy load —
 worth knowing before assuming "70% CPU" means "close to actually
 overloaded." This was previously undocumented; now there's a real,
 reproducible number behind it instead of an untested default.
+
+**Re-reframed 2026-08-21** against the same 250m/256Mi requests, using
+the re-measured numbers above: steady-state CPU is now ≈4% of the 250m
+request (≈10m/250m) and peak ≈92% (≈230m/250m, warm-up only, not
+sustained). The "HPA would scale out fairly eagerly" conclusion above no
+longer holds for this specific read workload — sustained 150 req/s alone
+wouldn't get a pod anywhere near the 70% CPU trigger now. This doesn't
+mean the HPA thresholds should change: it means this endpoint's resource
+cost dropped enough that read traffic is no longer the thing likely to
+drive scale-out — something else (the still-unmeasured charge path,
+or a traffic mix heavier than pure reads) would need to be measured
+before touching `k8s/hpa.yaml` or `k8s/deployment.yaml`'s requests.
 
 ## What this doesn't cover
 
