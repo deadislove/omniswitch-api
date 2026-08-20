@@ -104,6 +104,9 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "transformIgnorePatterns": [
+      "node_modules/(?!.*(@scure/base|@noble/hashes))"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

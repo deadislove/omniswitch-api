@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
-import { authenticator } from 'otplib';
+import { generate } from 'otplib';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 
@@ -19,8 +19,8 @@ describe('MFA: enroll / confirm / login gate / disable (e2e)', () => {
     await app.close();
   });
 
-  function currentTotp(secret: string): string {
-    return authenticator.generate(secret);
+  function currentTotp(secret: string): Promise<string> {
+    return generate({ secret });
   }
 
   it('rejects confirming enrollment with a wrong code, and MFA stays disabled', async () => {
