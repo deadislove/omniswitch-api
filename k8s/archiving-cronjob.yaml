@@ -1,0 +1,102 @@
+# Archiving CronJob — moves eligible payments/ledger_outbox rows into the
+# `archive` schema (see src/database/migrations/*-CreateArchiveSchema.ts
+# and src/jobs/run-archiving-job.ts). Runs as a k8s CronJob, not the app's
+# own @Cron() — a @Cron() method runs once per pod, which at
+# hpa.yaml's maxReplicas: 20 would mean up to 20 concurrent archiving
+# runs racing each other over the same rows. A CronJob only ever spins up
+# one pod per scheduled run, so that coordination problem doesn't exist
+# by construction — see docs/spec/future/database-scaling.md Option 3,
+# "How the job actually runs," for the full reasoning (chose this over a
+# @Cron() + Redis-lock design specifically because this makes the
+# coordination problem moot rather than solving it).
+#
+# Same production image as deployment.yaml — just a different container
+# command, running the compiled job script directly instead of booting
+# the HTTP server.
+#
+# Schedule: daily at 03:00 — well outside any assumed peak-traffic
+# window for this reference project; a real deployment should pick a
+# time based on its own actual traffic pattern.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: omniswitch-archiving
+  namespace: payments
+  labels:
+    app: omniswitch-archiving
+    component: data-retention
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid  # a run that's still going should never overlap with the next schedule
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600  # 1 hour — generous for this POC's data volume; a real deployment at real scale should re-tune this
+      template:
+        metadata:
+          labels:
+            app: omniswitch-archiving
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+          containers:
+            - name: archiving-job
+              image: omniswitch/payment-gateway:1.0.0
+              imagePullPolicy: Always
+              command: ["node", "dist/jobs/run-archiving-job.js"]
+              env:
+                - name: NODE_ENV
+                  value: "production"
+                - name: DB_MASTER_HOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_MASTER_HOST
+                - name: DB_MASTER_PORT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_MASTER_PORT
+                - name: DB_NAME
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_NAME
+                - name: DB_SSL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_SSL
+                - name: ARCHIVE_THRESHOLD_DAYS
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: ARCHIVE_THRESHOLD_DAYS
+                - name: DB_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: omniswitch-secrets
+                      key: DB_USERNAME
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: omniswitch-secrets
+                      key: DB_PASSWORD
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "256Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop:
+                    - ALL

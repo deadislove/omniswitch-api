@@ -24,6 +24,8 @@
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
     "seed:admin": "ts-node -r tsconfig-paths/register src/database/seed-admin.ts",
+    "job:archive": "ts-node -r tsconfig-paths/register src/jobs/run-archiving-job.ts",
+    "job:delete": "ts-node -r tsconfig-paths/register src/jobs/run-deletion-job.ts",
     "load-test:charge": "artillery run scripts/load-test/artillery-config.yml",
     "load-test:read": "artillery run scripts/load-test/artillery-read-capacity.yml"
   },

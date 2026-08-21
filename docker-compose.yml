@@ -68,6 +68,15 @@ services:
       # identical to credential-stuffing to this guard) without editing
       # this file — see docs/technical/load-testing.md.
       AUTH_LOGIN_RATE_LIMIT: "${AUTH_LOGIN_RATE_LIMIT:-10}"
+      # POST /payments/charge carries its own hardcoded, route-level
+      # @Throttle override (PaymentController) — independent of
+      # RATE_LIMIT_MAX above, and the actual binding constraint Finding #1
+      # in docs/technical/load-testing.md traced a single-IP load
+      # generator's ceiling to. Exposed here (default preserves the
+      # production 100/min) so a load test can raise it without editing
+      # code.
+      CHARGE_RATE_LIMIT_MAX: "${CHARGE_RATE_LIMIT_MAX:-100}"
+      CHARGE_RATE_LIMIT_TTL: "${CHARGE_RATE_LIMIT_TTL:-60000}"
       # PSP Keys (mock/test) — both base URLs point at mock-psp; without
       # STRIPE_BASE_URL here, the Stripe adapter falls back to the real
       # api.stripe.com and would try to make live calls with a placeholder key.

@@ -1,6 +1,6 @@
 # Documentation
 
-Four kinds of documentation live here, kept separate because they
+Five kinds of documentation live here, kept separate because they
 answer different questions for different readers.
 
 ## [`guide/`](./guide/)
@@ -83,6 +83,19 @@ to payments domain concepts generally.
   mechanism built now — this covers what's still only partly done in
   each, plus the business framing throughout
 
+## [`compliance/`](./compliance/)
+
+How this project handles data-retention/AML requirements — what gets
+archived, what gets deleted, on what schedule, and how to reconfigure
+the retention periods for a specific jurisdiction without touching code.
+
+- [`data-retention.md`](./compliance/data-retention.md) — the three-tier
+  policy (live → archive → delete), the two `k8s CronJob`s that enforce
+  it, the full environment-variable configuration reference, and an
+  honest list of what this doesn't cover (this is a reference
+  implementation with sensible defaults, not a substitute for
+  jurisdiction-specific legal/compliance review)
+
 ## `spec/future/` (local only, not tracked in git)
 
 Internal BA/planning documents — proposals that have **not** (or not
@@ -98,4 +111,8 @@ Distinct from `technical/`, which only documents what's actually built.
   `master` was rejected, and a recommended execution order. PgBouncer
   (Option 1) is now implemented and load-tested — see
   [`technical/load-testing.md`](./technical/load-testing.md) (Finding
-  #3) for results; the rest of that doc is still proposal-stage.
+  #3) for results. Table partitioning (Option 2) and the archiving/
+  deletion policy (Option 3) are now also fully executed — `payments`/
+  `ledger_outbox` are live partitioned tables, and the two retention
+  jobs described in [`compliance/data-retention.md`](./compliance/data-retention.md)
+  are running; Citus (Option 4) remains proposal-stage.

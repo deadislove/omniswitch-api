@@ -281,6 +281,8 @@ kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/hpa.yaml
 kubectl apply -f k8s/ingress.yaml
+kubectl apply -f k8s/archiving-cronjob.yaml   # Data retention — see docs/compliance/data-retention.md
+kubectl apply -f k8s/deletion-cronjob.yaml    # (also creates its own PVC for the pre-deletion backup file)
 
 # Check rollout
 kubectl rollout status deployment/omniswitch-api -n payments
@@ -461,12 +463,18 @@ split into:
   full business-framing version of the "Known Limitations" section above
   — as opposed to [`DEV_README.md`](DEV_README.md)'s Tier 1–3, which is
   the technical, implementation-level version of the same gaps.
+- **[`docs/compliance/`](docs/compliance/)** — AML data-retention policy:
+  what gets archived/deleted, on what schedule, and how to reconfigure
+  the retention periods (`ARCHIVE_THRESHOLD_DAYS`,
+  `DELETION_THRESHOLD_YEARS`, and related env vars) for a specific
+  jurisdiction without a code change
 - **`docs/spec/future/`** — internal BA/planning docs, `.gitignore`'d
   (local only, not on GitHub): proposals not yet (or not fully)
   executed, evaluated options, scope of impact, and a recommended
   sequence, written before the work happens. Currently holds a
-  database-scaling proposal (PgBouncer — done, see Performance above;
-  table partitioning, archiving/retention, Citus — still proposal-stage).
+  database-scaling proposal — PgBouncer, table partitioning, and the
+  archiving/deletion policy are all now done (see Performance above and
+  `docs/compliance/data-retention.md`); Citus remains proposal-stage.
 
 Start at [`docs/README.md`](docs/README.md).
 

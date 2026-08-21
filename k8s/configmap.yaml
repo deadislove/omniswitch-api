@@ -41,6 +41,18 @@ data:
   RATE_LIMIT_MAX: "100"
   RATE_LIMIT_TTL: "60000"
 
+  # Data retention (archiving-cronjob.yaml / deletion-cronjob.yaml) — see
+  # docs/spec/future/database-scaling.md Option 3 and
+  # docs/compliance/data-retention.md. Deliberately configurable, not
+  # hardcoded in the job scripts themselves — AML record-keeping minimums
+  # vary by jurisdiction, and this POC needs to be adjustable per
+  # deployment without a code change. These two values are the ones a
+  # real deployment's compliance/legal review is most likely to change.
+  ARCHIVE_THRESHOLD_DAYS: "180"
+  DELETION_THRESHOLD_YEARS: "8"
+  DELETION_BACKUP_REQUIRED: "true"
+  DELETION_BACKUP_PATH: "/app/backups"
+
   # CORS
   CORS_ORIGINS: "https://dashboard.omniswitch.io,https://app.omniswitch.io"
 

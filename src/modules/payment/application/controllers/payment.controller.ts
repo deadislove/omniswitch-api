@@ -55,6 +55,19 @@ import { DelegationService } from '../services/delegation.service';
 import * as csv from 'csv-parser';
 import { Readable } from 'stream';
 
+// @Throttle's arguments are evaluated once, at class-definition time (a
+// plain decorator, not DI-resolved) — this can't go through ConfigService,
+// which only exists once Nest's runtime container is up. Reading directly
+// from process.env keeps the production default (100/min) unchanged while
+// letting e2e (test/setup-env.ts) and load-test (docker-compose.yml) runs
+// raise it: this route's cap is IP-scoped as well as merchant-scoped (see
+// MerchantThrottlerGuard's docblock), so every request in a single-machine
+// e2e/load-test run — regardless of which merchant it authenticates as —
+// competes for the same 100/min budget. See docs/technical/load-testing.md,
+// Finding #1, for how this was first found to be the actual ceiling.
+const CHARGE_RATE_LIMIT_MAX = Number(process.env.CHARGE_RATE_LIMIT_MAX) || 100;
+const CHARGE_RATE_LIMIT_TTL = Number(process.env.CHARGE_RATE_LIMIT_TTL) || 60000;
+
 /**
  * Payment Controller (v1)
  * Handles all payment-related HTTP endpoints.
@@ -113,7 +126,7 @@ export class PaymentController {
   @Roles(UserRole.MERCHANT, UserRole.ADMIN, UserRole.AGENT)
   @UseGuards(HmacSignatureGuard)
   @UseInterceptors(IdempotencyInterceptor)
-  @Throttle({ default: { limit: 100, ttl: 60000 } })
+  @Throttle({ default: { limit: CHARGE_RATE_LIMIT_MAX, ttl: CHARGE_RATE_LIMIT_TTL } })
   @ApiOperation({ summary: 'Charge a payment with smart PSP routing — also usable by an AGENT token (see POST /delegations), whose charge is checked against its delegation\'s spend policy instead of requiring HMAC signature headers' })
   @ApiResponse({ status: 201, type: ChargePaymentResponseDto })
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })

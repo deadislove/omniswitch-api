@@ -504,6 +504,16 @@ APIs, dev-mode Vault becomes a real cluster, a single-node Postgres
 container becomes a managed master/replica pair. That's deliberate: the
 app's own code has no idea which one it's talking to.
 
+**Not shown above, deliberately separate from the request-serving
+topology**: `k8s/archiving-cronjob.yaml` and `k8s/deletion-cronjob.yaml`
+— the data-retention jobs (see
+[`../compliance/data-retention.md`](../compliance/data-retention.md)).
+Each is a `CronJob`, not part of the `Deployment`/HPA — a scheduled,
+single-pod batch run (daily/weekly) using the same production image with
+a different container command, talking to `PgBouncer (master)` the same
+way every request-serving pod does. Neither job sits in the request
+path or scales with traffic.
+
 ## Where to go next
 
 - The actual HTTP surface (every endpoint, request/response shape,
