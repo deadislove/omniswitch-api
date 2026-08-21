@@ -26,6 +26,7 @@
     "seed:admin": "ts-node -r tsconfig-paths/register src/database/seed-admin.ts",
     "job:archive": "ts-node -r tsconfig-paths/register src/jobs/run-archiving-job.ts",
     "job:delete": "ts-node -r tsconfig-paths/register src/jobs/run-deletion-job.ts",
+    "job:drop-cutover-tables": "ts-node -r tsconfig-paths/register src/jobs/drop-cutover-tables.ts",
     "load-test:charge": "artillery run scripts/load-test/artillery-config.yml",
     "load-test:read": "artillery run scripts/load-test/artillery-read-capacity.yml"
   },

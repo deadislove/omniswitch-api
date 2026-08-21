@@ -42,6 +42,7 @@ config mechanism for wherever this is actually deployed) and redeploy.
 | `DELETION_THRESHOLD_YEARS` | `8` | Age (years, from original `created_at`) before an archived record is backed up and deleted |
 | `DELETION_BACKUP_REQUIRED` | `true` | Whether a successful backup file write is a hard precondition for deletion. Should not be set to `false` without a very deliberate reason — this is the control that keeps deletion from being irreversible *everywhere*, not just from the live database |
 | `DELETION_BACKUP_PATH` | `./backups` (local) / `/app/backups` (k8s, mounted PVC — see `k8s/deletion-cronjob.yaml`) | Where the pre-deletion export file is written |
+| `CUTOVER_OLD_TABLE_RETENTION_DAYS` | `60` | Age (days, since the partitioning cutover — not an AML setting) before `payments_old`/`ledger_outbox_old` are eligible to be dropped by `npm run job:drop-cutover-tables` |
 
 **Example — adjusting for a jurisdiction with a 5-year AML minimum
 instead of 8**: change `DELETION_THRESHOLD_YEARS: "8"` to
@@ -132,8 +133,51 @@ outbox dead-letter admin recovery flow
 
 **Deletion** — any record in `archive.payments`/`archive.ledger_outbox`
 (i.e., already archived) whose `created_at` is older than
-`DELETION_THRESHOLD_YEARS`. Deletion never looks at the live tables
-directly.
+`DELETION_THRESHOLD_YEARS` **and** has no still-open dispute (same
+`NEEDS_RESPONSE`/`UNDER_REVIEW` check as archiving, added 2026-08-22
+after review). The dispute check matters here independently of
+archiving's own check: a payment can be archived with no open dispute
+and then get disputed years later (a long investigation, litigation) —
+age alone crossing `DELETION_THRESHOLD_YEARS` must not override an
+open dispute that shows up after archiving already happened. Deletion
+never looks at the live tables directly.
+
+## Cutover safety-net tables (`payments_old`, `ledger_outbox_old`)
+
+Separate from the three-tier policy above — these are pre-partitioning
+snapshots, not a retention tier. When `payments`/`ledger_outbox` were
+cut over to the partitioned tables
+(`1787333739819-BackfillAndSwapPartitionedPaymentsAndLedgerOutbox.ts`),
+the original flat tables were renamed to `payments_old`/
+`ledger_outbox_old` and kept, rather than dropped immediately, as a
+safety net in case the cutover itself had a bug.
+
+**Every row in these tables is a duplicate** of what the same migration
+already copied into the live partitioned tables — so keeping them
+*indefinitely* doesn't add investigative or compliance value (the same
+data is already tracked, and governed by the policy above, through
+`payments`/`archive.payments`). It would actually work against the
+policy's own integrity: an ungoverned duplicate that never ages out via
+the archiving/deletion jobs is a backdoor around the deletion tier, not
+an extra safety measure — a record correctly deleted from
+`archive.payments` after 8 years would still sit, untouched, in
+`payments_old` forever.
+
+- `CUTOVER_OLD_TABLE_RETENTION_DAYS` (default **60**) — a short,
+  separate window from the archive/deletion thresholds above. It answers
+  "has enough time passed to trust the cutover was correct," not an AML
+  question, so it isn't tied to `ARCHIVE_THRESHOLD_DAYS`/
+  `DELETION_THRESHOLD_YEARS`.
+- The cutover migration itself doesn't record *when* it ran (TypeORM's
+  migrations table only stores a version number, not a real
+  timestamp) — `1787339024677-CreateSchemaCutoverLog.ts` adds a small
+  `schema_cutover_log` table for this specifically.
+- `npm run job:drop-cutover-tables` (`src/jobs/drop-cutover-tables.ts`)
+  — a **one-time, operator-run script, not a k8s CronJob**. Dropping
+  these tables is a single event in this project's history, not a
+  recurring policy action. Reports days remaining if the window hasn't
+  elapsed yet; drops the table and clears its `schema_cutover_log` row
+  once it has. Safe to re-run.
 
 ## What this doesn't cover
 

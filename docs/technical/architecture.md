@@ -19,14 +19,17 @@ src/
 │   └── migrations/                # One file per schema change, source of truth (synchronize: false)
 ├── jobs/                          # Standalone CLI scripts, outside the Nest DI container —
 │   │                               # same pattern as database/seed-admin.ts: import AppDataSource
-│   │                               # directly, run raw SQL, exit. Each is a k8s CronJob's
-│   │                               # container command, not a @Cron() method (see
+│   │                               # directly, run raw SQL, exit. run-*-job.ts are each a k8s
+│   │                               # CronJob's container command, not a @Cron() method (see
 │   │                               # distributed-state.md for why @Cron() doesn't fit a
 │   │                               # once-per-cluster job at HPA scale).
 │   ├── run-archiving-job.ts       # Moves eligible payments/ledger_outbox rows to the `archive`
 │   │                               # schema — docs/compliance/data-retention.md
-│   └── run-deletion-job.ts        # Backs up then deletes archived rows past the retention
-│                                   # window — docs/compliance/data-retention.md
+│   ├── run-deletion-job.ts        # Backs up then deletes archived rows past the retention
+│   │                               # window — docs/compliance/data-retention.md
+│   └── drop-cutover-tables.ts     # One-time operator script (not a CronJob) — drops
+│                                   # payments_old/ledger_outbox_old once the cutover
+│                                   # verification window elapses — data-retention.md
 ├── shared/
 │   ├── auth/
 │   │   ├── auth.module.ts         # JwtModule + PassportModule + JwtStrategy — the leaf

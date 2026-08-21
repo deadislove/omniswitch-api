@@ -3,6 +3,7 @@ import { existsSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { AppDataSource } from '../src/database/data-source';
 import { archivePayments, archiveLedgerOutbox } from '../src/jobs/run-archiving-job';
 import { runDeletion } from '../src/jobs/run-deletion-job';
+import { dropCutoverTables } from '../src/jobs/drop-cutover-tables';
 
 /**
  * Exercises the archiving (10a-10c) and deletion (Option 3's second
@@ -171,6 +172,113 @@ describe('Data retention jobs — archiving and deletion (e2e)', () => {
       expect(stillInArchive).toHaveLength(1);
     } finally {
       process.env.DELETION_BACKUP_PATH = originalPath;
+      // Left in archive.payments on purpose (that's what this test just
+      // proved) — clean it up immediately rather than leaving it for
+      // afterAll, since a later test in this file (dispute-exclusion)
+      // also runs runDeletion() and would otherwise pick this row up
+      // too, polluting its own paymentsDeleted count.
+      await AppDataSource.query(`DELETE FROM "archive"."payments" WHERE "id" = $1`, [id]);
     }
+  });
+
+  it('does not delete an archived payment with an open dispute, even past the deletion threshold', async () => {
+    const id = randomUUID();
+    const merchantId = `merchant_${randomUUID()}`;
+    await AppDataSource.query(
+      `INSERT INTO "archive"."payments" (
+         "id", "merchant_id", "amount_minor_units", "currency_code", "currency_minor_units",
+         "status", "idempotency_key", "created_at", "updated_at"
+       ) VALUES ($1, $2, 1000, 'USD', 2, 'SUCCEEDED', $3, now() - interval '9 years', now())`,
+      [id, merchantId, `idem_${id}`],
+    );
+    seededPaymentIds.push(id);
+    await AppDataSource.query(
+      `INSERT INTO "disputes" ("id", "payment_id", "merchant_id", "psp_provider", "psp_dispute_id", "amount_minor_units", "currency_code", "status", "respond_by", "created_at", "updated_at")
+       VALUES ($1, $2, $3, 'STRIPE', $4, 1000, 'USD', 'UNDER_REVIEW', now() + interval '7 days', now(), now())`,
+      [randomUUID(), id, merchantId, `dp_${randomUUID()}`],
+    );
+
+    const originalPath = process.env.DELETION_BACKUP_PATH;
+    process.env.DELETION_BACKUP_PATH = backupPath;
+    try {
+      // Asserting on this specific row surviving, not on the batch's
+      // total paymentsDeleted count — other archive.payments rows this
+      // job is free to delete (unrelated to this test) would otherwise
+      // make a global-count assertion brittle.
+      await runDeletion();
+
+      const stillInArchive = await AppDataSource.query(`SELECT "id" FROM "archive"."payments" WHERE "id" = $1`, [id]);
+      expect(stillInArchive).toHaveLength(1);
+    } finally {
+      process.env.DELETION_BACKUP_PATH = originalPath;
+      await AppDataSource.query(`DELETE FROM "disputes" WHERE "payment_id" = $1`, [id]);
+    }
+  });
+});
+
+/**
+ * Exercises drop-cutover-tables.ts against a throwaway dummy table
+ * (never the real payments_old/ledger_outbox_old) — dropping the real
+ * cutover safety-net tables mid-test-suite would permanently alter this
+ * DB's schema for every other test that runs afterward, which is not
+ * something a single spec file should be able to do as a side effect.
+ * The dummy table exercises the exact same schema_cutover_log-driven
+ * code path drop-cutover-tables.ts uses for the real tables.
+ */
+describe('drop-cutover-tables (e2e)', () => {
+  const dummyTable = `test_cutover_dummy_${randomUUID().replace(/-/g, '_')}`;
+
+  beforeAll(async () => {
+    await AppDataSource.initialize();
+    await AppDataSource.query(`CREATE TABLE "${dummyTable}" ("id" uuid PRIMARY KEY)`);
+  });
+
+  afterAll(async () => {
+    await AppDataSource.query(`DROP TABLE IF EXISTS "${dummyTable}"`);
+    await AppDataSource.query(`DELETE FROM "schema_cutover_log" WHERE "table_name" = $1`, [dummyTable]);
+    await AppDataSource.destroy();
+  });
+
+  afterEach(async () => {
+    await AppDataSource.query(`DELETE FROM "schema_cutover_log" WHERE "table_name" = $1`, [dummyTable]);
+  });
+
+  it('does not drop the table before the retention window has elapsed', async () => {
+    await AppDataSource.query(
+      `INSERT INTO "schema_cutover_log" ("table_name", "cutover_at") VALUES ($1, now())`,
+      [dummyTable],
+    );
+
+    const results = await dropCutoverTables();
+    const result = results.find((r) => r.tableName === dummyTable);
+    expect(result?.eligible).toBe(false);
+    expect(result?.dropped).toBe(false);
+
+    const stillExists = await AppDataSource.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = $1`,
+      [dummyTable],
+    );
+    expect(stillExists).toHaveLength(1);
+  });
+
+  it('drops the table once the retention window has elapsed', async () => {
+    await AppDataSource.query(
+      `INSERT INTO "schema_cutover_log" ("table_name", "cutover_at") VALUES ($1, now() - interval '90 days')`,
+      [dummyTable],
+    );
+
+    const results = await dropCutoverTables();
+    const result = results.find((r) => r.tableName === dummyTable);
+    expect(result?.eligible).toBe(true);
+    expect(result?.dropped).toBe(true);
+
+    const stillExists = await AppDataSource.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = $1`,
+      [dummyTable],
+    );
+    expect(stillExists).toHaveLength(0);
+
+    const logRow = await AppDataSource.query(`SELECT 1 FROM "schema_cutover_log" WHERE "table_name" = $1`, [dummyTable]);
+    expect(logRow).toHaveLength(0);
   });
 });

@@ -23,6 +23,17 @@ import { AppDataSource } from '../database/data-source';
  * (records already through the archive tier), never on the live
  * `payments`/`ledger_outbox` tables directly.
  *
+ * Excludes any payment with a still-open dispute (`NEEDS_RESPONSE` or
+ * `UNDER_REVIEW`), the same check `run-archiving-job.ts` applies before
+ * archiving — added 2026-08-22 after review: a payment can be archived
+ * with no open dispute and then get disputed years later (a long
+ * investigation, litigation), and age alone crossing
+ * `DELETION_THRESHOLD_YEARS` must not override that. Without this check,
+ * this job would delete a payment mid-investigation just because it was
+ * old enough — a payment tied to an open dispute is never eligible here,
+ * regardless of how long it's been archived.
+ *
+
  * The backup file is a local-disk JSON export — a POC-level mechanism,
  * not a production-grade one. `k8s/deletion-cronjob.yaml` mounts a
  * PersistentVolumeClaim at `DELETION_BACKUP_PATH` so the file survives
@@ -88,8 +99,12 @@ export async function runDeletion(): Promise<{
 }> {
   const thresholdYears = deletionThresholdYears();
   const eligiblePayments = await AppDataSource.query(
-    `SELECT * FROM "archive"."payments" WHERE created_at < now() - ($1 || ' years')::interval`,
-    [thresholdYears],
+    `SELECT * FROM "archive"."payments" p
+     WHERE p.created_at < now() - ($1 || ' years')::interval
+       AND NOT EXISTS (
+         SELECT 1 FROM "disputes" d WHERE d.payment_id = p.id::varchar AND d.status = ANY($2)
+       )`,
+    [thresholdYears, ['NEEDS_RESPONSE', 'UNDER_REVIEW']],
   );
   const eligibleLedgerOutbox = await AppDataSource.query(
     `SELECT * FROM "archive"."ledger_outbox" WHERE created_at < now() - ($1 || ' years')::interval`,

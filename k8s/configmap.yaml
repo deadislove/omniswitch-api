@@ -52,6 +52,11 @@ data:
   DELETION_THRESHOLD_YEARS: "8"
   DELETION_BACKUP_REQUIRED: "true"
   DELETION_BACKUP_PATH: "/app/backups"
+  # Separate from the AML thresholds above — how long payments_old/
+  # ledger_outbox_old (the partitioning-cutover safety net) are kept
+  # before `npm run job:drop-cutover-tables` (a one-time operator script,
+  # not a CronJob) will drop them.
+  CUTOVER_OLD_TABLE_RETENTION_DAYS: "60"
 
   # CORS
   CORS_ORIGINS: "https://dashboard.omniswitch.io,https://app.omniswitch.io"
