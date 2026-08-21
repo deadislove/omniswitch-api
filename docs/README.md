@@ -1,6 +1,6 @@
 # Documentation
 
-Three kinds of documentation live here, kept separate because they
+Four kinds of documentation live here, kept separate because they
 answer different questions for different readers.
 
 ## [`guide/`](./guide/)
@@ -82,3 +82,20 @@ to payments domain concepts generally.
   and agentic payments (delegation + spend policy) all have a real
   mechanism built now — this covers what's still only partly done in
   each, plus the business framing throughout
+
+## `spec/future/` (local only, not tracked in git)
+
+Internal BA/planning documents — proposals that have **not** (or not
+fully) been executed yet: evaluated options, scope of impact, and a
+recommended sequence, written *before* the work happens rather than
+after. `.gitignore`'d deliberately; this folder never reaches GitHub, so
+nothing else in this repo's tracked docs should link to it directly.
+Distinct from `technical/`, which only documents what's actually built.
+
+- `database-scaling.md` — options for scaling past this stack's tested
+  data volume (PgBouncer, table partitioning, archiving/retention
+  policy, Citus), why a distributed-DB + CDC approach in front of
+  `master` was rejected, and a recommended execution order. PgBouncer
+  (Option 1) is now implemented and load-tested — see
+  [`technical/load-testing.md`](./technical/load-testing.md) (Finding
+  #3) for results; the rest of that doc is still proposal-stage.

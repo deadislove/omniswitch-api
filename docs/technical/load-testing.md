@@ -240,6 +240,63 @@ drive scale-out — something else (the still-unmeasured charge path,
 or a traffic mix heavier than pure reads) would need to be measured
 before touching `k8s/hpa.yaml` or `k8s/deployment.yaml`'s requests.
 
+## Finding #3: PgBouncer adds no read-path cost, once it's actually resource-isolated
+
+`docker-compose.yml`/`k8s/pgbouncer.yaml` put PgBouncer (transaction-mode
+pooling) in front of both `postgres-master` and `postgres-replica`:
+at `hpa.yaml`'s `maxReplicas: 20` × `extra.max: 20` per pod, direct
+connections could reach 400 against a `max_connections=200` server,
+independent of data volume.
+
+**First two runs, against the same read-capacity methodology as above,
+looked like a real regression**:
+
+| Metric | Baseline (no PgBouncer) | Run 1 (PgBouncer, uncapped) | Run 2 (PgBouncer, uncapped) |
+|---|---|---|---|
+| Requests succeeded | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 |
+| p99 latency | 10.9–13.9ms | 34.8ms | 16.9ms |
+| max latency | 65–89ms | 233ms | 270ms |
+| CPU peak | ~23% | ~64.5% | ~73.8% |
+| Memory peak | ~104MiB | ~133MiB | ~125MiB |
+
+Reproduced twice, so not noise — but the two `pgbouncer-*` containers
+were running **unbounded** on the same host as `api`, `postgres-master`,
+`postgres-replica`, `redis`, `vault`, and `mock-psp`. `api`'s own cgroup
+was still capped at 1 CPU (matching `k8s/deployment.yaml`'s limits), but
+two more actively-proxying containers competing for the same physical
+cores plausibly explains elevated numbers on their own — a confound, not
+evidence PgBouncer itself costs anything at the protocol level. (Same
+class of mistake as the earlier `uuid`/`crypto.randomUUID()` numbers
+above — different session, same lesson: a resource cap on the container
+being measured doesn't control for what else is running on the host.)
+
+**Re-run with `pgbouncer-master`/`pgbouncer-replica` capped to 0.5
+CPU/128Mi each** (`docker update --cpus=0.5 --memory=128m` — matching
+`k8s/pgbouncer.yaml`'s own `resources.limits`, so the local repro
+actually matches what a real cluster would enforce per pod):
+
+| Metric | Baseline (no PgBouncer) | **PgBouncer, capped to k8s limits** |
+|---|---|---|
+| Requests succeeded | 16,900/16,900 | **16,900/16,900** |
+| p50 latency | 2–3ms | **2ms** |
+| p95 latency | 6–7.9ms | **6ms** |
+| p99 latency | 10.9–13.9ms | **10.1ms** |
+| max latency | 65–89ms | **46ms** |
+| CPU peak | ~23% | **~35.9%** |
+| Memory peak | ~104MiB | **~112.8MiB** |
+
+**Conclusion**: once PgBouncer is resource-isolated the way it actually
+would be in the cluster (its own pod, its own `resources.limits`, not
+competing unbounded with everything else), read-path latency and success
+rate match or beat the no-pooler baseline. The uncapped runs' elevated
+numbers were host-level container contention on the test machine, not a
+PgBouncer-inherent cost — worth remembering if this gets re-tested on a
+different machine and looks slow again: check what else is running
+unbounded before concluding the pooler is the problem. CPU peak did go
+up (~24% → ~36%) — plausibly the extra network hop's real, if modest,
+cost — but stayed well within `k8s/deployment.yaml`'s 1000m limit and
+didn't move p50/p95 or the success rate at all.
+
 ## What this doesn't cover
 
 - **The charge path's own ceiling is still unmeasured** — Finding #1
@@ -247,10 +304,13 @@ before touching `k8s/hpa.yaml` or `k8s/deployment.yaml`'s requests.
   route-level cap. A real answer needs distributed source IPs.
 - **The Postgres connection pool** (`extra.max: 20` in `app.module.ts`) was
   never visibly exhausted in these runs (no connection-wait errors, no
-  latency cliff suggesting queuing) — but 20 connections against 150 req/s
-  of point-reads, each holding a connection only briefly, isn't a strong
-  test of that ceiling either. Worth a dedicated test if connection-pool
-  sizing ever becomes a suspect.
+  latency cliff suggesting queuing) — but this is a **single pod**; 20
+  connections against 150 req/s of point-reads, each holding a
+  connection only briefly, isn't a strong test of that ceiling, and
+  doesn't exercise the actual multi-pod scenario PgBouncer (Finding #3)
+  was added for — 20 pods × 20 connections against one
+  `max_connections=200` server. That scenario needs a real multi-replica
+  test (HPA scaled out, not a single container), not yet done here.
 - **Single instance only** — this is one pod's ceiling, not a
   multi-replica HPA simulation. Cross-replica behavior (Redis-backed
   circuit breaker/rate-limiter/idempotency state under real concurrent

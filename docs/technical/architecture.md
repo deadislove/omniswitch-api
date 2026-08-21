@@ -288,7 +288,7 @@ real, end-to-end exercise during this project's development — see
 To run it locally:
 
 ```bash
-docker-compose up -d postgres-master postgres-replica redis mock-psp vault
+docker-compose up -d postgres-master postgres-replica pgbouncer-master pgbouncer-replica redis mock-psp vault
 npm run test:e2e
 ```
 

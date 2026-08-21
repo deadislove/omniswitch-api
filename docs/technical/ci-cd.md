@@ -23,6 +23,14 @@ runs `npm run test:e2e`. `api` itself is deliberately not started — the
 e2e suite talks to a Nest app booted in-process by Jest/Supertest
 (`test/utils/test-app.ts`), not to the containerized `api` service.
 
+Note: this job does **not** bring up `pgbouncer-master`/`pgbouncer-replica`
+— `test/setup-env.ts`'s defaults point straight at Postgres, same as
+migrations do, so the e2e suite doesn't exercise the pooler by default.
+It's been manually validated against PgBouncer separately (pointing
+`DB_MASTER_HOST`/`DB_REPLICA_HOST` at the pooler's host ports — see
+[`load-testing.md`](./load-testing.md), Finding #3) but CI itself
+doesn't cover that path.
+
 **Lint is report-only, not blocking.** The raw (no `--fix`) codebase
 currently produces ~8.7k findings — mostly `eslint-plugin-prettier`
 formatting diffs (no `.prettierrc` exists, so prettier's default
