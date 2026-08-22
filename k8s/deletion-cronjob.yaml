@@ -45,6 +45,7 @@ metadata:
   labels:
     app: omniswitch-deletion
     component: data-retention
+    workload-type: batch-job
 spec:
   schedule: "0 4 * * 0"  # weekly, Sunday 04:00 — after the daily archiving run has had time to run
   concurrencyPolicy: Forbid
@@ -58,6 +59,7 @@ spec:
         metadata:
           labels:
             app: omniswitch-deletion
+            workload-type: batch-job
         spec:
           restartPolicy: Never
           securityContext:

@@ -281,8 +281,13 @@ kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/hpa.yaml
 kubectl apply -f k8s/ingress.yaml
-kubectl apply -f k8s/archiving-cronjob.yaml   # Data retention — see docs/compliance/data-retention.md
-kubectl apply -f k8s/deletion-cronjob.yaml    # (also creates its own PVC for the pre-deletion backup file)
+kubectl apply -f k8s/archiving-cronjob.yaml             # Data retention — see docs/compliance/data-retention.md
+kubectl apply -f k8s/deletion-cronjob.yaml              # (also creates its own PVC for the pre-deletion backup file)
+kubectl apply -f k8s/partition-maintenance-cronjob.yaml # Keeps upcoming-month partitions pre-created
+
+# One-time, not part of the steady-state rollout above — apply once the
+# cutover verification window has elapsed (see data-retention.md):
+#   kubectl apply -f k8s/drop-cutover-tables-job.yaml
 
 # Check rollout
 kubectl rollout status deployment/omniswitch-api -n payments

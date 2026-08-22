@@ -27,7 +27,10 @@ src/
 │   │                               # schema — docs/compliance/data-retention.md
 │   ├── run-deletion-job.ts        # Backs up then deletes archived rows past the retention
 │   │                               # window — docs/compliance/data-retention.md
-│   └── drop-cutover-tables.ts     # One-time operator script (not a CronJob) — drops
+│   ├── create-partitions-job.ts   # Keeps upcoming-month partitions pre-created on payments/
+│   │                               # ledger_outbox so new rows never fall into DEFAULT —
+│   │                               # k8s CronJob, weekly — data-retention.md
+│   └── drop-cutover-tables.ts     # One-time operator action (k8s Job, not a CronJob) — drops
 │                                   # payments_old/ledger_outbox_old once the cutover
 │                                   # verification window elapses — data-retention.md
 ├── shared/

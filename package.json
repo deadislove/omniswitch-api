@@ -27,6 +27,7 @@
     "job:archive": "ts-node -r tsconfig-paths/register src/jobs/run-archiving-job.ts",
     "job:delete": "ts-node -r tsconfig-paths/register src/jobs/run-deletion-job.ts",
     "job:drop-cutover-tables": "ts-node -r tsconfig-paths/register src/jobs/drop-cutover-tables.ts",
+    "job:create-partitions": "ts-node -r tsconfig-paths/register src/jobs/create-partitions-job.ts",
     "load-test:charge": "artillery run scripts/load-test/artillery-config.yml",
     "load-test:read": "artillery run scripts/load-test/artillery-read-capacity.yml"
   },

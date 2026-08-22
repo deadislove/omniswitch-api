@@ -1,0 +1,107 @@
+# One-time k8s Job — NOT a CronJob, and NOT something to run via
+# `kubectl exec` into a running `omniswitch-api` Deployment pod. See
+# src/jobs/drop-cutover-tables.ts's docblock: dropping payments_old/
+# ledger_outbox_old (the partitioning-cutover safety net — see
+# docs/compliance/data-retention.md) is a single event in this
+# project's history, not a recurring policy action, so a CronJob
+# schedule doesn't fit it any better than `@Cron()` does. But it still
+# needs a stable, dedicated place to run: a Deployment pod exists to
+# serve traffic and can be rescaled by the HPA or recycled by a rolling
+# update mid-operation, so `kubectl exec`-ing into one for an ad hoc
+# admin script is fragile in exactly the way this whole family of jobs
+# (archiving/deletion/partition-maintenance) was designed to avoid.
+#
+# The job itself is a safe no-op if the retention window
+# (CUTOVER_OLD_TABLE_RETENTION_DAYS) hasn't elapsed yet — it reports
+# days remaining and exits 0 rather than failing (see
+# drop-cutover-tables.ts's `main()`). Safe to apply speculatively and
+# just check the logs.
+#
+# Usage:
+#   kubectl apply -f k8s/drop-cutover-tables-job.yaml
+#   kubectl logs -n payments job/omniswitch-drop-cutover-tables
+#
+# Re-running (e.g. checking again later before the window has elapsed):
+# a completed Job can't be re-applied under the same name — delete it
+# first:
+#   kubectl delete job omniswitch-drop-cutover-tables -n payments
+#   kubectl apply -f k8s/drop-cutover-tables-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: omniswitch-drop-cutover-tables
+  namespace: payments
+  labels:
+    app: omniswitch-drop-cutover-tables
+    component: partition-maintenance
+    workload-type: batch-job
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: omniswitch-drop-cutover-tables
+        workload-type: batch-job
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+      containers:
+        - name: drop-cutover-tables-job
+          image: omniswitch/payment-gateway:1.0.0
+          imagePullPolicy: Always
+          command: ["node", "dist/jobs/drop-cutover-tables.js"]
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: DB_MASTER_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_MASTER_HOST
+            - name: DB_MASTER_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_MASTER_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_NAME
+            - name: DB_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_SSL
+            - name: CUTOVER_OLD_TABLE_RETENTION_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: CUTOVER_OLD_TABLE_RETENTION_DAYS
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_PASSWORD
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL

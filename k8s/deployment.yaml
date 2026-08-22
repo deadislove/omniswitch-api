@@ -8,6 +8,7 @@ metadata:
     version: "1.0.0"
     component: payment-gateway
     tier: backend
+    workload-type: service
 spec:
   replicas: 3
   selector:
@@ -23,6 +24,15 @@ spec:
       labels:
         app: omniswitch-api
         version: "1.0.0"
+        # workload-type: service, vs. workload-type: batch-job on the
+        # archiving/deletion/partition-maintenance CronJob pods and the
+        # drop-cutover-tables Job pod — lets an operator select
+        # `kubectl get pods -n payments -l workload-type=batch-job` to
+        # see every one-off/scheduled maintenance pod at once, distinct
+        # from this Deployment's traffic-serving replicas. Not part of
+        # this Deployment's own selector.matchLabels above (selector is
+        # immutable after creation) — purely descriptive.
+        workload-type: service
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "3000"

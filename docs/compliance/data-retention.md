@@ -43,6 +43,7 @@ config mechanism for wherever this is actually deployed) and redeploy.
 | `DELETION_BACKUP_REQUIRED` | `true` | Whether a successful backup file write is a hard precondition for deletion. Should not be set to `false` without a very deliberate reason — this is the control that keeps deletion from being irreversible *everywhere*, not just from the live database |
 | `DELETION_BACKUP_PATH` | `./backups` (local) / `/app/backups` (k8s, mounted PVC — see `k8s/deletion-cronjob.yaml`) | Where the pre-deletion export file is written |
 | `CUTOVER_OLD_TABLE_RETENTION_DAYS` | `60` | Age (days, since the partitioning cutover — not an AML setting) before `payments_old`/`ledger_outbox_old` are eligible to be dropped by `npm run job:drop-cutover-tables` |
+| `PARTITION_MAINTENANCE_MONTHS_AHEAD` | `2` | How many months ahead of "now" the partition-maintenance job (not an AML setting either) keeps a partition pre-created for, on `payments`/`ledger_outbox` |
 
 **Example — adjusting for a jurisdiction with a 5-year AML minimum
 instead of 8**: change `DELETION_THRESHOLD_YEARS: "8"` to
@@ -172,12 +173,49 @@ an extra safety measure — a record correctly deleted from
   migrations table only stores a version number, not a real
   timestamp) — `1787339024677-CreateSchemaCutoverLog.ts` adds a small
   `schema_cutover_log` table for this specifically.
-- `npm run job:drop-cutover-tables` (`src/jobs/drop-cutover-tables.ts`)
-  — a **one-time, operator-run script, not a k8s CronJob**. Dropping
-  these tables is a single event in this project's history, not a
-  recurring policy action. Reports days remaining if the window hasn't
-  elapsed yet; drops the table and clears its `schema_cutover_log` row
-  once it has. Safe to re-run.
+- `src/jobs/drop-cutover-tables.ts` — a **one-time operator action, not
+  a CronJob**. Dropping these tables is a single event in this
+  project's history, not a recurring policy action. Reports days
+  remaining if the window hasn't elapsed yet (exits 0 either way —
+  "not eligible yet" isn't a failure); drops the table and clears its
+  `schema_cutover_log` row once it has. Safe to re-run.
+  - Local/dev: `npm run job:drop-cutover-tables`.
+  - k8s: `kubectl apply -f k8s/drop-cutover-tables-job.yaml` — a
+    one-time `Job`, deliberately not run via `kubectl exec` into a
+    running `omniswitch-api` Deployment pod (that pod serves traffic
+    and can be rescaled/recycled mid-operation by the HPA or a rolling
+    update — see that manifest's own comment for the full reasoning,
+    same as the archiving/deletion/partition-maintenance CronJobs).
+
+## Partition maintenance
+
+Also not part of the three-tier retention policy, but closely related
+and worth documenting here: `1787325352938-CreatePartitionedPaymentsAndLedgerOutbox.ts`
+(Stage 1 of partitioning — see `database-scaling.md` Option 2) only
+pre-creates partitions for a fixed window relative to *when it ran* (6
+months back, 2 forward). Nothing keeps extending that window as real
+time moves past it — without a recurring job, new rows eventually start
+silently landing in the `DEFAULT` partition instead of a real monthly
+one once "now" gets close enough to the edge of that original range.
+
+- `PARTITION_MAINTENANCE_MONTHS_AHEAD` (default **2**) — how many
+  months ahead of "now" this job ensures a partition already exists
+  for, on both `payments` and `ledger_outbox`.
+- `src/jobs/create-partitions-job.ts` — idempotent (`CREATE TABLE IF
+  NOT EXISTS ... PARTITION OF`), safe to re-run. Runs as
+  `k8s/partition-maintenance-cronjob.yaml`, weekly — same "why a
+  CronJob, not `@Cron()`" reasoning as archiving/deletion.
+- **Naming gotcha worth knowing if you're reading the schema
+  directly**: child partitions are named `payments_partitioned_YYYY_MM`
+  / `ledger_outbox_partitioned_YYYY_MM` — *not* `payments_YYYY_MM` —
+  even though the parent table is `payments`, not `payments_partitioned`.
+  The cutover migration (`1787333739819-...`) renames only the parent
+  (`ALTER TABLE payments_partitioned RENAME TO payments`); PostgreSQL
+  does not cascade that rename to child partitions. This job matches
+  that existing naming rather than introducing a second, inconsistent
+  one — verified live: an earlier version of this job used
+  `payments_YYYY_MM` and failed immediately with "partition would
+  overlap partition \"payments_partitioned_2026_08\"."
 
 ## What this doesn't cover
 
