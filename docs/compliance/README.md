@@ -11,10 +11,13 @@ data while it's live, not what happens to it as it ages).
 - [`data-retention.md`](./data-retention.md) — this project's AML
   (anti-money-laundering) record-keeping approach: what gets kept, for
   how long, what "archived" vs "deleted" actually means here, how the
-  two scheduled jobs that enforce this work, and — most importantly for
+  scheduled jobs that enforce this work, and — most importantly for
   anyone deploying this somewhere real — **how to configure the
   retention periods for a specific jurisdiction**, since this is a POC
-  meant to be adaptable, not a one-size-fits-all compliance product.
+  meant to be adaptable, not a one-size-fits-all compliance product. Its
+  ["Jurisdictional compliance review checklist"](./data-retention.md#jurisdictional-compliance-review-checklist)
+  section is the concrete starting point for that review — what to
+  confirm, not an answer key.
 
 ## The honest scope of this folder
 

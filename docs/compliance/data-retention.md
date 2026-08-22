@@ -40,8 +40,9 @@ config mechanism for wherever this is actually deployed) and redeploy.
 |---|---|---|
 | `ARCHIVE_THRESHOLD_DAYS` | `180` | Age (days) before an eligible record moves from live tables to the `archive` schema |
 | `DELETION_THRESHOLD_YEARS` | `8` | Age (years, from original `created_at`) before an archived record is backed up and deleted |
-| `DELETION_BACKUP_REQUIRED` | `true` | Whether a successful backup file write is a hard precondition for deletion. Should not be set to `false` without a very deliberate reason — this is the control that keeps deletion from being irreversible *everywhere*, not just from the live database |
-| `DELETION_BACKUP_PATH` | `./backups` (local) / `/app/backups` (k8s, mounted PVC — see `k8s/deletion-cronjob.yaml`) | Where the pre-deletion export file is written |
+| `DELETION_BACKUP_REQUIRED` | `true` | Whether a successful backup write is a hard precondition for deletion. Should not be set to `false` without a very deliberate reason — this is the control that keeps deletion from being irreversible *everywhere*, not just from the live database |
+| `DELETION_BACKUP_STORAGE` | `local` | Which `BackupStorage` adapter to write to — `local`, `s3`, `gcs`, or `azure`. See "Where the backup goes" below |
+| `DELETION_BACKUP_PATH` | `./backups` (local) / `/app/backups` (k8s, mounted PVC) | Only used when `DELETION_BACKUP_STORAGE=local` — where the pre-deletion export file is written |
 | `CUTOVER_OLD_TABLE_RETENTION_DAYS` | `60` | Age (days, since the partitioning cutover — not an AML setting) before `payments_old`/`ledger_outbox_old` are eligible to be dropped by `npm run job:drop-cutover-tables` |
 | `PARTITION_MAINTENANCE_MONTHS_AHEAD` | `2` | How many months ahead of "now" the partition-maintenance job (not an AML setting either) keeps a partition pre-created for, on `payments`/`ledger_outbox` |
 
@@ -51,6 +52,49 @@ instead of 8**: change `DELETION_THRESHOLD_YEARS: "8"` to
 `kubectl apply -f k8s/configmap.yaml` and let the next scheduled
 `CronJob` run pick it up (or trigger one manually — see below). No
 image rebuild needed.
+
+## Where the backup goes
+
+The deletion job's pre-delete export goes to one of four pluggable
+destinations — `src/jobs/backup-storage/` — selected by
+`DELETION_BACKUP_STORAGE`:
+
+| Provider | Value | Required config | Credentials |
+|---|---|---|---|
+| Local disk (default) | `local` | `DELETION_BACKUP_PATH` | none — just filesystem access |
+| AWS S3 | `s3` | `DELETION_BACKUP_S3_BUCKET`, `DELETION_BACKUP_S3_REGION` | AWS SDK's own default credential chain (IAM role, instance profile, or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) |
+| Google Cloud Storage | `gcs` | `DELETION_BACKUP_GCS_BUCKET` | Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, Workload Identity, or the GCE/GKE metadata service) |
+| Azure Blob Storage | `azure` | `DELETION_BACKUP_AZURE_CONNECTION_STRING`, `DELETION_BACKUP_AZURE_CONTAINER` | carried in the connection string itself — put this in `omniswitch-secrets`, not `configmap.yaml`, since it's a credential |
+
+**Why `local` is the default, not just the first option listed**: this
+project's GitHub Actions CI never has real cloud credentials available
+— see `docs/technical/ci-cd.md`. If cloud storage were the default, CI
+would either need real cloud secrets provisioned for a reference/demo
+project (a real security and cost liability for something anyone can
+clone and run), or a self-hosted stand-in service added to the CI
+pipeline (e.g. MinIO) — a new architectural commitment, not a small
+config change. `local` needs nothing but the filesystem, matching this
+project's existing pattern for every other external dependency in
+dev/test (`mock-psp` instead of real PSP sandboxes, dev-mode Vault
+instead of a real cluster) — a real, working stand-in, not a mock of
+the interface. **A real deployment choosing to enable a cloud provider
+is a deliberate, opt-in decision made at deploy time** — this doc
+doesn't take a position on which cloud a specific deployment should
+use, only that the mechanism exists for whichever one is chosen.
+
+**Not exercised end-to-end by this project's own test suite**: the
+`local` adapter has full e2e coverage (`test/legal-hold.e2e-spec.ts`,
+`test/data-retention-jobs.e2e-spec.ts` both exercise it against a real
+filesystem). The three cloud adapters are unit-tested against mocked
+clients (`src/jobs/backup-storage/*.spec.ts` — confirms each adapter
+calls its SDK correctly and propagates a failure as a thrown error, the
+same "refuse to delete if the backup isn't confirmed" contract the
+local adapter has) but have never been run against a real S3 bucket,
+GCS bucket, or Azure container, since no real cloud credentials exist
+anywhere in this project's CI or local dev setup. A real deployment
+enabling one of these for the first time should do its own live test
+run (`npm run job:delete` against a real, disposable bucket/container)
+before relying on it in production.
 
 ## How it runs
 
@@ -143,6 +187,54 @@ age alone crossing `DELETION_THRESHOLD_YEARS` must not override an
 open dispute that shows up after archiving already happened. Deletion
 never looks at the live tables directly.
 
+## Legal hold
+
+A payment's `legal_hold` boolean (added 2026-08-22, Phase 3 follow-up
+#5) overrides both the archiving and deletion eligibility checks above
+— a held payment is excluded regardless of age, status, or dispute
+state, same as the dispute check but not tied to a PSP dispute
+existing. This is for the case a dispute-status check alone doesn't
+cover: litigation, a regulator's investigation, or any other reason a
+specific record needs to be preserved that has nothing to do with a
+card-network chargeback.
+
+**Deliberately a single boolean, not an audit-trail table.** Recording
+who placed a hold, when, and why is a real compliance/legal-process
+concern, but tracking that isn't something this codebase does for any
+other operator action either (a dispute's `autoDecision`, a merchant's
+`isActive` toggle — neither carries an audit trail here) and it's
+outside this project's PSP/payment-processing scope. If a real
+deployment needs that record-keeping, it's an explicit, separate
+addition on top of this flag — see "What this doesn't cover" below.
+
+- **`POST /api/v1/admin/payments/:id/legal-hold`** — places a hold
+  (`ADMIN`/`OPERATOR` role required, same as the other admin
+  endpoints). If the payment is currently archived, this **restores it
+  to the live `payments` table** as part of placing the hold, rather
+  than flagging it in place in `archive.payments` — a record under
+  active legal/regulatory scrutiny needs to be reachable through the
+  normal payment query path (`GET /payments/:id`, admin lookups),
+  not left sitting in cold storage. Response includes `location: "live"
+  | "restored-from-archive"` so the caller knows which happened.
+- **`DELETE /api/v1/admin/payments/:id/legal-hold`** — releases a
+  hold. Only ever operates on the live table (a held payment is always
+  there — see above). No special "re-archive" step: the payment simply
+  becomes archive-eligible again through the normal archiving job, the
+  next time it runs, once its age/status/dispute conditions are
+  otherwise met.
+- `src/modules/payment/application/services/legal-hold.service.ts` /
+  `legal-hold-admin.controller.ts` — operates on `payments`/
+  `archive.payments` via raw SQL, not through `PaymentRepositoryPort`/
+  `PaymentAggregate` — same reasoning as the archiving/deletion jobs:
+  this is a retention/ops concern layered on the schema, not a
+  payment-lifecycle business rule the domain aggregate needs to model.
+- Both `run-archiving-job.ts` and `run-deletion-job.ts` exclude
+  `legal_hold = true` rows. The deletion job's check is
+  defense-in-depth, not the primary mechanism — under normal operation
+  `archive.payments` should never actually contain a `legal_hold = true`
+  row, since placing a hold on an archived payment pulls it out
+  immediately.
+
 ## Cutover safety-net tables (`payments_old`, `ledger_outbox_old`)
 
 Separate from the three-tier policy above — these are pre-partitioning
@@ -217,6 +309,84 @@ one once "now" gets close enough to the edge of that original range.
   `payments_YYYY_MM` and failed immediately with "partition would
   overlap partition \"payments_partitioned_2026_08\"."
 
+## Jurisdictional compliance review checklist
+
+The 180-day archive / 8-year deletion defaults are reasonable, commonly-seen
+numbers — not a legal conclusion. Before deploying this into a specific
+country, or before the deletion tier is ever turned on in production,
+someone with actual compliance/legal authority for that jurisdiction
+needs to work through the items below and sign off. This is a checklist
+of *what to ask*, not an answer key — the answers are jurisdiction- and
+business-model-specific, and this project makes no claim about what
+they are.
+
+1. **Confirm the actual AML minimum retention period**, not the
+   commonly-cited "5–10 years" range this doc uses as a placeholder.
+   The regulator, the specific instrument (payment records vs. KYC
+   records vs. suspicious-activity reports), and the business's license
+   type can all change the number. Set `DELETION_THRESHOLD_YEARS`
+   (`k8s/configmap.yaml`) to whatever that confirmed number is —
+   currently `8`.
+
+2. **Check whether tax/audit retention requirements exceed the AML
+   minimum.** Financial records are often also subject to a separate
+   tax-authority retention rule, which in some jurisdictions runs
+   longer than the AML minimum. The binding number is the *longer* of
+   the two, not whichever one this doc happened to cite. This is a
+   second, independent number to confirm — don't assume AML retention
+   alone covers it.
+
+3. **Confirm deletion after the retention period is actually
+   *permitted*, and whether it's *required*.** Some regulatory regimes
+   treat "delete records after N years" as a compliance-mandated action
+   (data-minimization rules), others are silent on it (records may be
+   kept indefinitely, deletion is optional), and some may restrict *how*
+   deletion can happen (e.g., requiring a specific certified erasure
+   method or an audit trail of the deletion event itself, not just of
+   what was deleted). This determines whether the deletion tier should
+   be enabled at all, not just what `DELETION_THRESHOLD_YEARS` should be.
+
+4. **Reconcile against any data-subject erasure rights the business is
+   also subject to** (e.g., GDPR's right to erasure, or an equivalent
+   local regime). These usually carve out an exception for records a
+   business is legally required to retain (AML being the canonical
+   example), but that exception's exact scope and duration is
+   jurisdiction-specific and needs its own confirmation — don't assume
+   AML retention automatically overrides every erasure request without
+   checking.
+
+5. **Confirm 180 days is a safe archive threshold given actual
+   chargeback/dispute windows.** This doc's dispute-exclusion check
+   (`NEEDS_RESPONSE`/`UNDER_REVIEW`) protects records with an *open*
+   dispute regardless of age, but card-network reason codes vary in how
+   long a dispute can be *opened* after the original transaction — some
+   exceed 180 days. Confirm the card networks/PSPs this deployment
+   actually uses, and adjust `ARCHIVE_THRESHOLD_DAYS` if their windows
+   run longer (archiving is reversible, so erring conservative here — a
+   longer threshold — is the lower-risk direction if unsure).
+
+6. **Confirm the deletion mechanism itself is acceptable to whatever
+   regulator/auditor will review it.** The backup destination is
+   configurable (local disk, S3, GCS, or Azure — see "Where the backup
+   goes" above), but this project doesn't configure bucket-level
+   policies (versioning, encryption-at-rest, access logging,
+   chain-of-custody for a legal request) for whichever destination is
+   chosen — that's the deploying team's own infrastructure decision.
+   The cloud adapters also haven't been run against a real bucket by
+   this project (see "Where the backup goes" for why) — verify with a
+   real test run before depending on one in production. A boolean-only
+   legal-hold flag exists (see "Legal hold" above) for blocking
+   archiving/deletion on a specific record.
+
+7. **Identify who signs off, and record it.** This doc, and this
+   codebase, cannot make this call unilaterally — it was written by
+   engineering, not compliance/legal counsel for any specific
+   jurisdiction. Whoever does the review above should be named, and the
+   date/jurisdiction/values they confirmed should be recorded somewhere
+   durable (this doc's own git history at minimum, ideally a real
+   compliance record system) before the deletion tier runs against real
+   production data.
+
 ## What this doesn't cover
 
 Being direct about the gaps, so nobody mistakes this for a certified
@@ -228,25 +398,33 @@ compliance system:
   these values, and the deletion mechanism itself, actually satisfy that
   jurisdiction's AML/tax/audit requirements before the deletion tier is
   ever turned on in production.
-- **The backup file is local-disk JSON, mounted via a PVC.** That's
-  enough to survive the CronJob pod's own lifecycle, but it's not
-  versioned, encrypted-at-rest beyond whatever the underlying volume
-  provides, or access-controlled beyond normal k8s RBAC on the PVC.
-  Since this file becomes the *only* remaining copy of a deleted record,
-  a real deployment should treat it more seriously — e.g. write to
-  versioned, access-controlled object storage with its own retention
-  policy, not a plain PVC. Not implemented here.
+- **Cloud backup storage (S3/GCS/Azure) is implemented but never tested
+  against a real bucket/container** — see "Where the backup goes"
+  above. A real deployment enabling one of these should do its own live
+  verification run first, and separately decide its own bucket-level
+  versioning/encryption/retention policy — this project's adapters
+  write to whatever bucket/container is configured; they don't
+  provision or configure that bucket's own policies (that's
+  infrastructure-as-code territory, out of scope for an application-
+  level job script). The `local` default, if that's what a deployment
+  actually ships with, is only as durable/access-controlled as the
+  underlying PVC's own storage class and normal k8s RBAC — a
+  deployment that stays on `local` in production should treat that as
+  its own explicit choice, not an oversight.
 - **"Unreconciled settlement" is checked against
   `reconciliation_runs.mismatches`, a loosely-typed JSON array** (see
   `reconciliation.md` for how that gets populated) — this is a real,
   working check, but it depends on reconciliation runs having actually
   executed and correctly flagged every real mismatch. It is not an
   independent, formally-verified guarantee.
-- **No legal-hold mechanism.** If a specific record needs to be
-  preserved past its normal age (litigation, a regulator's specific
-  request) independent of the dispute-status check, there's currently
-  no flag for that — it would rely on an operator noticing and
-  intervening manually before a scheduled run.
+- **Legal hold is a single boolean, with no audit trail.** See
+  "Legal hold" below for what's actually built — it blocks archiving
+  and deletion, but doesn't record who placed it, when, or why. If a
+  real deployment needs that record-keeping (a regulator's own
+  evidentiary requirements, an internal audit process), it needs to be
+  added on top of this flag, likely alongside whatever handles #4's
+  gap above (both would want somewhere durable to write records, not
+  just a database column).
 - **Row-level archiving, not partition-level.** `database-scaling.md`'s
   Option 2 (table partitioning) discusses `DETACH PARTITION` as a
   possible archiving mechanism once partitioning is in place — this

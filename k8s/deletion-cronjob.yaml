@@ -14,14 +14,23 @@
 # nothing to do. Weekly is a reasonable POC default; re-tune per actual
 # data volume in a real deployment.
 #
-# PersistentVolumeClaim below is what makes the backup file durable
-# across the CronJob pod's own lifecycle — a k8s pod's local filesystem
-# disappears when the pod does, so without a mounted volume, the backup
-# a "successful" run claims to have wouldn't actually survive to be
-# useful. This PVC is the POC-level answer; docs/compliance/data-retention.md
-# covers why a real deployment should likely use versioned, access-
-# controlled object storage instead, since this file becomes the *only*
-# remaining copy of a deleted record.
+# PersistentVolumeClaim below backs the default backup destination
+# ("local" — see DELETION_BACKUP_STORAGE in configmap.yaml and
+# src/jobs/backup-storage/get-backup-storage.ts) — it's what makes the
+# backup file durable across the CronJob pod's own lifecycle, since a
+# k8s pod's local filesystem otherwise disappears when the pod does.
+# This default is deliberate, not a placeholder: this project's GitHub
+# Actions CI has no real cloud credentials, so "local" (needing nothing
+# but this PVC) is what keeps CI passing — see
+# docs/compliance/data-retention.md.
+#
+# A real deployment that wants S3/GCS/Azure instead: set
+# DELETION_BACKUP_STORAGE plus that provider's own vars in
+# configmap.yaml/omniswitch-secrets (see get-backup-storage.ts for
+# exactly which ones each provider needs), remove the `env` entries and
+# `volumeMounts`/`volumes` block below that reference this PVC, and this
+# PersistentVolumeClaim resource can be deleted entirely — the cloud
+# adapters don't use it.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -105,6 +114,11 @@ spec:
                     configMapKeyRef:
                       name: omniswitch-config
                       key: DELETION_BACKUP_REQUIRED
+                - name: DELETION_BACKUP_STORAGE
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DELETION_BACKUP_STORAGE
                 - name: DELETION_BACKUP_PATH
                   valueFrom:
                     configMapKeyRef:

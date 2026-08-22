@@ -28,6 +28,10 @@ import { AppDataSource } from '../database/data-source';
  *     mismatch means this payment's settlement hasn't been confirmed
  *     against the PSP's own record yet, so it isn't "reconciled" in the
  *     sense Option 3's policy requires
+ *   - `legal_hold` is false — see LegalHoldService/admin/payments/:id/
+ *     legal-hold (Phase 3 follow-up #5). Overrides all of the above:
+ *     a held payment is excluded regardless of age, status, or dispute
+ *     state, until the hold is explicitly released.
  * A `ledger_outbox` entry is archived independently, on its own
  * `created_at`/`ARCHIVE_THRESHOLD_DAYS`, once `status = 'PUBLISHED'` —
  * `FAILED` entries stay live since they're still actionable via the
@@ -54,6 +58,18 @@ interface RunSummary {
   error?: string;
 }
 
+/**
+ * Moves every eligible payment (see the eligibility list above) from
+ * `payments` into `archive.payments`, in one transaction per call.
+ *
+ * Returns `eligible` (how many rows matched the eligibility criteria at
+ * the start of this call) and `archived` (how many were actually
+ * inserted into `archive.payments` — normally equal to `eligible`, but
+ * can be lower if a concurrent insert already archived a row between
+ * the count and the insert, since `ON CONFLICT ("id") DO NOTHING` skips
+ * it rather than erroring). The caller (`main()`) logs both so a
+ * mismatch between them is visible in the job's own run summary.
+ */
 export async function archivePayments(): Promise<{ eligible: number; archived: number }> {
   const runner = AppDataSource.createQueryRunner();
   await runner.connect();
@@ -63,6 +79,7 @@ export async function archivePayments(): Promise<{ eligible: number; archived: n
       `SELECT count(*) FROM "payments" p
        WHERE p.created_at < now() - ($1 || ' days')::interval
          AND p.status = ANY($2)
+         AND NOT p.legal_hold
          AND NOT EXISTS (SELECT 1 FROM "disputes" d WHERE d.payment_id = p.id::varchar AND d.status = ANY($3))
          AND NOT EXISTS (
            SELECT 1 FROM "reconciliation_runs" r, jsonb_array_elements(r.mismatches) m
@@ -90,6 +107,7 @@ export async function archivePayments(): Promise<{ eligible: number; archived: n
        FROM "payments" p
        WHERE p.created_at < now() - ($1 || ' days')::interval
          AND p.status = ANY($2)
+         AND NOT p.legal_hold
          AND NOT EXISTS (SELECT 1 FROM "disputes" d WHERE d.payment_id = p.id::varchar AND d.status = ANY($3))
          AND NOT EXISTS (
            SELECT 1 FROM "reconciliation_runs" r, jsonb_array_elements(r.mismatches) m
@@ -115,6 +133,12 @@ export async function archivePayments(): Promise<{ eligible: number; archived: n
   }
 }
 
+/**
+ * Same shape as `archivePayments()`, for `ledger_outbox` entries — moves
+ * every `PUBLISHED` entry older than `ARCHIVE_THRESHOLD_DAYS` into
+ * `archive.ledger_outbox`. Returns `eligible`/`archived` with the same
+ * meaning as `archivePayments()`.
+ */
 export async function archiveLedgerOutbox(): Promise<{ eligible: number; archived: number }> {
   const runner = AppDataSource.createQueryRunner();
   await runner.connect();

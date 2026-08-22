@@ -27,6 +27,16 @@ src/
 │   │                               # schema — docs/compliance/data-retention.md
 │   ├── run-deletion-job.ts        # Backs up then deletes archived rows past the retention
 │   │                               # window — docs/compliance/data-retention.md
+│   ├── backup-storage/            # Pluggable BackupStorage adapters run-deletion-job.ts
+│   │   │                          # writes to — local disk (default, what CI runs with),
+│   │   │                          # S3, GCS, Azure Blob, selected via DELETION_BACKUP_STORAGE.
+│   │   │                          # get-backup-storage.ts is a plain factory function, not
+│   │   │                          # NestJS DI — run-deletion-job.ts runs outside the Nest
+│   │   │                          # container. data-retention.md, "Where the backup goes."
+│   │   └── *.spec.ts              # Unit tests — real filesystem for the local adapter,
+│   │                               # mocked SDK clients for the three cloud adapters (never
+│   │                               # run against a real bucket — no real cloud credentials
+│   │                               # anywhere in this project's CI or local dev setup)
 │   ├── create-partitions-job.ts   # Keeps upcoming-month partitions pre-created on payments/
 │   │                               # ledger_outbox so new rows never fall into DEFAULT —
 │   │                               # k8s CronJob, weekly — data-retention.md
@@ -97,9 +107,11 @@ src/
 │           ├── controllers/       # PaymentController (also the entry point for an AGENT
 │           │                      # token's delegated charge), WebhookController,
 │           │                      # SubscriptionController, PlanController,
-│           │                      # DelegationController, plus 7 focused admin controllers
+│           │                      # DelegationController, plus 8 focused admin controllers
 │           │                      # (Outbox/Reconciliation/Dispute/Reserve/Subscription/
-│           │                      # RiskTiering/MarketplacePayout)
+│           │                      # RiskTiering/MarketplacePayout/LegalHold — the last one
+│           │                      # POST/DELETE admin/payments/:id/legal-hold, see
+│           │                      # docs/compliance/data-retention.md)
 │           ├── sagas/             # PaymentCheckoutSaga (charge, compensating txns) — also
 │           │                      # the engine SubscriptionService reuses per billing period
 │           ├── services/          # AcquirerRoutingService, PaymentLifecycleService

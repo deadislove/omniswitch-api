@@ -36,6 +36,17 @@ interface TableStatus {
   dropped: boolean;
 }
 
+/**
+ * Checks every table tracked in `schema_cutover_log` and drops the ones
+ * past `CUTOVER_OLD_TABLE_RETENTION_DAYS`, leaving the rest untouched.
+ *
+ * Returns one `TableStatus` per tracked table (empty array if nothing
+ * is tracked — e.g. already dropped in a prior run). `eligible` reflects
+ * whether the retention window had elapsed at the time of this call;
+ * `dropped` reflects what this specific call actually did. Never
+ * throws for "not eligible yet" — that's a normal, expected outcome,
+ * not a failure (see `main()`, which logs it as informational).
+ */
 export async function dropCutoverTables(): Promise<TableStatus[]> {
   const rows = await AppDataSource.query(
     `SELECT "table_name", "cutover_at", EXTRACT(DAY FROM now() - "cutover_at") AS days_since_cutover

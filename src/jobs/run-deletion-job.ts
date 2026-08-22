@@ -1,7 +1,6 @@
 import 'dotenv/config';
-import { mkdirSync, writeFileSync, existsSync, statSync } from 'fs';
-import { join } from 'path';
 import { AppDataSource } from '../database/data-source';
+import { getBackupStorage } from './backup-storage/get-backup-storage';
 
 /**
  * Deletion job (Phase 3, task 10c's second tier — see
@@ -11,11 +10,9 @@ import { AppDataSource } from '../database/data-source';
  * `run-archiving-job.ts` — see that file's docblock for why this isn't
  * a `@Cron()` method.
  *
- * This is the tier the project previously said it would never do by
- * default — it now does, on an explicit, project-owner-approved policy
- * (2026-08-22): records past `DELETION_THRESHOLD_YEARS` (default 8,
- * counted from the record's original `created_at`, not from when it was
- * archived) are exported to a backup file, then deleted from the
+ * Deletes records past `DELETION_THRESHOLD_YEARS` (default 8, counted
+ * from the record's original `created_at`, not from when it was
+ * archived): exports them to a backup file, then removes them from the
  * database. **The backup is not optional**: `DELETION_BACKUP_REQUIRED`
  * defaults to `true`, and this job refuses to delete anything for a
  * batch whose backup file didn't write successfully — see `main()`.
@@ -25,23 +22,30 @@ import { AppDataSource } from '../database/data-source';
  *
  * Excludes any payment with a still-open dispute (`NEEDS_RESPONSE` or
  * `UNDER_REVIEW`), the same check `run-archiving-job.ts` applies before
- * archiving — added 2026-08-22 after review: a payment can be archived
- * with no open dispute and then get disputed years later (a long
- * investigation, litigation), and age alone crossing
- * `DELETION_THRESHOLD_YEARS` must not override that. Without this check,
- * this job would delete a payment mid-investigation just because it was
- * old enough — a payment tied to an open dispute is never eligible here,
- * regardless of how long it's been archived.
+ * archiving: a payment can be archived with no open dispute and then
+ * get disputed years later (a long investigation, litigation), and age
+ * alone crossing `DELETION_THRESHOLD_YEARS` must not override that — a
+ * payment tied to an open dispute is never eligible here, regardless of
+ * how long it's been archived.
  *
-
- * The backup file is a local-disk JSON export — a POC-level mechanism,
- * not a production-grade one. `k8s/deletion-cronjob.yaml` mounts a
- * PersistentVolumeClaim at `DELETION_BACKUP_PATH` so the file survives
- * the CronJob pod's own lifecycle (an ephemeral pod's local filesystem
- * disappears with it otherwise) — see docs/compliance/data-retention.md
- * for what a real deployment should use instead (versioned,
- * access-controlled object storage with its own retention policy, since
- * this file becomes the *only* remaining copy of a deleted record).
+ * Also excludes any payment with `legal_hold` set (see
+ * LegalHoldService). Belt-and-suspenders here, not the primary defense:
+ * `LegalHoldService.placeHold()` pulls a held payment out of
+ * `archive.payments` entirely (back into the live `payments` table), so
+ * under normal operation this WHERE clause should never actually
+ * exclude anything — but checking it here too costs nothing and
+ * protects against this job ever deleting a held record if that
+ * invariant is ever violated by a future bug.
+ *
+ * The backup destination is pluggable — see
+ * `./backup-storage/get-backup-storage.ts` — selected via
+ * `DELETION_BACKUP_STORAGE` (default `"local"`, a JSON file on disk;
+ * `"s3"`/`"gcs"`/`"azure"` for the corresponding cloud object store).
+ * The default stays local specifically so this project's GitHub
+ * Actions CI, which never has real cloud credentials, keeps passing
+ * with zero external configuration — see
+ * docs/compliance/data-retention.md for the full reasoning and the
+ * per-provider config each option needs.
  */
 
 // Read per-call, not captured as module-level constants at import time —
@@ -54,9 +58,6 @@ function deletionThresholdYears(): number {
 }
 function deletionBackupRequired(): boolean {
   return process.env.DELETION_BACKUP_REQUIRED !== 'false';
-}
-function deletionBackupPath(): string {
-  return process.env.DELETION_BACKUP_PATH || './backups';
 }
 
 interface RunSummary {
@@ -72,42 +73,21 @@ interface RunSummary {
   error?: string;
 }
 
-// Every fs call below has a non-literal path, which
-// security/detect-non-literal-fs-filename flags on principle — it can't
-// tell a path built from trusted config apart from one built from
-// attacker-reachable input. Here it's neither: `backupPath` only ever
-// comes from DELETION_BACKUP_PATH, an operator/deployment-time env var
-// (k8s configmap, or a local shell env) — the same trust level as
-// DB_MASTER_HOST or any other config this service reads, never anything
-// from an HTTP request or data this service processes. `filename` is
-// generated entirely from `Date.now()`/`toISOString()`, with no
-// external input and no `/`/`..` characters possible after the regex
-// replace. Suppressed per-site with this justification, not by
-// disabling the rule — see .eslintrc.security.cjs's own comment on why
-// this rule (unlike detect-object-injection) has a low false-positive
-// rate and stays enabled for everything else in this codebase.
-function writeBackupFile(records: { payments: unknown[]; ledgerOutbox: unknown[] }): string {
-  const backupPath = deletionBackupPath();
-  // eslint-disable-next-line security/detect-non-literal-fs-filename
-  if (!existsSync(backupPath)) {
-    // eslint-disable-next-line security/detect-non-literal-fs-filename
-    mkdirSync(backupPath, { recursive: true });
-  }
-  const filename = `deletion-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  const filePath = join(backupPath, filename);
-  // eslint-disable-next-line security/detect-non-literal-fs-filename
-  writeFileSync(filePath, JSON.stringify(records, null, 2));
-
-  // Confirm the file actually landed on disk with real content before
-  // treating the backup as successful — a write that silently truncated
-  // (disk full, permission race) must not be treated as "backed up."
-  // eslint-disable-next-line security/detect-non-literal-fs-filename
-  if (!existsSync(filePath) || statSync(filePath).size === 0) {
-    throw new Error(`Backup file ${filePath} was not written correctly (missing or empty)`);
-  }
-  return filePath;
-}
-
+/**
+ * Backs up and deletes every eligible archived payment/ledger_outbox
+ * entry (see the eligibility rules above) in one pass.
+ *
+ * Returns `paymentsEligible`/`ledgerOutboxEligible` (how many rows
+ * matched at query time) and `paymentsDeleted`/`ledgerOutboxDeleted`
+ * (how many were actually removed — always equal to the eligible count
+ * here, since this job holds a transaction across the whole delete
+ * unlike the archiving job's insert-with-conflict-skip). `backupFile`
+ * is the location identifier `BackupStorage.write()` returned (a file
+ * path or object-store URI, depending on the configured provider — see
+ * `./backup-storage/get-backup-storage.ts`), or `null` if there was
+ * nothing eligible to back up. Throws (and deletes nothing) if the
+ * backup write fails — see the docblock above.
+ */
 export async function runDeletion(): Promise<{
   paymentsEligible: number;
   paymentsDeleted: number;
@@ -119,6 +99,7 @@ export async function runDeletion(): Promise<{
   const eligiblePayments = await AppDataSource.query(
     `SELECT * FROM "archive"."payments" p
      WHERE p.created_at < now() - ($1 || ' years')::interval
+       AND NOT p.legal_hold
        AND NOT EXISTS (
          SELECT 1 FROM "disputes" d WHERE d.payment_id = p.id::varchar AND d.status = ANY($2)
        )`,
@@ -138,7 +119,7 @@ export async function runDeletion(): Promise<{
       // Backup happens before any DELETE, and outside the DB
       // transaction below — if this throws, the caller sees the
       // exception and nothing is deleted.
-      backupFile = writeBackupFile({ payments: eligiblePayments, ledgerOutbox: eligibleLedgerOutbox });
+      backupFile = await getBackupStorage().write({ payments: eligiblePayments, ledgerOutbox: eligibleLedgerOutbox });
     }
 
     const runner = AppDataSource.createQueryRunner();

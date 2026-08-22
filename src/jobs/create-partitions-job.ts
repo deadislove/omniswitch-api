@@ -34,15 +34,13 @@ import { AppDataSource } from '../database/data-source';
  *
  * Child partition naming: `payments_partitioned_YYYY_MM` /
  * `ledger_outbox_partitioned_YYYY_MM` — keeping the `_partitioned_`
- * naming Stage 1 originally used, **not** `payments_YYYY_MM`. Verified
- * live: Stage 2's cutover (`ALTER TABLE payments_partitioned RENAME TO
- * payments`) only renames the *parent* table — Postgres does not
- * cascade that rename to child partitions, so every partition created
- * before or after cutover is named `payments_partitioned_*`, forever,
- * even though the parent itself is now called `payments`. A first
- * attempt at this job used `payments_YYYY_MM` and failed immediately
- * with "partition would overlap partition \"payments_partitioned_2026_08\""
- * — this comment exists so nobody reintroduces that mismatch.
+ * naming Stage 1 originally used, **not** `payments_YYYY_MM`. Stage 2's
+ * cutover (`ALTER TABLE payments_partitioned RENAME TO payments`) only
+ * renames the *parent* table — Postgres does not cascade that rename to
+ * child partitions, so every partition is named `payments_partitioned_*`
+ * regardless of when it's created, even though the parent itself is
+ * called `payments`. Using `payments_YYYY_MM` here instead would create
+ * a second, colliding partition range on the same parent table.
  */
 
 const PARTITION_MAINTENANCE_MONTHS_AHEAD = Number(process.env.PARTITION_MAINTENANCE_MONTHS_AHEAD) || 2;
@@ -69,6 +67,19 @@ async function tableExists(tableName: string): Promise<boolean> {
   return exists;
 }
 
+/**
+ * Ensures a partition exists on both `payments` and `ledger_outbox` for
+ * the current month through `PARTITION_MAINTENANCE_MONTHS_AHEAD` months
+ * ahead. `now` defaults to the real current time; overridable so tests
+ * can exercise "what would this job create if run at some future date"
+ * without mocking the system clock.
+ *
+ * Returns `checked` (how many partition slots — payments + ledger_outbox
+ * per month — this run considered) and `created` (the table names this
+ * specific run actually had to create; empty if every partition in
+ * range already existed). The caller (`main()`) logs both so a CronJob
+ * run's log line shows whether it did real work or was a no-op.
+ */
 export async function ensureUpcomingPartitions(now: Date = new Date()): Promise<{ checked: number; created: string[] }> {
   const created: string[] = [];
   let checked = 0;

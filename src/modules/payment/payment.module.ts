@@ -64,6 +64,7 @@ import { RiskTieringService } from './application/services/risk-tiering.service'
 import { PlanService } from './application/services/plan.service';
 import { PayoutService } from './application/services/payout.service';
 import { DelegationService } from './application/services/delegation.service';
+import { LegalHoldService } from './application/services/legal-hold.service';
 
 // Controller
 import { PaymentController } from './application/controllers/payment.controller';
@@ -78,6 +79,7 @@ import { RiskTieringAdminController } from './application/controllers/risk-tieri
 import { PlanController } from './application/controllers/plan.controller';
 import { MarketplacePayoutAdminController } from './application/controllers/marketplace-payout-admin.controller';
 import { DelegationController } from './application/controllers/delegation.controller';
+import { LegalHoldAdminController } from './application/controllers/legal-hold-admin.controller';
 
 // Webhook Guards
 import { StripeWebhookGuard } from './adapters/psp/stripe/stripe-webhook.guard';
@@ -126,7 +128,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // already covers the whole app via @Global(); this one was pure
     // duplication that happened to be actively harmful, not just redundant.
   ],
-  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController],
+  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController, LegalHoldAdminController],
   providers: [
     // PSP Adapters
     StripePSPAdapter,
@@ -204,6 +206,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     PlanService,
     PayoutService,
     DelegationService,
+    LegalHoldService,
 
     // Auth
     JwtAuthGuard,

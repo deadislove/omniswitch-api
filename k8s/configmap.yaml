@@ -51,6 +51,16 @@ data:
   ARCHIVE_THRESHOLD_DAYS: "180"
   DELETION_THRESHOLD_YEARS: "8"
   DELETION_BACKUP_REQUIRED: "true"
+  # Which BackupStorage adapter run-deletion-job.ts writes to (see
+  # src/jobs/backup-storage/get-backup-storage.ts) — "local" (default,
+  # a PVC-mounted path, see deletion-cronjob.yaml) needs no other config
+  # below. Switching to "s3"/"gcs"/"azure" for a real deployment means
+  # setting that provider's own vars (DELETION_BACKUP_S3_BUCKET/REGION,
+  # DELETION_BACKUP_GCS_BUCKET, or DELETION_BACKUP_AZURE_CONNECTION_STRING/
+  # CONTAINER — the last one belongs in omniswitch-secrets, not here,
+  # since it carries an access credential) and removing the PVC mount
+  # from deletion-cronjob.yaml, not just changing this value alone.
+  DELETION_BACKUP_STORAGE: "local"
   DELETION_BACKUP_PATH: "/app/backups"
   # Separate from the AML thresholds above — how long payments_old/
   # ledger_outbox_old (the partitioning-cutover safety net) are kept
