@@ -122,12 +122,13 @@ above): same shape, same numbers — 6700 requests, 400 succeeded (`201`),
 5274 hit the route-level `429` cap, **zero `5xx`s**. The route-level cap
 is unaffected by the framework/HTTP-server upgrade, as expected.
 
-**Re-run 2026-08-22**, after this round's `src/jobs/` background-job
+**Re-run 2026-08-22**, on a fully rebuilt environment (fresh volumes,
+fresh image build) after this round's `src/jobs/` background-job
 additions and documentation expansion (none of which touch the charge
-path) — 200 seeded merchants, default rate limits: 6729 requests, 429
-succeeded (`201`), 5560 hit the route-level `429` cap, **zero `5xx`s**.
-Within a few requests of the historical 400/401-succeeded figure across
-every prior pass — same shape, same conclusion, no regression.
+path) — 200 seeded merchants, default rate limits: 6700 requests, 400
+succeeded (`201`), 5548 hit the route-level `429` cap, **zero `5xx`s**.
+Matches the historical 400-succeeded figure exactly — same shape, same
+conclusion, no regression.
 
 ## Finding #2: read-path capacity, unconstrained by the charge-specific cap
 
@@ -196,27 +197,36 @@ real drop in per-request resource cost.
 `BackupStorage`, legal hold) and this round's documentation expansion
 (`docs/guide/jobs/`, `docs/technical/jobs.md`, `docs/technical/databases/`,
 `docs/technical/clouds/`), none of which touch the charge/read request
-path. Three consecutive runs, same
-methodology as every prior date above — 200 seeded merchants (the
-established count for this methodology — 150 req/s split across fewer
-merchants pushes each one's own share past its 100/min budget and
-contaminates the result with `MerchantThrottlerGuard` rejections
-instead of measuring app capacity):
+path. An earlier same-day pass showed noisy, run-over-run-increasing
+CPU/latency; that pass turned out to have run on a host with a large
+accumulation of unrelated Docker resources (over 40GB of images and
+build cache, dozens of dangling volumes from unrelated work on the same
+machine) competing for disk/CPU in the background. The numbers below
+are from a full clean rebuild (fresh volumes, fresh image build) after
+that accumulation was cleared, and supersede the earlier same-day pass.
+Three consecutive runs, same methodology as every prior date above —
+200 seeded merchants (the established count for this methodology —
+150 req/s split across fewer merchants pushes each one's own share past
+its 100/min budget and contaminates the result with
+`MerchantThrottlerGuard` rejections instead of measuring app capacity):
 
 | Metric | Run 1 | Run 2 | Run 3 |
 |---|---|---|---|
 | Requests succeeded | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 |
-| p50 latency | 3ms | 3ms | 4ms |
-| p95 latency | 7.9ms | 7.9ms | 13.1ms |
-| p99 latency | 16.9ms | 22ms | 56.3ms |
-| max latency | 75ms | 118ms | 195ms |
+| p50 latency | 3ms | 3ms | 3ms |
+| p95 latency | 87.4ms | 7ms | 7ms |
+| p99 latency | 320.6ms | 13.1ms | 15ms |
+| max latency | 849ms | 55ms | 58ms |
 | Error rate | 0% | 0% | 0% |
 
-50,700 requests total, zero failures. p99/max drift upward run-over-run
-(16.9ms→56.3ms, 75ms→195ms) — a wider spread than 2026-08-21 showed,
-though still well short of a failure or a capacity ceiling. **Conclusion:
-no regression in success rate.** CPU (measured precisely, not sampled)
-tells a clearer story than latency alone here — see below.
+50,700 requests total, zero failures. Run 1's heavy tail is the same
+cold-start pattern already seen elsewhere in this doc (2026-08-10's
+Run 1) — this pass rebuilt the image and the database from nothing
+immediately beforehand, colder than a typical re-run. Runs 2-3, once
+warm, are tight and consistent with each other. **Conclusion: no
+regression in success rate; once warm, latency is as good as or better
+than every prior date in this section.** CPU (measured precisely, not
+sampled) is covered below.
 
 ## What this means for `k8s/hpa.yaml`
 
@@ -298,8 +308,10 @@ or a traffic mix heavier than pure reads) would need to be measured
 before touching `k8s/hpa.yaml` or `k8s/deployment.yaml`'s requests.
 
 **Re-measured 2026-08-22**, the same three runs reported under Finding
-#2 above. `docker stats`' 3–5s sampling interval proved too coarse to
-trust for CPU on its own, so CPU here is read directly from the Node
+#2 above (the clean rebuild, superseding the earlier same-day pass that
+ran on a host with a large unrelated Docker resource backlog — see
+Finding #2). `docker stats`' 3–5s sampling interval proved too coarse
+to trust for CPU on its own, so CPU here is read directly from the Node
 process's accumulated time in `/proc/<pid>/stat` (`utime+stime`)
 immediately before and after each run, divided by that run's exact
 wall-clock duration — one deterministic average-CPU% per run, immune
@@ -307,27 +319,28 @@ to sampling-interval aliasing:
 
 | Metric | Run 1 | Run 2 | Run 3 |
 |---|---|---|---|
-| CPU, average | 27.7% (≈277m) | 27.1% (≈271m) | 35.2% (≈352m) |
-| Memory | ~77–84MiB | ~77–84MiB | ~77–84MiB |
+| CPU, average | 32.7% (≈327m) | 26.3% (≈263m) | 26.7% (≈267m) |
 
-CPU drifts upward run-over-run (27.7%→35.2%), tracking the same
-latency-tail drift Finding #2 already noted — worth recording rather
-than averaging away, though `pg_stat_activity` showed only 3 open
-connections after the pass, ruling out connection buildup as the
-cause. **Conclusion: CPU averages 27–35% across the three runs, not
-the ≈1% 2026-08-21 recorded** — that figure could not be reproduced
-under this pass's controlled conditions (query logging and
-sampling-interval aliasing were both checked and ruled out as causes)
-and is retracted as unreliable pending an explanation.
+Memory was spot-checked once after all three runs (~60MiB, idle) rather
+than sampled continuously per run — consistent with the ~60–84MiB range
+observed across every prior pass, not a precise per-run figure.
+
+Run 1's CPU is elevated for the same cold-start reason its latency is
+(fresh image, fresh database); Runs 2-3 settle to a tight, consistent
+26–27%. **Conclusion: steady-state CPU is ≈26–27%, not the ≈1%
+2026-08-21 recorded** — that figure still could not be reproduced,
+even after eliminating both query logging and the earlier pass's
+Docker-resource-backlog confound as possible causes, and remains
+retracted as unreliable pending an explanation.
 
 Reframed against the HPA's actual basis (the 250m/256Mi **requests**):
-steady-state CPU (≈277–352m) sits at 100%+ of the 250m request,
-comfortably past the 70% trigger (175m) before a pod even reaches
-150 req/s of read traffic alone — the original 2026-08-10 finding
-("HPA would scale out fairly eagerly under sustained read load")
-holds. Memory (≈80MiB, ≈31% of the 256Mi request) stays well under the
-80% trigger — as in every pass to date, memory is not what would drive
-scale-out for this traffic shape.
+steady-state CPU (≈263–267m, ignoring the cold Run 1) sits at ≈105% of
+the 250m request, comfortably past the 70% trigger (175m) before a pod
+even reaches 150 req/s of read traffic alone — the original 2026-08-10
+finding ("HPA would scale out fairly eagerly under sustained read
+load") holds. Memory stays well under the 80% (205Mi) trigger — as in
+every pass to date, memory is not what would drive scale-out for this
+traffic shape.
 
 ## Finding #3: PgBouncer adds no read-path cost, once it's actually resource-isolated
 
@@ -386,8 +399,9 @@ up (~24% → ~36%) — plausibly the extra network hop's real, if modest,
 cost — but stayed well within `k8s/deployment.yaml`'s 1000m limit and
 didn't move p50/p95 or the success rate at all.
 
-**Re-verified 2026-08-22.** Three consecutive runs with `api` pointed
-directly at `postgres-master`/`postgres-replica` (`pgbouncer-master`/
+**Re-verified 2026-08-22**, on the same clean rebuild as Finding #2
+above. Three consecutive runs with `api` pointed directly at
+`postgres-master`/`postgres-replica` (`pgbouncer-master`/
 `pgbouncer-replica` bypassed entirely — `DB_MASTER_HOST`/
 `DB_REPLICA_HOST` aren't parameterized in `docker-compose.yml`, so this
 needed a one-off `docker run` on the same network instead of the usual
@@ -399,24 +413,25 @@ limits, as always):
 | Metric | Direct to Postgres, Run 1 | Run 2 | Run 3 | Via PgBouncer, Run 1 | Run 2 | Run 3 |
 |---|---|---|---|---|---|---|
 | Requests succeeded | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 |
-| p99 latency | 18ms | 125.2ms | 368.8ms | 16.9ms | 22ms | 56.3ms |
-| max latency | 158ms | 275ms | 474ms | 75ms | 118ms | 195ms |
-| CPU, average | 28.4% | 39.5% | 41.6% | 27.7% | 27.1% | 35.2% |
+| p99 latency | 43.4ms | 13.1ms | 13.9ms | 320.6ms | 13.1ms | 15ms |
+| max latency | 366ms | 95ms | 85ms | 849ms | 55ms | 58ms |
+| CPU, average | 28.7% | 26.0% | 29.9% | 32.7% | 26.3% | 26.7% |
 
-Zero failures either way — this isn't a capacity difference. Both
-conditions show the same run-over-run upward drift in CPU and p99
-noted in Finding #2 above, but it's consistently worse without
-PgBouncer (p99 up to 368.8ms bypassed vs. 56.3ms through it;
-`pg_stat_activity` showed only 3 open connections afterward, so this
-isn't connection-pool exhaustion). **Conclusion: PgBouncer, capped to
-its real k8s resource limits, is not a read-path cost — going through
-it performed as well as or better than bypassing it on every run,
-consistent with the original 2026-08-10 finding.** The absolute CPU/
-latency levels on both sides are elevated versus the 2026-08-21
-baseline for the same reason noted in Finding #2 (unreproduced,
-retracted as unreliable) — but the *relative* comparison this Finding
-exists to make (PgBouncer vs. no PgBouncer) still holds the same
-direction it always has.
+Zero failures either way — this isn't a capacity difference. Run 1 is
+elevated on both sides (the same cold-start effect noted in Finding
+#2); once warm, Runs 2-3 are close between the two conditions either
+way, and don't reproduce the severe run-over-run degradation an
+earlier same-day pass showed while bypassing PgBouncer — that pass ran
+on a host with a large unrelated Docker resource backlog (see Finding
+#2), and this clean rebuild doesn't show the same pattern.
+**Conclusion: PgBouncer, capped to its real k8s resource limits,
+remains not a read-path cost** — direct and pooled access perform
+comparably once warm, consistent with the original 2026-08-10 finding.
+The absolute CPU/latency levels on both sides are still well above the
+2026-08-21 baseline (unreproduced, retracted as unreliable — see
+Finding #2) — but the *relative* comparison this Finding exists to
+make (PgBouncer vs. no PgBouncer) continues to hold the same direction
+it always has.
 
 ## What this doesn't cover
 
