@@ -1,9 +1,9 @@
 # Platform Operations API
 
 Source: `outbox-admin.controller.ts`, `reconciliation-admin.controller.ts`,
-`health.controller.ts`, `metrics.controller.ts`. These endpoints exist
-for operators and infrastructure, not for merchants integrating with the
-API.
+`legal-hold-admin.controller.ts`, `health.controller.ts`,
+`metrics.controller.ts`. These endpoints exist for operators and
+infrastructure, not for merchants integrating with the API.
 
 ---
 
@@ -78,6 +78,44 @@ Triggers a run on demand.
 A mismatch is one of `MISSING_AT_PSP` (we have it, the PSP doesn't),
 `AMOUNT_MISMATCH` (both have it, amounts disagree), or `UNKNOWN_AT_PSP`
 (the PSP has a transaction we don't).
+
+---
+
+## Legal hold (`/admin/payments/:id/legal-hold`)
+
+Blocks a payment from the data-retention pipeline — see
+[`../../compliance/data-retention.md`](../../compliance/data-retention.md#legal-hold)
+for the full design (why it's a single boolean with no audit trail, and
+why placing a hold on an archived payment restores it to the live
+table). Both the archiving job and the deletion job exclude a
+`legal_hold = true` payment regardless of its age, status, or dispute
+state.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+
+### `POST /admin/payments/:id/legal-hold`
+
+Places a hold. If the payment is currently archived
+(`archive.payments`), this restores it to the live `payments` table as
+part of placing the hold — a record under active legal/regulatory
+scrutiny needs to be reachable through the normal payment query path,
+not left in cold storage.
+
+**Response `200`**: `{ id, legalHold: true, location: "live" | "restored-from-archive" }`
+
+- **Errors**: `404` payment not found in either `payments` or `archive.payments`.
+
+### `DELETE /admin/payments/:id/legal-hold`
+
+Releases a hold. Only ever operates on the live table — a held payment
+is always live (`POST` guarantees that). The payment simply becomes
+archive-eligible again the next time the archiving job runs, once its
+age/status/dispute conditions are otherwise met; there's no separate
+"re-archive" step.
+
+**Response `200`**: `{ id, legalHold: false, location: "live" }`
+
+- **Errors**: `404` payment not currently in the live `payments` table.
 
 ---
 

@@ -11,6 +11,12 @@ reference — meant to be read start to finish, not dipped into. Everything
 below (`technical/`, `business-domain/`) is the deeper reference this
 guide points into once you're working on a specific area.
 
+Also in this folder: [`guide/jobs/`](./guide/jobs/) — an operator
+runbook for the background jobs (archiving, deletion, partition
+maintenance, cutover cleanup), separate from the onboarding reading
+order above since it's day-2-operations reference, not something a new
+engineer needs before their first PR.
+
 ## [`technical/`](./technical/)
 
 How the system is built — architecture, module boundaries, security design,
@@ -55,6 +61,20 @@ compliance posture. Read this if you're changing code.
   CI incidents: a master/replica read race a routine dependency-bump PR
   surfaced, and a heap-flake fix that passed locally three times and then
   broke 61 tests on the actual CI runner
+- [`jobs.md`](./technical/jobs.md) — architecture of the background-job
+  subsystem (archiving, deletion, partition maintenance, cutover
+  cleanup): why they're standalone scripts run as k8s `CronJob`/`Job`
+  resources instead of `@Cron()` methods, the `BackupStorage` factory
+  pattern, and pod labeling
+- [`databases/`](./technical/databases/) — the ERD and table-by-table
+  schema reference, the physical database architecture
+  (master/replica replication, PgBouncer pooling, table partitioning,
+  the `archive` schema), and an index of recurring/one-time database
+  maintenance tasks
+- [`clouds/`](./technical/clouds/) — the pluggable AWS S3/GCS/Azure
+  Blob `BackupStorage` adapters the deletion job can write to:
+  configuration, credentials, and what's been (and hasn't been)
+  verified against real cloud infrastructure
 
 ## [`business-domain/`](./business-domain/)
 

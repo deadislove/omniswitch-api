@@ -189,8 +189,8 @@ never looks at the live tables directly.
 
 ## Legal hold
 
-A payment's `legal_hold` boolean (added 2026-08-22, Phase 3 follow-up
-#5) overrides both the archiving and deletion eligibility checks above
+A payment's `legal_hold` boolean (added 2026-08-22) overrides both the
+archiving and deletion eligibility checks above
 — a held payment is excluded regardless of age, status, or dispute
 state, same as the dispute check but not tied to a PSP dispute
 existing. This is for the case a dispute-status check alone doesn't

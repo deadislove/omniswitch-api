@@ -356,6 +356,17 @@ helpers matching exactly what the guards being tested verify).
 - [`database-migrations.md`](./database-migrations.md) — the migration
   workflow, and why every entity has to be registered in both
   `app.module.ts` *and* `database/data-source.ts`
+- [`databases/`](./databases/) — the ERD, table-by-table schema
+  reference, and the physical database architecture (master/replica
+  replication, PgBouncer pooling, `payments`/`ledger_outbox`
+  partitioning, the `archive` schema)
+- [`jobs.md`](./jobs.md) — architecture of the standalone-script jobs
+  under `src/jobs/` (archiving, deletion, partition maintenance,
+  cutover cleanup): why they run as k8s `CronJob`/`Job` resources
+  outside the Nest DI container instead of `@Cron()` methods, and the
+  `BackupStorage` factory pattern
+- [`clouds/`](./clouds/) — the pluggable AWS S3/GCS/Azure Blob
+  `BackupStorage` adapters the deletion job can write to
 - [`ci-cd.md`](./ci-cd.md) — what the GitHub Actions workflows actually
   run, the known flaky-test classes on top of the ones described above,
   and two real CI incidents worth reading before touching either
