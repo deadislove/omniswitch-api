@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
-import { CachePort } from '../src/modules/payment/ports/outbound/cache.port';
+import { resetCircuitBreakerState } from './utils/circuit-breaker';
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 
@@ -48,19 +48,13 @@ describe('Latency-based circuit breaker (e2e)', () => {
     // ratio never crosses SLOW_CALL_RATE_THRESHOLD — confirmed live: this
     // test passes in isolation but failed intermittently as part of the
     // full suite before this reset was added.
-    const cache = app.get(CachePort);
-    for (const provider of ['STRIPE', 'ADYEN']) {
-      await Promise.all([
-        cache.del(`circuit:${provider}:recentCallCount`),
-        cache.del(`circuit:${provider}:slowCallCount`),
-        cache.del(`circuit:${provider}:failureCount`),
-        cache.del(`circuit:${provider}:state`),
-        cache.del(`circuit:${provider}:lastFailureTime`),
-      ]);
-    }
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 
   afterAll(async () => {
+    // This test deliberately trips STRIPE's circuit OPEN — reset it so
+    // that state doesn't leak into whichever e2e file runs next.
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
     await app.close();
   });
 

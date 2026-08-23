@@ -5,6 +5,7 @@ import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
 import { PSPAdapterPort } from '../../ports/outbound/psp-adapter.port';
+import { MerchantPspExposureService } from '../../adapters/circuit-breaker/merchant-psp-exposure.service';
 
 /**
  * Acquirer Routing Service (Application Layer)
@@ -20,6 +21,7 @@ export class AcquirerRoutingService {
 
   constructor(
     private readonly processorFactory: PaymentProcessorFactory,
+    private readonly merchantPspExposure: MerchantPspExposureService,
   ) {}
 
   /**
@@ -69,7 +71,16 @@ export class AcquirerRoutingService {
       preferredProvider: params.preferredProvider,
     };
 
-    return this.processorFactory.executeWithFallback(context, operation);
+    const result = await this.processorFactory.executeWithFallback(context, operation);
+
+    // Recorded on the actual outcome (post-fallback), not the initial pick
+    // — this is what MerchantPspExposureService uses to decide whether the
+    // merchant's *next* charge should get a stricter throttle limit, so it
+    // should reflect where their traffic really landed, not where it was
+    // first aimed.
+    await this.merchantPspExposure.recordRouting(params.merchantId, result.provider);
+
+    return result;
   }
 
   /**

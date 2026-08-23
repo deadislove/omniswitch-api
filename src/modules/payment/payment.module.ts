@@ -45,6 +45,7 @@ import { StripePSPAdapter } from './adapters/psp/stripe/stripe-psp.adapter';
 import { AdyenPSPAdapter } from './adapters/psp/adyen/adyen-psp.adapter';
 import { PaymentProcessorFactory } from './adapters/psp/payment-processor.factory';
 import { RedisCircuitBreakerService } from './adapters/circuit-breaker/redis-circuit-breaker.service';
+import { MerchantPspExposureService } from './adapters/circuit-breaker/merchant-psp-exposure.service';
 import { FXRateProviderAdapter } from './adapters/fx/fx-rate-provider.adapter';
 
 // Application Services
@@ -91,6 +92,7 @@ import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { HmacSignatureGuard } from '../../shared/guards/hmac-signature.guard';
 import { MerchantThrottlerGuard } from '../../shared/guards/merchant-throttler.guard';
+import { DegradedPspAwareThrottlerGuard } from '../../shared/guards/degraded-psp-aware-throttler.guard';
 
 // Merchant (per-merchant HMAC secret lookup)
 import { MerchantModule } from '../merchant/merchant.module';
@@ -135,6 +137,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     AdyenPSPAdapter,
     PaymentProcessorFactory,
     RedisCircuitBreakerService,
+    MerchantPspExposureService,
 
     // Cache Adapter
     RedisCacheAdapter,
@@ -213,6 +216,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     RolesGuard,
     HmacSignatureGuard,
     MerchantThrottlerGuard,
+    DegradedPspAwareThrottlerGuard,
 
     // Webhook signature guards
     StripeWebhookGuard,
