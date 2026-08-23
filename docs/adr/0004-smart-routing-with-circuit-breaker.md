@@ -59,6 +59,35 @@ accumulating unboundedly — see
 [`../technical/distributed-state.md`](../technical/distributed-state.md)
 for the bucketing design.
 
+**A second, independent trigger opens the circuit on a slow-call rate**,
+not just on thrown exceptions: a PSP call that never errors but takes
+longer than 5 seconds (well under the adapters' 30-second hard abort)
+counts as "slow," and once at least 5 of the most recent calls are in
+that sliding window and half or more of them were slow, the circuit
+opens — the same behavior Resilience4j's `SlowCallRateThreshold`
+provides. Without this, a PSP that's silently hanging rather than
+erroring would be invisible to the breaker until it actually started
+throwing, which — at 5 required failures with no help from this signal
+— could take up to 5 × 30s = 2.5 minutes to detect. This closes that
+gap: a hung PSP now trips the breaker within a handful of slow calls,
+not minutes.
+
+**Verified live against real elapsed time, not just simulated timers**
+(`test/latency-based-circuit-breaker.e2e-spec.ts`, 2026-08-23):
+`mock-psp` was given a `forceslow` marker that delays 6 real seconds
+before responding successfully (`scripts/mock-psp/server.js`), so this
+test exercises the adapter's actual `fetch()` and the actual elapsed-time
+measurement feeding `recordSuccess()` — not `jest.useFakeTimers()` (used
+for the unit tests in `redis-circuit-breaker.service.spec.ts`) and not a
+socket-destroy trick (used for the ambiguous-outcome timeout tests,
+where no response at all is the point). 5 sequential slow-but-successful
+STRIPE charges (~6s each, real wall-clock time) opened the circuit —
+confirmed both via `GET /payments/routing/health` reporting
+`STRIPE.circuitBreaker: "OPEN"`, and observably: a 6th charge that still
+requested `preferredProvider: "STRIPE"` routed to `ADYEN` instead,
+proving `filterAvailableProviders()` actually excluded STRIPE rather
+than just recording a flag nothing reads. Full test run: 35.4s.
+
 ## Consequences
 
 **What this buys**: a PSP outage degrades gracefully and consistently

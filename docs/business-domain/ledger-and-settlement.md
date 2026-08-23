@@ -137,6 +137,14 @@ read time) rather than accumulating for as long as the Redis keys live —
 see [`distributed-state.md`](../technical/distributed-state.md) for the
 bucketing design.
 
+A second trigger also opens the circuit independently of the above: a
+call that never throws but takes longer than 5 seconds counts as
+"slow," and once at least 5 of the most recent calls are in the window
+and half or more were slow, the circuit opens anyway — otherwise a PSP
+that's silently hanging (not erroring, just never responding) wouldn't
+trip the breaker until it actually started throwing, which could take
+up to 2.5 minutes at 5 required failures.
+
 ## Reconciliation
 
 The mechanisms above (double-entry validation, the outbox pattern) only

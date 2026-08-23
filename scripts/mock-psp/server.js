@@ -94,10 +94,27 @@ function forceTimeout(res) {
   res.socket.destroy();
 }
 
+// Simulates a PSP call that eventually succeeds but takes real wall-clock
+// time to do so — distinct from forceTimeout above (no response at all).
+// This is what the slow-call-rate circuit-breaker trigger (see
+// RedisCircuitBreakerService.recordSlowCallSample()) is meant to detect: a
+// hanging-but-not-erroring PSP. Delay is deliberately real (not mocked
+// timers) so an e2e test exercises the actual code path — the adapter's
+// real fetch(), the real elapsed-time measurement feeding recordSuccess().
+const FORCE_SLOW_DELAY_MS = 6000; // over SLOW_CALL_THRESHOLD_MS (5s)
+
+function shouldForceSlow(paymentMethodRef) {
+  return (paymentMethodRef || '').toLowerCase().includes('forceslow');
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const server = http.createServer((req, res) => {
   let data = '';
   req.on('data', (c) => (data += c));
-  req.on('end', () => {
+  req.on('end', async () => {
     const url = req.url;
 
     const path = url.split('?')[0];
@@ -113,6 +130,9 @@ const server = http.createServer((req, res) => {
       const binCountry = (params.get('metadata[bin_country]') || '').toUpperCase();
       if (shouldForceTimeout(params.get('payment_method'), req.headers['idempotency-key'])) {
         return forceTimeout(res);
+      }
+      if (shouldForceSlow(params.get('payment_method'))) {
+        await delay(FORCE_SLOW_DELAY_MS);
       }
       const declineCode = declineCodeFor(params.get('payment_method'));
       if (declineCode) {
@@ -237,6 +257,9 @@ const server = http.createServer((req, res) => {
       const isManualCapture = (parsedBody.additionalData || {}).manualCapture === 'true';
       if (shouldForceTimeout((parsedBody.paymentMethod || {}).storedPaymentMethodId, req.headers['idempotency-key'])) {
         return forceTimeout(res);
+      }
+      if (shouldForceSlow((parsedBody.paymentMethod || {}).storedPaymentMethodId)) {
+        await delay(FORCE_SLOW_DELAY_MS);
       }
       const declineCode = declineCodeFor((parsedBody.paymentMethod || {}).storedPaymentMethodId);
       if (declineCode) {

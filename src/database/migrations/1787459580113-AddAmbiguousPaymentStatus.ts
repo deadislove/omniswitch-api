@@ -3,7 +3,7 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 /**
  * Adds AMBIGUOUS to payments_status_enum — see PaymentStatus.AMBIGUOUS's
  * own docblock and docs/spec/future/distributed-resilience-and-cde-isolation.md
- * (Gap 1.3) for why: a PSP call that gets no response at all (timeout,
+ * for why: a PSP call that gets no response at all (timeout,
  * connection drop), even after one same-provider retry via idempotency
  * replay, leaves this system genuinely unable to tell whether the charge
  * happened — a different outcome from FAILED, which only ever means "the
