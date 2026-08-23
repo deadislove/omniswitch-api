@@ -5,6 +5,7 @@ import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
 import { Money } from '../../../domain/value-objects/money.vo';
+import { Semaphore } from '../../../../../shared/utils/semaphore';
 
 /**
  * Stripe PSP Adapter
@@ -18,6 +19,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
   private readonly logger = new Logger(StripePSPAdapter.name);
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly bulkhead: Semaphore;
 
   constructor(
     private readonly configService: ConfigService,
@@ -25,6 +27,15 @@ export class StripePSPAdapter extends PSPAdapterPort {
   ) {
     super();
     this.apiKey = configService.get<string>('STRIPE_SECRET_KEY', 'sk_test_placeholder');
+    // Caps how many concurrent outbound calls to Stripe this pod will have
+    // in flight at once — see makeRequest() below and
+    // docs/spec/future/distributed-resilience-and-cde-isolation.md (§3,
+    // Gap 3.4) for why. In-memory/per-pod, not Redis-backed: this protects
+    // this pod's own connection pool/event loop capacity, not a
+    // cross-replica quota. Read directly from process.env (not
+    // configService.get, which doesn't coerce numeric strings) — same
+    // reasoning and pattern as PaymentController's CHARGE_RATE_LIMIT_MAX.
+    this.bulkhead = new Semaphore(Number(process.env.PSP_BULKHEAD_MAX_CONCURRENT) || 20);
     // Configurable like the Adyen adapter's ADYEN_BASE_URL — needed to point
     // at a local mock in tests/dev instead of always hitting the real Stripe API.
     this.baseUrl = configService.get<string>('STRIPE_BASE_URL', 'https://api.stripe.com/v1');
@@ -302,7 +313,20 @@ export class StripePSPAdapter extends PSPAdapterPort {
 
   // ─── HTTP Client ────────────────────────────────────────────────────────────
 
+  // Bulkhead-wrapped: acquires a permit before making the actual outbound
+  // call, queuing rather than piling up unboundedly if
+  // PSP_BULKHEAD_MAX_CONCURRENT Stripe calls are already in flight from
+  // this pod. See the constant's docblock above.
   private async makeRequest(
+    method: string,
+    path: string,
+    params: URLSearchParams,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    return this.bulkhead.run(() => this.makeRequestInner(method, path, params, idempotencyKey));
+  }
+
+  private async makeRequestInner(
     method: string,
     path: string,
     params: URLSearchParams,

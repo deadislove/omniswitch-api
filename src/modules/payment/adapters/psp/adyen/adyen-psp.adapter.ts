@@ -5,6 +5,7 @@ import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
 import { Money } from '../../../domain/value-objects/money.vo';
+import { Semaphore } from '../../../../../shared/utils/semaphore';
 
 /**
  * Adyen PSP Adapter
@@ -20,6 +21,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
   private readonly apiKey: string;
   private readonly merchantAccount: string;
   private readonly baseUrl: string;
+  private readonly bulkhead: Semaphore;
 
   constructor(
     private readonly configService: ConfigService,
@@ -29,6 +31,15 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     this.apiKey = configService.get<string>('ADYEN_API_KEY', 'adyen_test_placeholder');
     this.merchantAccount = configService.get<string>('ADYEN_MERCHANT_ACCOUNT', 'TestMerchant');
     this.baseUrl = configService.get<string>('ADYEN_BASE_URL', 'https://checkout-test.adyen.com/v71');
+    // Caps how many concurrent outbound calls to Adyen this pod will have
+    // in flight at once — see makeRequest() below and
+    // docs/spec/future/distributed-resilience-and-cde-isolation.md (§3,
+    // Gap 3.4) for why. In-memory/per-pod, not Redis-backed: this protects
+    // this pod's own connection pool/event loop capacity, not a
+    // cross-replica quota. Read directly from process.env (not
+    // configService.get, which doesn't coerce numeric strings) — same
+    // reasoning and pattern as PaymentController's CHARGE_RATE_LIMIT_MAX.
+    this.bulkhead = new Semaphore(Number(process.env.PSP_BULKHEAD_MAX_CONCURRENT) || 20);
   }
 
   async charge(request: PSPChargeRequest): Promise<PSPChargeResponse> {
@@ -316,7 +327,20 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     }
   }
 
+  // Bulkhead-wrapped: acquires a permit before making the actual outbound
+  // call, queuing rather than piling up unboundedly if
+  // PSP_BULKHEAD_MAX_CONCURRENT Adyen calls are already in flight from
+  // this pod. See the constant's docblock above.
   private async makeRequest(
+    method: string,
+    path: string,
+    body: unknown,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    return this.bulkhead.run(() => this.makeRequestInner(method, path, body, idempotencyKey));
+  }
+
+  private async makeRequestInner(
     method: string,
     path: string,
     body: unknown,
