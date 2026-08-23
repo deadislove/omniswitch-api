@@ -111,6 +111,39 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Simulates the PSP's own transient 5xx server error — a response IS
+// received (unlike forceTimeout above), just an unsuccessful one, and it's
+// not a business decision about the charge the way a decline is. This is
+// what PaymentProcessorFactory.isTransientPspError()/the same-provider
+// retry it triggers is meant to handle. Keyed by idempotency key, not by
+// which adapter is calling — PaymentProcessorFactory's same-provider
+// retry AND its fallback-to-a-different-provider both reuse the exact
+// same idempotency key for the same charge, and this marker string
+// travels with paymentMethodId regardless of which PSP ends up
+// processing it, so "once"/"twice" here means "for the first N calls
+// carrying this idempotency key, from whichever adapter," not
+// "N calls to this specific PSP."
+const serverErrorCountForKey = new Map();
+
+function shouldForceServerError(paymentMethodRef, idempotencyKey) {
+  const lower = (paymentMethodRef || '').toLowerCase();
+  if (lower.includes('forceservererroralways')) return true;
+
+  let failuresRemaining = 0;
+  if (lower.includes('forceservererrortwice')) failuresRemaining = 2;
+  else if (lower.includes('forceservererroronce')) failuresRemaining = 1;
+  else return false;
+
+  const failuresSoFar = serverErrorCountForKey.get(idempotencyKey) || 0;
+  if (failuresSoFar >= failuresRemaining) return false;
+  serverErrorCountForKey.set(idempotencyKey, failuresSoFar + 1);
+  return true;
+}
+
+function forceServerError(res) {
+  send(res, 500, { error: { message: 'mock-psp: simulated internal server error' } });
+}
+
 const server = http.createServer((req, res) => {
   let data = '';
   req.on('data', (c) => (data += c));
@@ -130,6 +163,9 @@ const server = http.createServer((req, res) => {
       const binCountry = (params.get('metadata[bin_country]') || '').toUpperCase();
       if (shouldForceTimeout(params.get('payment_method'), req.headers['idempotency-key'])) {
         return forceTimeout(res);
+      }
+      if (shouldForceServerError(params.get('payment_method'), req.headers['idempotency-key'])) {
+        return forceServerError(res);
       }
       if (shouldForceSlow(params.get('payment_method'))) {
         await delay(FORCE_SLOW_DELAY_MS);
@@ -257,6 +293,9 @@ const server = http.createServer((req, res) => {
       const isManualCapture = (parsedBody.additionalData || {}).manualCapture === 'true';
       if (shouldForceTimeout((parsedBody.paymentMethod || {}).storedPaymentMethodId, req.headers['idempotency-key'])) {
         return forceTimeout(res);
+      }
+      if (shouldForceServerError((parsedBody.paymentMethod || {}).storedPaymentMethodId, req.headers['idempotency-key'])) {
+        return forceServerError(res);
       }
       if (shouldForceSlow((parsedBody.paymentMethod || {}).storedPaymentMethodId)) {
         await delay(FORCE_SLOW_DELAY_MS);
