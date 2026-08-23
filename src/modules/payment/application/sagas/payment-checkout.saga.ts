@@ -45,7 +45,7 @@ export interface CheckoutSagaResult {
   requiresAction: boolean;
   usedFallback: boolean;
   estimatedFee?: Money;
-  /** Only set when status is FAILED — the PSP's own decline code, if it returned one (a routing failure that never reached a PSP has none). See SubscriptionService's decline-code-aware dunning for the one caller that reads this. */
+  /** Only set when status is FAILED or AMBIGUOUS — the PSP's own decline code, if it returned one (a routing failure that never reached a PSP has none), or PSP_TIMEOUT_AMBIGUOUS/PSP_ALL_FAILED for the saga's own aggregate codes. See SubscriptionService's decline-code-aware dunning for the one caller that reads this. */
   errorCode?: string;
 }
 
@@ -88,12 +88,19 @@ export interface CheckoutSagaResult {
  * WebhookProcessingService (PSP-confirmed via webhook).
  *
  * Compensating Transactions on failure:
- * - If PSP times out: mark payment FAILED with errorCode
- *   PSP_TIMEOUT_AMBIGUOUS (see isAmbiguousOutcomeError) — distinct from an
- *   explicit PSP decline's own errorCode/PSP_ALL_FAILED, since a timeout
- *   means whether the PSP actually processed the charge is genuinely
- *   unknown, not confirmed failed. No ledger entry was ever written either
- *   way; this only changes what's recorded about *why*.
+ * - If every PSP attempt resolves to an explicit decline: mark payment
+ *   FAILED with errorCode PSP_ALL_FAILED, and rethrow so the request fails.
+ * - If the outcome is still ambiguous after PaymentProcessorFactory's
+ *   built-in same-provider retry (see isAmbiguousOutcomeError): mark
+ *   payment AMBIGUOUS with errorCode PSP_TIMEOUT_AMBIGUOUS and return
+ *   normally instead of throwing. Throwing here would make
+ *   IdempotencyInterceptor delete its Redis lock/cache (it does that on
+ *   any thrown error), so a client's legitimate retry with the same
+ *   Idempotency-Key header would generate a brand-new paymentId and
+ *   re-run the whole saga — producing a second, real charge attempt on
+ *   top of a first attempt that might have already succeeded at the PSP.
+ *   Returning normally instead means the retry hits the interceptor's
+ *   cached AMBIGUOUS response, exactly as intended.
  * - If DB write fails: no charge attempted (safe)
  * - If charge succeeds but DB update fails: idempotency key prevents double charge
  */
@@ -237,16 +244,21 @@ export class PaymentCheckoutSaga {
       finalProvider = provider;
     } catch (chargeError: unknown) {
       const msg = chargeError instanceof Error ? chargeError.message : String(chargeError);
-      // Distinct errorCode when the last PSP attempt got no response at
-      // all (see isAmbiguousOutcomeError) rather than an explicit decline —
-      // an operator or support agent looking at a failed payment's
-      // errorCode should be able to tell "every PSP said no" apart from
-      // "we don't actually know what happened at the PSP," since only the
-      // latter carries a real risk of the charge having gone through
-      // despite this payment being marked FAILED.
-      const errorCode = isAmbiguousOutcomeError(chargeError) ? 'PSP_TIMEOUT_AMBIGUOUS' : 'PSP_ALL_FAILED';
+      if (isAmbiguousOutcomeError(chargeError)) {
+        this.logger.error(`[Saga] PSP outcome ambiguous, could not be resolved: ${msg}`);
+        await this.compensate_markAmbiguous(payment, msg);
+        return {
+          paymentId: input.paymentId,
+          status: PaymentStatus.AMBIGUOUS,
+          pspProvider: finalProvider,
+          riskScore,
+          requiresAction: false,
+          usedFallback,
+          errorCode: 'PSP_TIMEOUT_AMBIGUOUS',
+        };
+      }
       this.logger.error(`[Saga] All PSP providers failed: ${msg}`);
-      await this.compensate_markFailed(payment, msg, errorCode);
+      await this.compensate_markFailed(payment, msg, 'PSP_ALL_FAILED');
       throw chargeError;
     }
 
@@ -381,6 +393,22 @@ export class PaymentCheckoutSaga {
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
       this.logger.warn(`[Saga] Compensating transaction: Payment ${payment.id} marked FAILED: ${reason}`);
+    } catch (compensationError: unknown) {
+      const msg = compensationError instanceof Error ? compensationError.message : String(compensationError);
+      this.logger.error(`[Saga] CRITICAL: Compensation failed for payment ${payment.id}: ${msg}`);
+      // In production: alert on-call, write to dead-letter queue
+    }
+  }
+
+  private async compensate_markAmbiguous(
+    payment: PaymentAggregate,
+    reason: string,
+  ): Promise<void> {
+    try {
+      payment.markAmbiguous(reason, 'PSP_TIMEOUT_AMBIGUOUS');
+      await this.paymentRepository.update(payment);
+      this.publishDomainEvents(payment);
+      this.logger.warn(`[Saga] Compensating transaction: Payment ${payment.id} marked AMBIGUOUS: ${reason}`);
     } catch (compensationError: unknown) {
       const msg = compensationError instanceof Error ? compensationError.message : String(compensationError);
       this.logger.error(`[Saga] CRITICAL: Compensation failed for payment ${payment.id}: ${msg}`);

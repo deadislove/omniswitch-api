@@ -10,6 +10,12 @@ export enum PaymentStatus {
   PARTIALLY_CAPTURED = 'PARTIALLY_CAPTURED', // Some, but not all, of the authorized amount has been captured
   SUCCEEDED = 'SUCCEEDED',
   FAILED = 'FAILED',
+  // A PSP call that got no response at all (timeout/network failure before
+  // any HTTP response), retried once via the PSP's own idempotency-key
+  // replay guarantee and still inconclusive. Distinct from FAILED: FAILED
+  // means the PSP explicitly declined, AMBIGUOUS means we genuinely don't
+  // know whether the charge went through — reconciliation must resolve it.
+  AMBIGUOUS = 'AMBIGUOUS',
   CANCELLED = 'CANCELLED',
   REFUNDED = 'REFUNDED',
   PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED',
@@ -28,6 +34,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
     PaymentStatus.REQUIRES_CAPTURE,
     PaymentStatus.SUCCEEDED,
     PaymentStatus.FAILED,
+    PaymentStatus.AMBIGUOUS,
   ],
   [PaymentStatus.REQUIRES_ACTION]: [
     PaymentStatus.PROCESSING,
@@ -51,6 +58,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
     PaymentStatus.DISPUTED,
   ],
   [PaymentStatus.FAILED]: [],
+  [PaymentStatus.AMBIGUOUS]: [PaymentStatus.SUCCEEDED, PaymentStatus.FAILED],
   [PaymentStatus.CANCELLED]: [],
   [PaymentStatus.REFUNDED]: [],
   [PaymentStatus.PARTIALLY_REFUNDED]: [PaymentStatus.REFUNDED],

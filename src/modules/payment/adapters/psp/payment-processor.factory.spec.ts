@@ -33,77 +33,103 @@ describe('isAmbiguousOutcomeError', () => {
   });
 });
 
-describe('PaymentProcessorFactory.executeWithFallback — ambiguous outcome propagation (Gap 1.2)', () => {
+describe('PaymentProcessorFactory.executeWithFallback', () => {
   const context: RoutingContext = {
     amount: Money.of(10, 'USD'),
     merchantId: 'merchant_1',
     preferredProvider: 'STRIPE',
   };
 
-  it('tags the aggregate "all providers failed" error as ambiguous when the only attempt was a timeout', async () => {
-    // ADYEN's own circuit is OPEN, so there's no viable fallback — the
-    // primary's (STRIPE's) outcome is also the last outcome.
-    const stripe = makeFakeAdapter('STRIPE');
-    const adyen = makeFakeAdapter('ADYEN', 'OPEN');
-    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+  const timeoutError = () => Object.assign(new Error('Stripe request failed with no response: timeout'), { isAmbiguousOutcome: true });
+  const declineError = () => Object.assign(new Error('card_declined'), { code: 'card_declined', statusCode: 402 });
 
-    const timeoutError = Object.assign(
-      new Error('Stripe request failed with no response: timeout'),
-      { isAmbiguousOutcome: true },
-    );
-    const operation = jest.fn().mockRejectedValue(timeoutError);
-
-    const err: any = await factory.executeWithFallback(context, operation).catch((e) => e);
-
-    expect(err.message).toContain('All PSP providers failed');
-    expect(err.isAmbiguousOutcome).toBe(true);
-  });
-
-  it('does not tag the aggregate error when the only attempt was an explicit decline', async () => {
-    const stripe = makeFakeAdapter('STRIPE');
-    const adyen = makeFakeAdapter('ADYEN', 'OPEN');
-    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
-
-    const declineError = Object.assign(new Error('card_declined'), { code: 'card_declined', statusCode: 402 });
-    const operation = jest.fn().mockRejectedValue(declineError);
-
-    const err: any = await factory.executeWithFallback(context, operation).catch((e) => e);
-
-    expect(err.isAmbiguousOutcome).toBe(false);
-  });
-
-  it('reflects the LAST attempted provider\'s outcome, not the first, when primary is ambiguous but the fallback explicitly declines', async () => {
-    const stripe = makeFakeAdapter('STRIPE');
-    const adyen = makeFakeAdapter('ADYEN'); // healthy, viable fallback
-    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
-
-    const timeoutError = Object.assign(new Error('timeout'), { isAmbiguousOutcome: true });
-    const declineError = Object.assign(new Error('declined'), { code: 'card_declined' });
-
-    const operation = jest.fn()
-      .mockRejectedValueOnce(timeoutError) // primary (STRIPE)
-      .mockRejectedValueOnce(declineError); // fallback (ADYEN)
-
-    const err: any = await factory.executeWithFallback(context, operation).catch((e) => e);
-
-    expect(operation).toHaveBeenCalledTimes(2);
-    expect(err.isAmbiguousOutcome).toBe(false);
-  });
-
-  it('reflects an ambiguous fallback outcome even when the primary was a clear decline', async () => {
+  it('primary succeeds: no retry, no fallback', async () => {
     const stripe = makeFakeAdapter('STRIPE');
     const adyen = makeFakeAdapter('ADYEN');
     const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
-    const declineError = Object.assign(new Error('declined'), { code: 'card_declined' });
-    const timeoutError = Object.assign(new Error('timeout'), { isAmbiguousOutcome: true });
+    const operation = jest.fn().mockResolvedValue({ ok: true });
+
+    const result = await factory.executeWithFallback(context, operation);
+
+    expect(result).toEqual({ result: { ok: true }, provider: 'STRIPE', usedFallback: false });
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(adyen.isAvailable).not.toHaveBeenCalled();
+  });
+
+  it('primary ambiguous, same-provider retry succeeds: fallback is never touched', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
     const operation = jest.fn()
-      .mockRejectedValueOnce(declineError) // primary (STRIPE)
-      .mockRejectedValueOnce(timeoutError); // fallback (ADYEN)
+      .mockRejectedValueOnce(timeoutError())
+      .mockResolvedValueOnce({ ok: true });
+
+    const result = await factory.executeWithFallback(context, operation);
+
+    expect(result).toEqual({ result: { ok: true }, provider: 'STRIPE', usedFallback: false });
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(adyen.isAvailable).not.toHaveBeenCalled();
+  });
+
+  it('primary ambiguous, retry also ambiguous: throws isAmbiguousOutcome without ever attempting a fallback', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+
+    const operation = jest.fn().mockRejectedValue(timeoutError());
 
     const err: any = await factory.executeWithFallback(context, operation).catch((e) => e);
 
+    expect(err.isAmbiguousOutcome).toBe(true);
+    expect(err.message).toContain('remains ambiguous after one retry');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(adyen.isAvailable).not.toHaveBeenCalled();
+  });
+
+  it('primary ambiguous, retry resolves to an explicit decline: falls back and succeeds', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+
+    const operation = jest.fn()
+      .mockRejectedValueOnce(timeoutError()) // primary attempt
+      .mockRejectedValueOnce(declineError()) // same-provider retry
+      .mockResolvedValueOnce({ ok: true }); // fallback
+
+    const result = await factory.executeWithFallback(context, operation);
+
+    expect(result).toEqual({ result: { ok: true }, provider: 'ADYEN', usedFallback: true });
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('primary explicit decline, no viable fallback: fails without any retry', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN', 'OPEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+
+    const operation = jest.fn().mockRejectedValue(declineError());
+
+    const err: any = await factory.executeWithFallback(context, operation).catch((e) => e);
+
+    expect(err.message).toContain('All PSP providers failed');
+    expect(err.isAmbiguousOutcome).toBe(false);
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it('reflects an ambiguous fallback outcome in the aggregate error', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+
+    const operation = jest.fn()
+      .mockRejectedValueOnce(declineError()) // primary (STRIPE) — explicit decline, no retry triggered
+      .mockRejectedValueOnce(timeoutError()); // fallback (ADYEN) — ambiguous
+
+    const err: any = await factory.executeWithFallback(context, operation).catch((e) => e);
+
+    expect(operation).toHaveBeenCalledTimes(2);
     expect(err.isAmbiguousOutcome).toBe(true);
   });
 });

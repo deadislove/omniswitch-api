@@ -69,6 +69,31 @@ function declineCodeFor(paymentMethodRef) {
   return null;
 }
 
+// Simulates "PSP call got no response at all" (timeout/network failure) for
+// the ambiguous-outcome recovery path — see isAmbiguousOutcomeError and
+// PaymentProcessorFactory.executeWithFallback()'s same-provider retry. Keyed
+// by idempotency key (not connection-global) so a test can assert the exact
+// same-provider-replay behavior a real PSP's idempotency guarantee provides:
+// the first call for a given key times out, a retry with that SAME key
+// succeeds — mirroring how Stripe/Adyen would actually resolve a retried
+// request against the charge they already recorded.
+const timedOutOnceForKey = new Set();
+
+function shouldForceTimeout(paymentMethodRef, idempotencyKey) {
+  const lower = (paymentMethodRef || '').toLowerCase();
+  if (lower.includes('forcetimeoutalways')) return true;
+  if (lower.includes('forcetimeoutonce')) {
+    if (timedOutOnceForKey.has(idempotencyKey)) return false;
+    timedOutOnceForKey.add(idempotencyKey);
+    return true;
+  }
+  return false;
+}
+
+function forceTimeout(res) {
+  res.socket.destroy();
+}
+
 const server = http.createServer((req, res) => {
   let data = '';
   req.on('data', (c) => (data += c));
@@ -86,6 +111,9 @@ const server = http.createServer((req, res) => {
       const amount = Number(params.get('amount')) || 0;
       const currency = (params.get('currency') || 'usd').toUpperCase();
       const binCountry = (params.get('metadata[bin_country]') || '').toUpperCase();
+      if (shouldForceTimeout(params.get('payment_method'), req.headers['idempotency-key'])) {
+        return forceTimeout(res);
+      }
       const declineCode = declineCodeFor(params.get('payment_method'));
       if (declineCode) {
         return send(res, 200, {
@@ -207,6 +235,9 @@ const server = http.createServer((req, res) => {
       const amountValue = (parsedBody.amount || {}).value || 0;
       const amountCurrency = (parsedBody.amount || {}).currency || 'USD';
       const isManualCapture = (parsedBody.additionalData || {}).manualCapture === 'true';
+      if (shouldForceTimeout((parsedBody.paymentMethod || {}).storedPaymentMethodId, req.headers['idempotency-key'])) {
+        return forceTimeout(res);
+      }
       const declineCode = declineCodeFor((parsedBody.paymentMethod || {}).storedPaymentMethodId);
       if (declineCode) {
         return send(res, 200, { pspReference, resultCode: 'Refused', refusalReasonCode: declineCode, refusalReason: 'Refused' });

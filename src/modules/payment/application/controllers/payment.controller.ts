@@ -251,6 +251,11 @@ export class PaymentController {
       throw err;
     }
 
+    // AMBIGUOUS deliberately excluded: we don't know whether the PSP
+    // actually charged the card, so releasing the reservation here could
+    // let the same delegated spend be authorized again elsewhere while the
+    // original charge is still unresolved. Left held until reconciliation
+    // resolves the payment to SUCCEEDED or FAILED.
     if (reservedDelegationId && result.status === PaymentStatus.FAILED) {
       await this.delegationService.releaseReservation(reservedDelegationId, amount);
     }

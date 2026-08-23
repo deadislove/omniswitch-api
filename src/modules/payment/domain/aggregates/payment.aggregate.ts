@@ -6,6 +6,7 @@ import {
   PaymentIntentCreatedEvent,
   PaymentChargedEvent,
   PaymentFailedEvent,
+  PaymentAmbiguousEvent,
   PaymentRequiresActionEvent,
   PaymentRefundedEvent,
   PaymentDisputedEvent,
@@ -283,6 +284,16 @@ export class PaymentAggregate {
     this.transitionTo(PaymentStatus.FAILED);
     this.addDomainEvent(
       new PaymentFailedEvent(this._id, reason, errorCode),
+    );
+  }
+
+  markAmbiguous(reason: string, errorCode?: string): void {
+    assertValidTransition(this._status, PaymentStatus.AMBIGUOUS);
+    this._failureReason = reason;
+    this._failureCode = errorCode;
+    this.transitionTo(PaymentStatus.AMBIGUOUS);
+    this.addDomainEvent(
+      new PaymentAmbiguousEvent(this._id, reason, this._pspProvider),
     );
   }
 

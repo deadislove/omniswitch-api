@@ -164,6 +164,9 @@ anywhere in this stack.
 - `status` is terminal (`SUCCEEDED`, `FAILED`, `CANCELLED`, `REFUNDED`,
   `PARTIALLY_REFUNDED`) — excludes anything still in flight, and
   excludes `DISPUTED` (its own status, deliberately not terminal here)
+  and `AMBIGUOUS` (outcome genuinely unresolved — see
+  `PaymentAggregate.markAmbiguous()` — must not be archived until
+  reconciliation resolves it to SUCCEEDED or FAILED)
 - no `disputes` row referencing it has status `NEEDS_RESPONSE` or
   `UNDER_REVIEW` (open)
 - no `reconciliation_runs.mismatches` entry references it — a flagged
