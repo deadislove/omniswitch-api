@@ -332,12 +332,24 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
       headers['Idempotency-Key'] = idempotencyKey;
     }
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch (err: unknown) {
+      // Same reasoning as StripePSPAdapter.makeRequest()'s equivalent catch:
+      // fetch() itself threw (timeout or a lower-level network failure)
+      // before any response was received — whether Adyen actually
+      // processed this request is unknown, not "no."
+      throw Object.assign(
+        new Error(`Adyen request failed with no response: ${err instanceof Error ? err.message : String(err)}`),
+        { isAmbiguousOutcome: true },
+      );
+    }
 
     const data = await response.json();
 

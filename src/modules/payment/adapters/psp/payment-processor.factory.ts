@@ -6,6 +6,17 @@ import { StripePSPAdapter } from './stripe/stripe-psp.adapter';
 import { AdyenPSPAdapter } from './adyen/adyen-psp.adapter';
 
 /**
+ * True when `err` was thrown by a PSP adapter's makeRequest() after
+ * getting no response at all (a timeout or lower-level network failure)
+ * rather than an explicit decline — see StripePSPAdapter/AdyenPSPAdapter's
+ * makeRequest(). A plain shape check, not `instanceof`, since the error is
+ * a tagged plain Error (Object.assign), not a dedicated error class.
+ */
+export function isAmbiguousOutcomeError(err: unknown): boolean {
+  return Boolean(err && typeof err === 'object' && (err as { isAmbiguousOutcome?: boolean }).isAmbiguousOutcome);
+}
+
+/**
  * Payment Processor Factory
  * Implements the Factory Pattern to dynamically instantiate and select
  * the correct PSP adapter at runtime based on:
@@ -107,6 +118,15 @@ export class PaymentProcessorFactory {
         `Trying fallbacks: [${decision.fallbackProviders.join(', ')}]`,
       );
 
+      // Tracks whether the most recent attempt (primary, or whichever
+      // fallback was tried last) ended in an ambiguous outcome — a PSP
+      // call that got no response at all, see StripePSPAdapter/
+      // AdyenPSPAdapter's makeRequest() — rather than an explicit decline.
+      // Carried onto the aggregate error below so a caller can distinguish
+      // "every PSP explicitly said no" from "we lost track of whether the
+      // last attempt actually went through."
+      let lastFailureWasAmbiguous = isAmbiguousOutcomeError(primaryError);
+
       // Try fallback providers
       for (const fallbackProvider of decision.fallbackProviders) {
         const fallbackAdapter = this.getAdapter(fallbackProvider);
@@ -124,13 +144,17 @@ export class PaymentProcessorFactory {
         } catch (fallbackError: unknown) {
           const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
           this.logger.warn(`Fallback ${fallbackProvider} also failed: ${fallbackMsg}`);
+          lastFailureWasAmbiguous = isAmbiguousOutcomeError(fallbackError);
         }
       }
 
       // All providers failed
-      throw new Error(
-        `All PSP providers failed. Primary: ${decision.selectedProvider}. ` +
-        `Fallbacks tried: [${decision.fallbackProviders.join(', ')}]`,
+      throw Object.assign(
+        new Error(
+          `All PSP providers failed. Primary: ${decision.selectedProvider}. ` +
+          `Fallbacks tried: [${decision.fallbackProviders.join(', ')}]`,
+        ),
+        { isAmbiguousOutcome: lastFailureWasAmbiguous },
       );
     }
   }

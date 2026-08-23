@@ -12,6 +12,16 @@ export interface CircuitMetrics {
 
 const FAILURE_THRESHOLD = 5;
 const RECOVERY_TIME_MS = 30000;
+// How long a run of failures stays "live" for the OPEN-trip decision.
+// failureCount's TTL is refreshed on every recordFailure() call (below), so
+// it behaves as a sliding activity window: failures with no gap longer than
+// this between them keep accumulating toward FAILURE_THRESHOLD, but the
+// counter expires — and the count restarts from zero — once failures stop
+// happening for this long. Without this, failureCount only ever reset via
+// HALF_OPEN -> CLOSED recovery, so failures scattered arbitrarily far apart
+// in time (a handful today, a couple more next month) counted toward the
+// same threshold as five failures in one burst.
+const FAILURE_WINDOW_SECONDS = 60;
 
 // Reported health metrics (successCount/totalRequests/avgLatencyMs) are a
 // sliding window made of fixed 1-minute buckets — same fixed-window-counter
@@ -20,9 +30,7 @@ const RECOVERY_TIME_MS = 30000;
 // member per request, e.g. a sorted set) would be more precise but costs a
 // write per request instead of one INCR into whichever minute is current.
 // For "is this PSP healthy right now," minute-granularity is more than
-// enough. failureCount (the OPEN-trip trigger, below) is intentionally NOT
-// part of this window — it already resets on HALF_OPEN -> CLOSED recovery,
-// which is a different, already-correct mechanism.
+// enough.
 const METRICS_BUCKET_SECONDS = 60;
 const METRICS_WINDOW_MINUTES = 15;
 const METRICS_BUCKET_TTL_SECONDS = (METRICS_WINDOW_MINUTES + 5) * 60;
@@ -107,8 +115,17 @@ export class RedisCircuitBreakerService {
 
   async recordFailure(provider: string): Promise<void> {
     const epoch = this.currentEpochMinute();
+    const failureCountKey = this.key(provider, 'failureCount');
     const [failureCount] = await Promise.all([
-      this.cache.incr(this.key(provider, 'failureCount')),
+      this.cache.incr(failureCountKey),
+      // Refreshed on every failure, not just the first — see
+      // FAILURE_WINDOW_SECONDS above. incr() and expire() aren't atomic
+      // together, so a failure landing between them could keep the
+      // previous call's TTL a moment longer than intended; harmless here
+      // (worst case the window resets very slightly early), unlike the
+      // rate limiter's fixed-window counter where re-extending on every
+      // hit would change the limit's actual meaning.
+      this.cache.expire(failureCountKey, FAILURE_WINDOW_SECONDS),
       this.incrBucket(this.bucketKey(provider, 'total', epoch)),
       this.cache.set(this.key(provider, 'lastFailureTime'), Date.now()),
     ]);

@@ -319,12 +319,27 @@ export class StripePSPAdapter extends PSPAdapterPort {
       headers['Idempotency-Key'] = idempotencyKey;
     }
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: method !== 'GET' ? params.toString() : undefined,
-      signal: AbortSignal.timeout(30000), // 30s timeout
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers,
+        body: method !== 'GET' ? params.toString() : undefined,
+        signal: AbortSignal.timeout(30000), // 30s timeout
+      });
+    } catch (err: unknown) {
+      // fetch() itself threw — either the 30s AbortSignal above fired, or a
+      // lower-level network failure (DNS, connection refused, TLS
+      // handshake) — before any response was ever received. Unlike the
+      // !response.ok branch below, this means whether Stripe actually
+      // processed the request is genuinely unknown, not "no": tagged so a
+      // caller (PaymentCheckoutSaga) can treat it as a distinct, ambiguous
+      // outcome instead of the same kind of failure as an explicit decline.
+      throw Object.assign(
+        new Error(`Stripe request failed with no response: ${err instanceof Error ? err.message : String(err)}`),
+        { isAmbiguousOutcome: true },
+      );
+    }
 
     const data = await response.json();
 

@@ -14,6 +14,7 @@ import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper
 import { PaymentEntity } from '../../adapters/persistence/entities/payment.entity';
 import { ChargeLedgerParamsResolverService, ChargeLedgerParams } from '../services/charge-ledger-params-resolver.service';
 import { ReserveService } from '../services/reserve.service';
+import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
 
 export interface CheckoutSagaInput {
   paymentId: string;
@@ -87,7 +88,12 @@ export interface CheckoutSagaResult {
  * WebhookProcessingService (PSP-confirmed via webhook).
  *
  * Compensating Transactions on failure:
- * - If PSP times out: mark payment FAILED, no ledger entry was ever written
+ * - If PSP times out: mark payment FAILED with errorCode
+ *   PSP_TIMEOUT_AMBIGUOUS (see isAmbiguousOutcomeError) — distinct from an
+ *   explicit PSP decline's own errorCode/PSP_ALL_FAILED, since a timeout
+ *   means whether the PSP actually processed the charge is genuinely
+ *   unknown, not confirmed failed. No ledger entry was ever written either
+ *   way; this only changes what's recorded about *why*.
  * - If DB write fails: no charge attempted (safe)
  * - If charge succeeds but DB update fails: idempotency key prevents double charge
  */
@@ -231,8 +237,16 @@ export class PaymentCheckoutSaga {
       finalProvider = provider;
     } catch (chargeError: unknown) {
       const msg = chargeError instanceof Error ? chargeError.message : String(chargeError);
+      // Distinct errorCode when the last PSP attempt got no response at
+      // all (see isAmbiguousOutcomeError) rather than an explicit decline —
+      // an operator or support agent looking at a failed payment's
+      // errorCode should be able to tell "every PSP said no" apart from
+      // "we don't actually know what happened at the PSP," since only the
+      // latter carries a real risk of the charge having gone through
+      // despite this payment being marked FAILED.
+      const errorCode = isAmbiguousOutcomeError(chargeError) ? 'PSP_TIMEOUT_AMBIGUOUS' : 'PSP_ALL_FAILED';
       this.logger.error(`[Saga] All PSP providers failed: ${msg}`);
-      await this.compensate_markFailed(payment, msg, 'PSP_ALL_FAILED');
+      await this.compensate_markFailed(payment, msg, errorCode);
       throw chargeError;
     }
 
