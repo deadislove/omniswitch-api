@@ -4,6 +4,7 @@ import { MerchantEntity } from '../../../merchant/merchant.entity';
 import { MerchantService } from '../../../merchant/merchant.service';
 import { FXRateProviderPort } from '../../ports/outbound/fx-rate-provider.port';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
+import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
 
 // Fallback only for the (shouldn't-happen) case of no merchant record —
 // every caller of this service already only runs for an authenticated,
@@ -17,6 +18,16 @@ export interface ChargeLedgerParams {
   settlementConversion?: { convertedNetAmount: Money; rate: number; provider: string };
   reserveHold?: { amount: Money; holdDays: number };
   splits?: { merchantId: string; amount: Money }[];
+  /**
+   * The merchant's MerchantEntity.enabledPspProviders, cast to PSPProvider[]
+   * — piggybacking on the merchant lookup this method already does rather
+   * than making PaymentCheckoutSaga/AcquirerRoutingService do a second one.
+   * Only unset in the shouldn't-happen "no merchant record" case (same
+   * fallback posture as resolvePlatformFeeBps's DEFAULT_PLATFORM_FEE_BPS
+   * above) — SmartRoutingStrategy treats undefined as "no restriction," not
+   * "entitled to nothing," so this fallback is deliberately permissive.
+   */
+  enabledPspProviders?: PSPProvider[];
 }
 
 /**
@@ -90,6 +101,7 @@ export class ChargeLedgerParamsResolverService {
    */
   async resolve(merchantId: string, amount: Money, requestedSplits?: { merchantId: string; amount: Money }[]): Promise<ChargeLedgerParams> {
     const merchant = await this.merchantService.findByMerchantId(merchantId);
+    const enabledPspProviders = merchant?.enabledPspProviders as PSPProvider[] | undefined;
     const platformFeeBps = await this.resolvePlatformFeeBps(merchant, amount);
     const platformFee = amount.multiply(platformFeeBps / 10_000);
     const netAmount = amount.subtract(platformFee);
@@ -135,19 +147,19 @@ export class ChargeLedgerParamsResolverService {
 
     const settlementCurrency = merchant?.settlementCurrency;
     if (!settlementCurrency || settlementCurrency === amount.currency.code) {
-      return { platformFee, reserveHold, splits };
+      return { platformFee, reserveHold, splits, enabledPspProviders };
     }
 
     try {
       const { rate, provider } = await this.fxRateProvider.getRate(amount.currency.code, settlementCurrency);
       const convertedNetAmount = payoutAmount.convertTo(settlementCurrency, rate, provider);
-      return { platformFee, reserveHold, settlementConversion: { convertedNetAmount, rate, provider } };
+      return { platformFee, reserveHold, settlementConversion: { convertedNetAmount, rate, provider }, enabledPspProviders };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(
         `FX conversion to ${settlementCurrency} failed for merchant ${merchantId}, booking in ${amount.currency.code} instead: ${msg}`,
       );
-      return { platformFee, reserveHold };
+      return { platformFee, reserveHold, enabledPspProviders };
     }
   }
 }

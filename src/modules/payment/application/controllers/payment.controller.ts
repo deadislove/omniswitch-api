@@ -135,7 +135,7 @@ export class PaymentController {
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
   @ApiResponse({ status: 403, description: 'The caller\'s Delegation has been revoked' })
   @ApiResponse({ status: 409, description: 'splits requested with captureMethod "manual", or a split recipient has an incompatible settlement-currency conversion' })
-  @ApiResponse({ status: 422, description: 'Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, or (AGENT callers only) the charge violates the delegation\'s spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)' })
+  @ApiResponse({ status: 422, description: 'Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, preferredProvider is outside the merchant\'s PSP entitlement, or (AGENT callers only) the charge violates the delegation\'s spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)' })
   @ApiHeader({ name: 'Idempotency-Key', description: 'UUID v4 for idempotent requests', required: true })
   @ApiHeader({ name: 'X-Signature', description: 'HMAC-SHA256 signature (not required for an AGENT-authenticated call)', required: false })
   @ApiHeader({ name: 'X-Timestamp', description: 'Unix timestamp (not required for an AGENT-authenticated call)', required: false })

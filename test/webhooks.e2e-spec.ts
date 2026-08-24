@@ -39,6 +39,10 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
     // binCountry is European — see PaymentCheckoutSaga's docblock). Either
     // way the PSP is always actually called now, so this returns a real
     // pspTransactionId — required for a webhook to resolve it later.
+    // The marker is Stripe-only in the mock, so preferredProvider pins
+    // routing to STRIPE — now a true override (SmartRoutingStrategy), not
+    // a scoring nudge that could still lose and silently send this to
+    // ADYEN, where the marker has no effect.
     const bodyObj = {
       amount: 30,
       currency: 'USD',
@@ -46,6 +50,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
       orderId: uniqueId('order'),
       description: 'FORCE_3DS e2e test',
       binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
     };
     const bodyStr = JSON.stringify(bodyObj);
     const { signature, timestamp } = signHmacRequest(merchant.hmacSecret, 'post', '/api/v1/payments/charge', bodyStr);

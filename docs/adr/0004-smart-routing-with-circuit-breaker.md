@@ -26,16 +26,22 @@ being served by the other nineteen.
 
 ## Decision
 
-**Scoring** (`SmartRoutingStrategy`, pure domain logic, no I/O):
-filter to PSPs that are available, whose circuit breaker isn't `OPEN`,
-that support the transaction's currency and BIN country if known; then
-score each remaining candidate roughly 0–120 — circuit-breaker state
-dominates (40 pts `CLOSED` / 10 `HALF_OPEN`), then success rate (0–30),
-latency (0–15, lower is better), fee (0–15, lower is better), a
-caller-supplied `preferredProvider` (+20, still subject to the
-availability filter), and two reference-setup-specific nudges (+10 EU
-card × Adyen, +5 non-EU card × Stripe). Re-scored on every charge —
-no caching, no sticky routing to a merchant's "usual" PSP.
+**Filtering, then selection** (`SmartRoutingStrategy`, pure domain
+logic, no I/O): filter to PSPs that are available, whose circuit
+breaker isn't `OPEN`, that support the transaction's currency and BIN
+country if known. If the caller supplied a `preferredProvider` and it
+survived that filter, it's selected directly — a true override, not
+one more input competing on score, matching the charge DTO's own
+Swagger contract ("overrides smart routing"). Only when there's no
+preference, or the preferred provider didn't survive the filter, does
+this fall through to scoring the remaining candidates roughly 0–100 —
+circuit-breaker state dominates (40 pts `CLOSED` / 10 `HALF_OPEN`),
+then success rate (0–30), latency (0–15, lower is better), fee (0–15,
+lower is better), and two reference-setup-specific nudges (+10 EU card
+× Adyen, +5 non-EU card × Stripe) — irrelevant whenever
+`preferredProvider` already decided the outcome. Re-scored/re-decided
+on every charge — no caching, no sticky routing to a merchant's "usual"
+PSP.
 
 **Fallback**: if the top-scored PSP's actual charge call fails,
 `PaymentProcessorFactory.executeWithFallback` retries the

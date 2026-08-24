@@ -30,6 +30,8 @@ export async function seedMerchant(
     platformMerchantId?: string;
     payoutReserveBps?: number;
     payoutReserveHoldDays?: number;
+    /** Omit for the default — every PSP this system has an adapter for (STRIPE, ADYEN) — so existing specs are unaffected. */
+    enabledPspProviders?: string[];
   },
 ): Promise<SeededMerchant> {
   const merchantService = app.get(MerchantService);
@@ -45,6 +47,7 @@ export async function seedMerchant(
     platformMerchantId: params.platformMerchantId,
     payoutReserveBps: params.payoutReserveBps,
     payoutReserveHoldDays: params.payoutReserveHoldDays,
+    enabledPspProviders: params.enabledPspProviders,
   });
 
   return {

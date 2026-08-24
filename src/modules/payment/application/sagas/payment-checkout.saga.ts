@@ -198,6 +198,7 @@ export class PaymentCheckoutSaga {
         binInfo: input.binInfo,
         merchantId: input.merchantId,
         preferredProvider: input.preferredProvider,
+        entitledProviders: chargeLedgerParams.enabledPspProviders,
       });
       routingDecision = routing.decision;
     } catch (routingError: unknown) {
@@ -223,6 +224,7 @@ export class PaymentCheckoutSaga {
           binInfo: input.binInfo,
           merchantId: input.merchantId,
           preferredProvider: input.preferredProvider,
+          entitledProviders: chargeLedgerParams.enabledPspProviders,
         },
         (adapter) => adapter.charge({
           paymentId: input.paymentId,

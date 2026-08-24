@@ -224,6 +224,23 @@ export class MerchantEntity {
   @Column({ name: 'kyc_tax_id', type: 'varchar', nullable: true })
   kycTaxId?: string | null;
 
+  /**
+   * PSPs this merchant is allowed to route charges through — see
+   * SmartRoutingStrategy.filterAvailableProviders() and
+   * PaymentCheckoutSaga.execute(). Defaults to every PSP this system
+   * actually has an adapter for (`STRIPE`/`ADYEN` — see
+   * PaymentProcessorFactory's constructor), so every existing merchant's
+   * routing behavior is unchanged unless this is explicitly narrowed via
+   * PATCH .../psp-entitlement. Deliberately `string[]`, not the payment
+   * module's `PSPProvider` type — the merchant module has no reason to
+   * depend on the payment module (payment already depends on merchant,
+   * not the reverse; see MerchantModule's `exports`), so the known-value
+   * set (`STRIPE`/`ADYEN`) is validated at the DTO layer
+   * (UpdatePspEntitlementDto) instead of the entity/column.
+   */
+  @Column({ name: 'enabled_psp_providers', type: 'jsonb', default: '["STRIPE","ADYEN"]' })
+  enabledPspProviders: string[];
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

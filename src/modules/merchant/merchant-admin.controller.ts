@@ -10,6 +10,7 @@ import {
   UpdateReservePolicyDto,
   UpdatePayoutReservePolicyDto,
   UpdateRiskTierAutoDto,
+  UpdatePspEntitlementDto,
   SubmitKycDto,
   MerchantSummaryDto,
   MerchantCreatedResponseDto,
@@ -44,6 +45,7 @@ function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     payoutReserveBps: merchant.payoutReserveBps,
     payoutReserveHoldDays: merchant.payoutReserveHoldDays,
     kycStatus: merchant.kycStatus,
+    enabledPspProviders: merchant.enabledPspProviders,
     createdAt: merchant.createdAt.toISOString(),
     updatedAt: merchant.updatedAt.toISOString(),
   };
@@ -168,6 +170,16 @@ export class MerchantAdminController {
   @ApiResponse({ status: 404, description: 'Merchant not found' })
   async updateRiskTierAuto(@Param('merchantId') merchantId: string, @Body() dto: UpdateRiskTierAutoDto): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.setRiskTierAutoManaged(merchantId, dto.enabled);
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/psp-entitlement')
+  @ApiOperation({ summary: 'Set which PSPs this merchant\'s charges may route through — takes effect on the next charge. A charge that explicitly requests a preferredProvider outside this list is rejected (422), not silently routed elsewhere.' })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  @ApiResponse({ status: 422, description: 'enabledPspProviders is empty' })
+  async updatePspEntitlement(@Param('merchantId') merchantId: string, @Body() dto: UpdatePspEntitlementDto): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updatePspEntitlement(merchantId, dto.enabledPspProviders);
     return toSummary(merchant);
   }
 

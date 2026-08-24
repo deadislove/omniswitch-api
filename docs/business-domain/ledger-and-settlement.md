@@ -96,15 +96,23 @@ update against production.
 
 ## Smart PSP routing
 
-`SmartRoutingStrategy` (pure domain logic, no I/O) scores every available
-PSP for a given transaction and picks the highest score. It's re-run for
-every charge — there's no caching or sticky routing.
+`SmartRoutingStrategy` (pure domain logic, no I/O) picks a PSP for
+every charge — there's no caching or sticky routing, every charge
+re-decides.
 
-**Filtering** (before scoring): a PSP is only a candidate if it's available,
-its circuit breaker isn't `OPEN`, it supports the transaction's currency,
-and — if BIN country info is present — it supports that country.
+**Filtering** (always applied first): a PSP is only a candidate if it's
+available, its circuit breaker isn't `OPEN`, it supports the
+transaction's currency, and — if BIN country info is present — it
+supports that country.
 
-**Scoring** (0–~120 points, roughly):
+**Preference override** (checked before scoring): if the charge
+request set `preferredProvider` and that PSP survived the filter
+above, it's selected directly — a true override, not a scoring input,
+matching the charge API's own documented contract ("overrides smart
+routing"). Scoring below is only reached when there's no preference,
+or the preferred provider didn't survive the filter.
+
+**Scoring** (0–~100 points, roughly, when no preference decided it):
 
 | Factor | Points | Reasoning |
 |---|---|---|
@@ -112,7 +120,6 @@ and — if BIN country info is present — it supports that country.
 | Success rate | 0–30 | Recent reliability |
 | Latency | 0–15 (lower latency = more points) | Faster PSPs preferred when otherwise equal |
 | Fee | 0–15 (lower fee = more points) | Cost optimization |
-| Preferred provider | +20 | Caller can force a preference via `preferredProvider` on the charge request; still subject to availability filtering |
 | EU card × Adyen | +10 | PSD2/SCA — Adyen is the stronger EU acquirer for this reference setup |
 | Non-EU card × Stripe | +5 | Lower fees for US-centric traffic in this reference setup |
 

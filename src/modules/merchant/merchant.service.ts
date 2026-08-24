@@ -112,6 +112,7 @@ export class MerchantService {
     platformMerchantId?: string;
     payoutReserveBps?: number;
     payoutReserveHoldDays?: number;
+    enabledPspProviders?: string[];
   }): Promise<{
     merchant: MerchantEntity;
     apiKeySecret: string;
@@ -178,6 +179,7 @@ export class MerchantService {
       ...(params.platformMerchantId ? { platformMerchantId: params.platformMerchantId } : {}),
       ...(params.payoutReserveBps !== undefined ? { payoutReserveBps: params.payoutReserveBps } : {}),
       ...(params.payoutReserveHoldDays !== undefined ? { payoutReserveHoldDays: params.payoutReserveHoldDays } : {}),
+      ...(params.enabledPspProviders ? { enabledPspProviders: params.enabledPspProviders } : {}),
     });
 
     await this.merchantRepo.save(merchant);
@@ -320,6 +322,31 @@ export class MerchantService {
     this.logger.log(
       `KYC for merchant ${merchantId}: ${merchant.kycStatus} (applicationId=${applicationId}${reason ? `, reason=${reason}` : ''})`,
     );
+    return merchant;
+  }
+
+  /**
+   * Sets which PSPs this merchant's charges are allowed to route through —
+   * see MerchantEntity.enabledPspProviders's docblock. Rejects an empty
+   * array: unlike feeTiers/settlementCurrency (where "clear it" is a
+   * meaningful state), a merchant with zero entitled PSPs can never
+   * successfully charge again — that's very likely a mistake, not an
+   * intended "pause this merchant" action (setActive() already exists for
+   * that, and is reversible/obvious in a way an empty PSP list isn't).
+   */
+  async updatePspEntitlement(merchantId: string, enabledPspProviders: string[]): Promise<MerchantEntity> {
+    if (enabledPspProviders.length === 0) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: 'enabledPspProviders cannot be empty — a merchant must be entitled to at least one PSP',
+        code: 'PSP_ENTITLEMENT_EMPTY',
+      });
+    }
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = merchant.enabledPspProviders;
+    merchant.enabledPspProviders = enabledPspProviders;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`PSP entitlement for merchant ${merchantId} changed from [${previous.join(',')}] to [${enabledPspProviders.join(',')}]`);
     return merchant;
   }
 
