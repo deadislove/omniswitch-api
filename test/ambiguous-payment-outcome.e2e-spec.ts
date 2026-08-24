@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
+import { resetCircuitBreakerState } from './utils/circuit-breaker';
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 
@@ -14,6 +15,20 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * at all, without waiting out the real 30s adapter timeout. See
  * docs/spec/future/distributed-resilience-and-cde-isolation.md for the
  * full design rationale.
+ *
+ * Every timeout here is a thrown error against STRIPE, which
+ * RedisCircuitBreakerService.recordFailure() counts toward
+ * FAILURE_THRESHOLD (5) regardless of whether the failures are
+ * consecutive — failureCount only resets on a 60s activity gap or a
+ * HALF_OPEN -> CLOSED recovery, never on an interleaved success. This
+ * file's three tests accumulate exactly 5 STRIPE failures between them
+ * (1 + 2 + 2), enough to trip the circuit OPEN as a side effect of
+ * testing something unrelated. Reset before and after, same reasoning
+ * as resetCircuitBreakerState's own docblock: this state is shared
+ * Redis state across every e2e file (maxWorkers: 1, no flush between
+ * files) — confirmed live as one root cause of chargeWithForcedThreeDS()
+ * flakiness in webhooks.e2e-spec.ts and marketplace-split-refunds.e2e-spec.ts
+ * when this file ran before them without a reset.
  */
 describe('Ambiguous payment outcome recovery (e2e)', () => {
   let app: INestApplication;
@@ -24,9 +39,11 @@ describe('Ambiguous payment outcome recovery (e2e)', () => {
     app = await createTestApp();
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 
   afterAll(async () => {
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
     await app.close();
   });
 

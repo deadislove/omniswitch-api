@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
+import { resetCircuitBreakerState } from './utils/circuit-breaker';
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 
@@ -27,6 +28,21 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * constructs the adapters — is enough; no module-cache tricks needed.
  * Restored in afterAll so it doesn't leak into whichever e2e file runs
  * next in the same process (maxWorkers: 1).
+ *
+ * The 5 concurrent `forceslow` calls below are also, incidentally,
+ * exactly enough real-6-second-slow STRIPE calls to satisfy
+ * RedisCircuitBreakerService's independent slow-call-rate trigger
+ * (SLOW_CALL_MIN_CALLS=5, 100% slow) — even though every one of them
+ * succeeds, this can trip STRIPE's circuit breaker OPEN as a side
+ * effect of proving the bulkhead queues. Reset before and after, same
+ * reasoning as resetCircuitBreakerState's own docblock: this state is
+ * shared Redis state across every e2e file (maxWorkers: 1, no flush
+ * between files) — confirmed live as the root cause of
+ * chargeWithForcedThreeDS() flakiness in webhooks.e2e-spec.ts and
+ * marketplace-split-refunds.e2e-spec.ts when this file ran before them
+ * without a reset: STRIPE's leaked OPEN state made their
+ * `preferredProvider: 'STRIPE'` override fall through to ADYEN, which
+ * doesn't understand the FORCE_3DS mock marker.
  */
 describe('PSP bulkhead isolation (e2e)', () => {
   let app: INestApplication;
@@ -39,9 +55,15 @@ describe('PSP bulkhead isolation (e2e)', () => {
     app = await createTestApp();
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 
   afterAll(async () => {
+    // This file's 5 concurrent slow STRIPE calls can trip the slow-call-rate
+    // breaker trigger as a side effect (see class docblock) — reset before
+    // app.close() so that state doesn't leak into whichever e2e file runs
+    // next in the same process (maxWorkers: 1).
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
     await app.close();
     if (originalBulkheadEnv === undefined) {
       delete process.env.PSP_BULKHEAD_MAX_CONCURRENT;
