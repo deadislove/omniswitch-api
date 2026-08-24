@@ -115,24 +115,3 @@ the retention periods for a specific jurisdiction without touching code.
   honest list of what this doesn't cover (this is a reference
   implementation with sensible defaults, not a substitute for
   jurisdiction-specific legal/compliance review)
-
-## `spec/future/` (local only, not tracked in git)
-
-Internal BA/planning documents — proposals that have **not** (or not
-fully) been executed yet: evaluated options, scope of impact, and a
-recommended sequence, written *before* the work happens rather than
-after. `.gitignore`'d deliberately; this folder never reaches GitHub, so
-nothing else in this repo's tracked docs should link to it directly.
-Distinct from `technical/`, which only documents what's actually built.
-
-- `database-scaling.md` — options for scaling past this stack's tested
-  data volume (PgBouncer, table partitioning, archiving/retention
-  policy, Citus), why a distributed-DB + CDC approach in front of
-  `master` was rejected, and a recommended execution order. PgBouncer
-  (Option 1) is now implemented and load-tested — see
-  [`technical/load-testing.md`](./technical/load-testing.md) (Finding
-  #3) for results. Table partitioning (Option 2) and the archiving/
-  deletion policy (Option 3) are now also fully executed — `payments`/
-  `ledger_outbox` are live partitioned tables, and the two retention
-  jobs described in [`compliance/data-retention.md`](./compliance/data-retention.md)
-  are running; Citus (Option 4) remains proposal-stage.

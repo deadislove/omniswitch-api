@@ -1,10 +1,7 @@
 # Physical Database Architecture
 
 How this database is actually deployed and scaled — replication,
-connection pooling, and table partitioning. All three were evaluated
-together in `docs/spec/future/database-scaling.md` (local-only, not
-tracked in git) as Options 1–3; this doc is the tracked, public-facing
-record of what actually got built from that proposal.
+connection pooling, and table partitioning.
 
 ## Master/replica streaming replication
 
@@ -155,17 +152,16 @@ column.
 
 ## Why not a distributed database
 
-`docs/spec/future/database-scaling.md` (local-only) evaluated Citus
-(distributed Postgres, sharded across nodes) as a fourth option beyond
-pooling/partitioning/retention, specifically to handle write throughput
-and data volume past what a single primary can hold — and explicitly
-deferred it. The short version: PgBouncer (Option 1) and partitioning +
-retention (Options 2–3) address this project's actual measured
-bottlenecks (connection count at HPA scale, unbounded table growth) at
-its current and reasonably-projected data volume, without taking on a
-distributed system's operational complexity (rebalancing, cross-shard
-transactions, a second thing to run and monitor). Citus remains
-proposal-stage — a real deployment outgrowing a single primary even
-after partitioning/retention/pooling are all in place is the trigger
+Citus (distributed Postgres, sharded across nodes) was considered as a
+way to handle write throughput and data volume past what a single
+primary can hold, and explicitly deferred. PgBouncer (connection
+pooling) and table partitioning + the data-retention policy address
+this project's actual measured bottlenecks (connection count at HPA
+scale, unbounded table growth) at its current and reasonably-projected
+data volume, without taking on a distributed system's operational
+complexity (rebalancing, cross-shard transactions, a second thing to
+run and monitor). Citus remains a future option, not something in
+progress — a real deployment outgrowing a single primary even after
+partitioning/retention/pooling are all in place is the trigger
 condition for revisiting it, not a default assumption that it's coming
 next.

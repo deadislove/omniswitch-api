@@ -6,12 +6,9 @@ AML (anti-money-laundering) regulation in most jurisdictions requires
 payment records to be kept for a minimum period — commonly 5–10 years
 depending on the country and regulator — for audit and investigation
 purposes. This project didn't originally have a retention *or* deletion
-story: `payments`/`ledger_outbox` just grew forever. The design work
-behind this is in
-[`../spec/future/database-scaling.md`](../spec/future/database-scaling.md)
-Option 3 (that file is local-only, `.gitignore`'d — internal planning
-history, not published); this doc is the tracked, public-facing
-explanation of the mechanism that actually got built from it.
+story: `payments`/`ledger_outbox` just grew forever. This doc describes
+the three-tier live/archive/delete mechanism that was built to address
+that.
 
 ## The three-tier policy
 
