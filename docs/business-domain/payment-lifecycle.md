@@ -14,8 +14,8 @@ PENDING ──────► PROCESSING ──────► SUCCEEDED ──�
    │                │  │  │            └──► DISPUTED ──┬──► SUCCEEDED (dispute won)
    │                │  │  │                             └──► REFUNDED (dispute lost)
    │                │  │  │
-   │                │  │  └──► AMBIGUOUS ──┬──► SUCCEEDED (no automated path today — see note below)
-   │                │  │                    └──► FAILED    (no automated path today — see note below)
+   │                │  │  └──► AMBIGUOUS ──┬──► SUCCEEDED (manual admin action only — see note below)
+   │                │  │                    └──► FAILED    (manual admin action only — see note below)
    │                │  │
    │                │  └──► REQUIRES_CAPTURE ──┬──► SUCCEEDED
    │                │                            ├──► PARTIALLY_CAPTURED ──► SUCCEEDED
@@ -35,18 +35,26 @@ enforces every transition explicitly (`assertValidTransition`), and
 `FAILED` to `PENDING`; a failed charge attempt means creating a *new*
 payment (new `paymentId`), not retrying the old one in place.
 
-**`AMBIGUOUS` has no automated way out today.** `PaymentStatus.vo.ts`'s
+**`AMBIGUOUS` has no *automated* way out today.** `PaymentStatus.vo.ts`'s
 transition table allows `AMBIGUOUS → SUCCEEDED`/`FAILED`, but nothing in
-this codebase currently calls either transition for an `AMBIGUOUS`
+this codebase automatically calls either transition for an `AMBIGUOUS`
 payment: `WebhookProcessingService` looks payments up by
 `pspTransactionId` (an ambiguous outcome never received one — that's
 the definition of ambiguous, see below), and even where a webhook did
 somehow match, its status guard only accepts `PROCESSING`/
 `REQUIRES_ACTION`, not `AMBIGUOUS`. `ReconciliationService` skips any
-payment without a `pspTransactionId` for the same reason. In practice,
-today, an `AMBIGUOUS` payment requires a human to check directly with
-the PSP and resolve it out-of-band (there's no admin endpoint for this
-either) — it is not a transient state that resolves itself.
+payment without a `pspTransactionId` for the same reason — it is not a
+transient state that resolves itself. What *does* exist: a manual
+escape hatch for an operator who has checked the PSP's own
+dashboard/API directly — `AmbiguousPaymentService`/
+`AmbiguousPaymentAdminController`
+(`GET /admin/payments/ambiguous`, `POST /admin/payments/:id/resolve-ambiguous`
+— see [`../guide/api/platform-ops.md`](../guide/api/platform-ops.md#ambiguous-payment-resolution-adminpaymentsambiguous-adminpaymentsidresolve-ambiguous)),
+plus a stale-alert sweep (`AmbiguousPaymentService.alertOnStale()`,
+every 5 minutes) that logs an error for anything still `AMBIGUOUS`
+after 15 minutes, so at least someone finds out. Still no automated
+*resolution* — an operator always has to check the PSP directly and
+supply the real outcome by hand.
 
 ## What triggers each transition
 

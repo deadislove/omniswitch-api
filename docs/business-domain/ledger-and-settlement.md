@@ -197,8 +197,10 @@ no response at all never received a `pspTransactionId`, so it has
 nothing to match against a PSP settlement record; `ReconciliationService`
 skips any payment without one. See
 [`payment-lifecycle.md`](./payment-lifecycle.md)'s note on `AMBIGUOUS`
-for the full picture — today, resolving one requires a human checking
-directly with the PSP, not this job.
+for the full picture — resolving one is a manual admin action
+(`POST /admin/payments/:id/resolve-ambiguous`) after an operator checks
+directly with the PSP, not something this job (or any automated path)
+does today.
 
 ## Fee model
 

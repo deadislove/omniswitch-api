@@ -1,9 +1,10 @@
 # Platform Operations API
 
 Source: `outbox-admin.controller.ts`, `reconciliation-admin.controller.ts`,
-`legal-hold-admin.controller.ts`, `health.controller.ts`,
-`metrics.controller.ts`. These endpoints exist for operators and
-infrastructure, not for merchants integrating with the API.
+`legal-hold-admin.controller.ts`, `ambiguous-payment-admin.controller.ts`,
+`health.controller.ts`, `metrics.controller.ts`. These endpoints exist
+for operators and infrastructure, not for merchants integrating with
+the API.
 
 ---
 
@@ -116,6 +117,52 @@ age/status/dispute conditions are otherwise met; there's no separate
 **Response `200`**: `{ id, legalHold: false, location: "live" }`
 
 - **Errors**: `404` payment not currently in the live `payments` table.
+
+---
+
+## Ambiguous payment resolution (`/admin/payments/ambiguous`, `/admin/payments/:id/resolve-ambiguous`)
+
+A payment reaches `AMBIGUOUS` when a PSP call gets no response at all
+(not a decline — a timeout/network failure) and a same-provider retry
+also gets no response — see
+[`../../business-domain/payment-lifecycle.md`](../../business-domain/payment-lifecycle.md)'s
+note on `AMBIGUOUS`. There is currently no automated way for this
+system to resolve one on its own — these two endpoints are the manual
+escape hatch: find one, then record what an operator found by checking
+the PSP's own dashboard/API directly.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+
+### `GET /admin/payments/ambiguous`
+
+List `AMBIGUOUS` payments across every merchant. Optional
+`?olderThanMinutes=` — omit (or `0`) to list every currently
+`AMBIGUOUS` payment regardless of age.
+
+**Shape**: `{ paymentId, merchantId, amount, currency, pspProvider?, failureReason, createdAt, ageMinutes }`
+
+### `POST /admin/payments/:id/resolve-ambiguous`
+
+Records what actually happened at the PSP. `SUCCEEDED` books the same
+ledger entries a webhook confirmation would (fee/reserve/split
+resolution, a real ledger outbox entry) — this is recording a real
+charge as collected, not just flipping a status flag. `FAILED` records
+that no charge occurred; nothing is booked.
+
+**Body**: `{ outcome: 'SUCCEEDED'|'FAILED', pspTransactionId?: string, reason?: string }`
+— `pspTransactionId` is required when `outcome` is `SUCCEEDED` (an
+ambiguous outcome never received one automatically; that's what made
+it ambiguous).
+
+**Response `200`**: the payment detail shape (same as `GET /payments/:id`).
+
+- **Errors**: `404` payment not found; `409` payment is not currently
+  `AMBIGUOUS`; `422` `outcome: 'SUCCEEDED'` without `pspTransactionId`.
+
+**What this doesn't do**: actively query the PSP to resolve the
+ambiguity automatically — an operator still has to go check the PSP
+directly. A scheduled sweep that does this on its own is a larger,
+separate piece of work, not yet built.
 
 ---
 

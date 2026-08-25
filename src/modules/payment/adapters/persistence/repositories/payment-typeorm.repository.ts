@@ -182,6 +182,35 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return entities.map(PaymentMapper.toDomain);
   }
 
+  async findAmbiguousOlderThan(olderThanMinutes: number): Promise<PaymentAggregate[]> {
+    // Forced onto master, not the ambient replica-routed connection — same
+    // reasoning as findByIdOnMaster()'s docblock. Unlike
+    // findByProviderAndDateRange() (a passive hourly reconciliation sweep,
+    // fine with the replica's ~1s staleness), this backs an interactive
+    // admin tool an operator plausibly calls right after resolving or
+    // otherwise acting on a payment — and AMBIGUOUS payments should be
+    // rare enough that the extra master read is trivial.
+    const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: PaymentEntity[];
+    try {
+      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // gotcha findByProviderAndDateRange()/sumSucceededVolumeSince() below
+      // document: node-postgres serializes a bound Date parameter for a
+      // `timestamp without time zone` column using this process's local
+      // timezone offset, not UTC.
+      entities = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.status = :status', { status: 'AMBIGUOUS' })
+        .andWhere('p.createdAt <= :cutoff', { cutoff: cutoff.toISOString() })
+        .orderBy('p.createdAt', 'ASC')
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return entities.map(PaymentMapper.toDomain);
+  }
+
   async sumSucceededVolumeSince(merchantId: string, since: Date, currencyCode: string): Promise<bigint> {
     // .toISOString(), not the raw Date object — same createdAt-column
     // timezone gotcha findByProviderAndDateRange() above documents.

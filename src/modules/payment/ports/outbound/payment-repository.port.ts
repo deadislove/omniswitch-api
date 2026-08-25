@@ -79,4 +79,17 @@ export abstract class PaymentRepositoryPort {
    * tier is decided per-currency rather than off a blended total.
    */
   abstract sumSucceededVolumeSince(merchantId: string, since: Date, currencyCode: string): Promise<bigint>;
+
+  /**
+   * `AMBIGUOUS` payments (a PSP call that got no response at all, and a
+   * same-provider retry also got no response — see
+   * PaymentCheckoutSaga.compensate_markAmbiguous()) created more than
+   * `olderThanMinutes` ago. Across every merchant, like
+   * findByProviderAndDateRange() — an operator resolving these works at
+   * the platform level, not scoped to one merchant. Used by
+   * AmbiguousPaymentService for both the admin-facing list endpoint and
+   * the stale-alert sweep; `olderThanMinutes: 0` returns every currently
+   * `AMBIGUOUS` payment regardless of age.
+   */
+  abstract findAmbiguousOlderThan(olderThanMinutes: number): Promise<PaymentAggregate[]>;
 }
