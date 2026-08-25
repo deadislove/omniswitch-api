@@ -100,17 +100,38 @@ update against production.
 every charge — there's no caching or sticky routing, every charge
 re-decides.
 
-**Filtering** (always applied first): a PSP is only a candidate if it's
-available, its circuit breaker isn't `OPEN`, it supports the
-transaction's currency, and — if BIN country info is present — it
-supports that country.
+**Per-merchant PSP entitlement** (checked first, before any other
+filter): `MerchantEntity.enabledPspProviders` (`jsonb`, defaults to
+every PSP this system has an adapter for — currently `STRIPE` and
+`ADYEN` — so every existing merchant is unaffected until narrowed via
+`PATCH /admin/merchants/:id/psp-entitlement`) restricts which PSPs a
+merchant's charges may ever route through. If the charge request set
+`preferredProvider` and it's outside this merchant's entitlement, the
+charge is **rejected** with `422 PREFERRED_PROVIDER_NOT_ENTITLED` —
+not silently routed to a different, entitled PSP. This is a
+deliberate asymmetry from the availability/currency/country filter
+below: entitlement reflects a merchant's real contractual relationship
+with a PSP (a merchant onboarded to Stripe hasn't necessarily agreed
+to have Adyen ever touch its transactions), a permission boundary an
+operator configured on purpose — silently rerouting around it would
+hide a real integration bug (a client still requesting a PSP that was
+deliberately revoked) rather than surfacing it. A PSP outside the
+entitlement is also dropped from the general candidate pool for
+charges with no preference, same as the filter below.
+
+**Filtering** (always applied next): of the entitled PSPs, a PSP is
+only a candidate if it's available, its circuit breaker isn't `OPEN`,
+it supports the transaction's currency, and — if BIN country info is
+present — it supports that country.
 
 **Preference override** (checked before scoring): if the charge
-request set `preferredProvider` and that PSP survived the filter
-above, it's selected directly — a true override, not a scoring input,
-matching the charge API's own documented contract ("overrides smart
-routing"). Scoring below is only reached when there's no preference,
-or the preferred provider didn't survive the filter.
+request set `preferredProvider` and that PSP survived entitlement and
+the filter above, it's selected directly — a true override, not a
+scoring input, matching the charge API's own documented contract
+("overrides smart routing"). Scoring below is only reached when
+there's no preference, or the preferred provider didn't survive the
+availability/currency/country filter (not the entitlement check above,
+which rejects outright rather than falling through).
 
 **Scoring** (0–~100 points, roughly, when no preference decided it):
 
@@ -170,6 +191,14 @@ Matching sums settlement records sharing a `pspTransactionId` rather than
 assuming exactly one per id — required once partial-capture accounting
 (below) made it possible for one authorization to produce several
 settlement records at the PSP.
+
+**Does not cover `AMBIGUOUS` payments** — a payment whose PSP call got
+no response at all never received a `pspTransactionId`, so it has
+nothing to match against a PSP settlement record; `ReconciliationService`
+skips any payment without one. See
+[`payment-lifecycle.md`](./payment-lifecycle.md)'s note on `AMBIGUOUS`
+for the full picture — today, resolving one requires a human checking
+directly with the PSP, not this job.
 
 ## Fee model
 

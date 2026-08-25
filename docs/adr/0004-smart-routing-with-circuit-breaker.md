@@ -43,6 +43,21 @@ lower is better), and two reference-setup-specific nudges (+10 EU card
 on every charge — no caching, no sticky routing to a merchant's "usual"
 PSP.
 
+**Addendum, 2026-08-24 — per-merchant PSP entitlement**: a filter now
+runs *before* the availability/currency/country filter above —
+`MerchantEntity.enabledPspProviders` restricts the candidate pool to
+PSPs this specific merchant is entitled to use (defaults to every PSP
+this system has an adapter for, so no existing merchant's routing
+changed on migration day). Unlike the filter above, a `preferredProvider`
+that fails *this* check is rejected outright (`422
+PREFERRED_PROVIDER_NOT_ENTITLED`), not silently scored against the
+remaining candidates — entitlement is a permission boundary an
+operator configured on purpose, not a technical constraint like
+currency support, so silently rerouting around it would hide a real
+integration bug rather than surface it. See
+[`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../business-domain/ledger-and-settlement.md#smart-psp-routing)
+for the full behavior.
+
 **Fallback**: if the top-scored PSP's actual charge call fails,
 `PaymentProcessorFactory.executeWithFallback` retries the
 next-highest-scored *currently-available* PSP, in order, until one

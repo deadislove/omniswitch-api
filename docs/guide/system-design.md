@@ -130,7 +130,9 @@ POST /payments/charge
                      validated now, before any money moves (an invalid split must fail here,
                      not after a real charge already succeeded)
                   3. Risk score computed (stored for audit; doesn't gate anything)
-                  4. AcquirerRoutingService picks a PSP (BIN + amount + live health)
+                  4. AcquirerRoutingService picks a PSP (BIN + amount + live health +
+                     merchant's PSP entitlement — a preferredProvider outside it is
+                     rejected 422, not silently routed elsewhere)
                   5. Adapter calls the PSP — a thrown error retries the other PSP;
                      a normal decline response does not
                   6. On success: Payment marked SUCCEEDED + ledger outbox entry written,
@@ -187,6 +189,7 @@ piece of state becomes available, and where the two failure branches
 | 3. Risk score computed (stored for audit only)              |
 | 4. AcquirerRoutingService.selectOptimalAdapter()            |
 |    -> chosen PSP adapter (BIN + amount + live health)       |
+|    -> also enforces the merchant's PSP entitlement (422)     |
 | 5. PSP Adapter.charge():                                    |
 |      succeeds -> UPDATE Payment SUCCEEDED +                 |
 |                  INSERT ledger outbox event (1 transaction) |

@@ -185,7 +185,7 @@ you.
 | Req 3 — protect stored cardholder data | No PAN is stored, by design |
 | Req 4 — encrypt transmission over public networks | TLS termination + HSTS enforced at the ingress (`k8s/ingress.yaml`) |
 | Req 6 — secure development | Input validation (`class-validator`, whitelist mode), dependency audit performed, code review completed (this conversation) |
-| Req 7 — restrict access by need-to-know | RBAC: `ADMIN` / `MERCHANT` / `OPERATOR` / `READONLY` roles enforced by `RolesGuard` |
+| Req 7 — restrict access by need-to-know | RBAC: `ADMIN` / `MERCHANT` / `OPERATOR` / `READONLY` / `AGENT` roles enforced by `RolesGuard` — `AGENT` is scoped further still, to exactly one route (`POST /payments/charge`) and its `Delegation`'s own `SpendPolicy`, see below |
 | Req 8.2 — unique IDs for each user | Every merchant has its own API Key ID/Secret and JWT identity; no shared credentials |
 | Req 8 — session/credential lifecycle | JWT revocation (this document, above), API key rotation, HMAC key rotation all implemented and take effect immediately |
 | Req 10 — logging | Structured JSON logging (Winston) with correlation IDs on every request |

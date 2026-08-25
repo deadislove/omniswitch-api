@@ -134,9 +134,9 @@ conclusion, no regression.
 fresh image build) after this round's per-merchant PSP entitlement
 work (`MerchantEntity.enabledPspProviders`, the `preferredProvider`
 true-override fix, and an e2e-only circuit-breaker-state-leak fix —
-see `docs/spec/future/per-merchant-psp-entitlement.md` and
-`distributed-resilience-and-cde-isolation.md`) — none of which touch
-the charge path's rate-limiting. 200 seeded merchants, default rate
+see [`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../business-domain/ledger-and-settlement.md#smart-psp-routing)
+and [`../adr/0004-smart-routing-with-circuit-breaker.md`](../adr/0004-smart-routing-with-circuit-breaker.md))
+— none of which touch the charge path's rate-limiting. 200 seeded merchants, default rate
 limits: 6700 requests, **400 succeeded (`201`)**, 5278 hit the
 route-level `429` cap, **zero `5xx`s**. Matches the historical
 400-succeeded figure exactly — same shape, same conclusion, no

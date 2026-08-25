@@ -1,6 +1,6 @@
 # Documentation
 
-Five kinds of documentation live here, kept separate because they
+Six kinds of documentation live here, kept separate because they
 answer different questions for different readers.
 
 ## [`guide/`](./guide/)
@@ -115,3 +115,13 @@ the retention periods for a specific jurisdiction without touching code.
   honest list of what this doesn't cover (this is a reference
   implementation with sensible defaults, not a substitute for
   jurisdiction-specific legal/compliance review)
+
+## [`adr/`](./adr/)
+
+Architecture Decision Records — *why* a specific technical decision was
+made (alternatives considered, the trade-off accepted, the real bug it
+fixed if there was one), not a description of the current system
+(that's `technical/architecture.md`). Written once, at the time of the
+decision; a reversed decision gets a new ADR marking the old one
+`Superseded`, not a rewrite. See [`adr/README.md`](./adr/README.md)
+for the full index and format.

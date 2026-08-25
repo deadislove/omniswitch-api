@@ -80,9 +80,11 @@ doesn't take a position on which cloud a specific deployment should
 use, only that the mechanism exists for whichever one is chosen.
 
 **Not exercised end-to-end by this project's own test suite**: the
-`local` adapter has full e2e coverage (`test/legal-hold.e2e-spec.ts`,
-`test/data-retention-jobs.e2e-spec.ts` both exercise it against a real
-filesystem). The three cloud adapters are unit-tested against mocked
+`local` adapter has full e2e coverage (`test/data-retention-jobs.e2e-spec.ts`
+exercises it against a real filesystem via `DELETION_BACKUP_PATH`;
+`test/legal-hold.e2e-spec.ts` covers the legal-hold mechanism itself —
+placing/releasing a hold — not backup storage). The three cloud
+adapters are unit-tested against mocked
 clients (`src/jobs/backup-storage/*.spec.ts` — confirms each adapter
 calls its SDK correctly and propagates a failure as a thrown error, the
 same "refuse to delete if the backup isn't confirmed" contract the
