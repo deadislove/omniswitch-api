@@ -152,9 +152,19 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/api/v1/admin/payments/${paymentId}/resolve-ambiguous`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ outcome: 'SUCCEEDED' })
+      .send({ outcome: 'SUCCEEDED', reason: 'Checked Stripe dashboard' })
       .expect(422);
     expect(res.body.code).toBe('PSP_TRANSACTION_ID_REQUIRED');
+  });
+
+  it('requires a non-empty reason (422 without it, DTO validation)', async () => {
+    const paymentId = await chargeToAmbiguous();
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/admin/payments/${paymentId}/resolve-ambiguous`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ outcome: 'FAILED' })
+      .expect(422);
   });
 
   it('resolving to SUCCEEDED with pspTransactionId books ledger entries exactly like a webhook confirmation would', async () => {
@@ -168,6 +178,9 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
 
     expect(res.body.status).toBe('SUCCEEDED');
     expect(res.body.pspTransactionId).toBe('pi_manually_confirmed_123');
+    expect(res.body.ambiguousResolvedBy).toBe(admin.merchantId);
+    expect(res.body.ambiguousResolvedReason).toBe('Confirmed in Stripe dashboard');
+    expect(res.body.ambiguousResolvedAt).toEqual(expect.any(String));
 
     const entries = await ledgerEntries(paymentId);
     expect(entries.length).toBeGreaterThan(0);
@@ -192,6 +205,8 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
       .expect(200);
 
     expect(res.body.status).toBe('FAILED');
+    expect(res.body.ambiguousResolvedBy).toBe(admin.merchantId);
+    expect(res.body.ambiguousResolvedReason).toBe('Confirmed no charge in Stripe dashboard');
     expect(await ledgerEntries(paymentId)).toHaveLength(0);
   });
 
@@ -208,7 +223,7 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/api/v1/admin/payments/${chargeRes.body.paymentId}/resolve-ambiguous`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ outcome: 'FAILED' })
+      .send({ outcome: 'FAILED', reason: 'Checked Stripe dashboard' })
       .expect(409);
     expect(res.body.code).toBe('PAYMENT_NOT_AMBIGUOUS');
   });
@@ -217,7 +232,7 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/api/v1/admin/payments/${randomUUID()}/resolve-ambiguous`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ outcome: 'FAILED' })
+      .send({ outcome: 'FAILED', reason: 'Checked Stripe dashboard' })
       .expect(404);
   });
 

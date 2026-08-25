@@ -1,6 +1,7 @@
-import { IsIn, IsOptional, IsString, MaxLength, IsInt, Min } from 'class-validator';
+import { IsIn, IsOptional, IsString, MinLength, MaxLength, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PaymentDetailResponseDto } from './charge-payment.dto';
 
 const RESOLVABLE_OUTCOMES = ['SUCCEEDED', 'FAILED'];
 
@@ -22,11 +23,14 @@ export class ResolveAmbiguousPaymentDto {
   @MaxLength(255)
   pspTransactionId?: string;
 
-  @ApiPropertyOptional({ example: 'Confirmed no charge in Stripe dashboard for this idempotency key' })
-  @IsOptional()
+  @ApiProperty({
+    example: 'Confirmed no charge in Stripe dashboard for this idempotency key',
+    description: 'Required — what the operator found when checking the PSP directly. This is a manual override of financial state (SUCCEEDED books real ledger entries), so it always needs a stated justification, not just an optional note.',
+  })
   @IsString()
+  @MinLength(1)
   @MaxLength(500)
-  reason?: string;
+  reason: string;
 }
 
 export class ListAmbiguousPaymentsQuery {
@@ -66,4 +70,23 @@ export class AmbiguousPaymentSummaryDto {
 
   @ApiProperty({ example: 42, description: 'Minutes since this payment was created (and, in practice, since it became AMBIGUOUS — the transition happens synchronously within the original charge request)' })
   ageMinutes: number;
+}
+
+/**
+ * Response shape for POST .../resolve-ambiguous — the normal payment
+ * detail shape plus the audit trail for this specific manual action.
+ * Deliberately a separate DTO from PaymentDetailResponseDto (which
+ * GET /payments/:id also returns to merchant callers) rather than adding
+ * these fields to that shared shape — a merchant has no reason to see
+ * which internal admin/operator identity resolved their payment.
+ */
+export class ResolvedAmbiguousPaymentResponseDto extends PaymentDetailResponseDto {
+  @ApiProperty({ example: 'admin_ops_team', description: 'merchantId of the ADMIN/OPERATOR account that performed this resolution' })
+  ambiguousResolvedBy: string;
+
+  @ApiProperty({ example: 'Confirmed no charge in Stripe dashboard for this idempotency key' })
+  ambiguousResolvedReason: string;
+
+  @ApiProperty()
+  ambiguousResolvedAt: string;
 }

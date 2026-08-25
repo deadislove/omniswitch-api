@@ -87,6 +87,9 @@ export class PaymentAggregate {
     private _updatedAt: Date = new Date(),
     private _settlementConversion?: SettlementConversion,
     private _splits?: PaymentSplit[],
+    private _ambiguousResolvedBy?: string,
+    private _ambiguousResolvedReason?: string,
+    private _ambiguousResolvedAt?: Date,
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -140,6 +143,9 @@ export class PaymentAggregate {
     updatedAt?: Date;
     settlementConversion?: SettlementConversion;
     splits?: PaymentSplit[];
+    ambiguousResolvedBy?: string;
+    ambiguousResolvedReason?: string;
+    ambiguousResolvedAt?: Date;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -161,6 +167,9 @@ export class PaymentAggregate {
       params.updatedAt ?? new Date(),
       params.settlementConversion,
       params.splits,
+      params.ambiguousResolvedBy,
+      params.ambiguousResolvedReason,
+      params.ambiguousResolvedAt,
     );
   }
 
@@ -295,6 +304,23 @@ export class PaymentAggregate {
     this.addDomainEvent(
       new PaymentAmbiguousEvent(this._id, reason, this._pspProvider),
     );
+  }
+
+  /**
+   * Records who resolved an AMBIGUOUS payment and why — a manual admin
+   * override of financial state (see AmbiguousPaymentService), not a
+   * status transition itself, so this is called alongside
+   * markSucceeded()/markFailed() rather than instead of them. Deliberately
+   * separate fields from failureReason/failureCode above: those are
+   * written by real PSP declines too, and conflating an operator's audit
+   * note into a field also used for that would make it ambiguous later
+   * which kind of event actually produced a given FAILED payment's
+   * reason.
+   */
+  recordManualAmbiguousResolution(resolvedBy: string, reason: string): void {
+    this._ambiguousResolvedBy = resolvedBy;
+    this._ambiguousResolvedReason = reason;
+    this._ambiguousResolvedAt = new Date();
   }
 
   cancel(): void {
@@ -479,6 +505,9 @@ export class PaymentAggregate {
   get updatedAt(): Date { return this._updatedAt; }
   get settlementConversion(): SettlementConversion | undefined { return this._settlementConversion; }
   get splits(): PaymentSplit[] | undefined { return this._splits; }
+  get ambiguousResolvedBy(): string | undefined { return this._ambiguousResolvedBy; }
+  get ambiguousResolvedReason(): string | undefined { return this._ambiguousResolvedReason; }
+  get ambiguousResolvedAt(): Date | undefined { return this._ambiguousResolvedAt; }
 
   get totalRefunded(): Money {
     return this._refunds.reduce(

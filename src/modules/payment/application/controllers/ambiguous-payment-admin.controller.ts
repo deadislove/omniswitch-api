@@ -1,14 +1,13 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../shared/guards/roles.guard';
 import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
 import { AmbiguousPaymentService } from '../services/ambiguous-payment.service';
 import { PaymentAggregate } from '../../domain/aggregates/payment.aggregate';
-import { PaymentDetailResponseDto } from '../dto/charge-payment.dto';
-import { ResolveAmbiguousPaymentDto, ListAmbiguousPaymentsQuery, AmbiguousPaymentSummaryDto } from '../dto/ambiguous-payment.dto';
+import { ResolveAmbiguousPaymentDto, ListAmbiguousPaymentsQuery, AmbiguousPaymentSummaryDto, ResolvedAmbiguousPaymentResponseDto } from '../dto/ambiguous-payment.dto';
 
-function toDetailDto(payment: PaymentAggregate): PaymentDetailResponseDto {
+function toResolvedDto(payment: PaymentAggregate): ResolvedAmbiguousPaymentResponseDto {
   return {
     paymentId: payment.id,
     status: payment.status,
@@ -31,6 +30,12 @@ function toDetailDto(payment: PaymentAggregate): PaymentDetailResponseDto {
     })),
     createdAt: payment.createdAt.toISOString(),
     updatedAt: payment.updatedAt.toISOString(),
+    // Non-null assertions: resolve() always calls
+    // recordManualAmbiguousResolution() on both branches before returning,
+    // so these are always set on the payment this DTO is built from.
+    ambiguousResolvedBy: payment.ambiguousResolvedBy!,
+    ambiguousResolvedReason: payment.ambiguousResolvedReason!,
+    ambiguousResolvedAt: payment.ambiguousResolvedAt!.toISOString(),
   };
 }
 
@@ -74,18 +79,19 @@ export class AmbiguousPaymentAdminController {
 
   @Post(':id/resolve-ambiguous')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Manually resolve an AMBIGUOUS payment after checking the PSP directly — SUCCEEDED books the same ledger entries a webhook confirmation would; FAILED records that no charge occurred. There is no automated way to do this yet (see AmbiguousPaymentService\'s docblock) — this is the only way to close one out today.' })
-  @ApiResponse({ status: 200, type: PaymentDetailResponseDto })
+  @ApiOperation({ summary: 'Manually resolve an AMBIGUOUS payment after checking the PSP directly — SUCCEEDED books the same ledger entries a webhook confirmation would; FAILED records that no charge occurred. There is no automated way to do this yet (see AmbiguousPaymentService\'s docblock) — this is the only way to close one out today. reason is required and, along with the resolving admin/operator\'s identity, is recorded as a permanent audit trail on the payment.' })
+  @ApiResponse({ status: 200, type: ResolvedAmbiguousPaymentResponseDto })
   @ApiResponse({ status: 404, description: 'Payment not found' })
   @ApiResponse({ status: 409, description: 'Payment is not currently AMBIGUOUS' })
   @ApiResponse({ status: 422, description: 'outcome is SUCCEEDED but pspTransactionId was omitted' })
-  async resolveAmbiguous(@Param('id') id: string, @Body() dto: ResolveAmbiguousPaymentDto): Promise<PaymentDetailResponseDto> {
+  async resolveAmbiguous(@Param('id') id: string, @Body() dto: ResolveAmbiguousPaymentDto, @Req() req: any): Promise<ResolvedAmbiguousPaymentResponseDto> {
     const payment = await this.ambiguousPaymentService.resolve({
       paymentId: id,
       outcome: dto.outcome,
       pspTransactionId: dto.pspTransactionId,
       reason: dto.reason,
+      resolvedBy: req.user.merchantId,
     });
-    return toDetailDto(payment);
+    return toResolvedDto(payment);
   }
 }

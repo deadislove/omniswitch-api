@@ -149,15 +149,20 @@ resolution, a real ledger outbox entry) — this is recording a real
 charge as collected, not just flipping a status flag. `FAILED` records
 that no charge occurred; nothing is booked.
 
-**Body**: `{ outcome: 'SUCCEEDED'|'FAILED', pspTransactionId?: string, reason?: string }`
+**Body**: `{ outcome: 'SUCCEEDED'|'FAILED', pspTransactionId?: string, reason: string }`
 — `pspTransactionId` is required when `outcome` is `SUCCEEDED` (an
 ambiguous outcome never received one automatically; that's what made
-it ambiguous).
+it ambiguous). `reason` is always required — this is a manual override
+of financial state, so it always needs a stated justification.
 
-**Response `200`**: the payment detail shape (same as `GET /payments/:id`).
+**Response `200`**: the payment detail shape (same as `GET /payments/:id`),
+plus a permanent audit trail for this action: `ambiguousResolvedBy`
+(the resolving ADMIN/OPERATOR's `merchantId`), `ambiguousResolvedReason`
+(the `reason` supplied), `ambiguousResolvedAt`.
 
 - **Errors**: `404` payment not found; `409` payment is not currently
-  `AMBIGUOUS`; `422` `outcome: 'SUCCEEDED'` without `pspTransactionId`.
+  `AMBIGUOUS`; `422` `outcome: 'SUCCEEDED'` without `pspTransactionId`,
+  or `reason` missing/empty.
 
 **What this doesn't do**: actively query the PSP to resolve the
 ambiguity automatically — an operator still has to go check the PSP

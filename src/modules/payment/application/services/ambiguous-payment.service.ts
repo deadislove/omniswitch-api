@@ -92,7 +92,8 @@ export class AmbiguousPaymentService {
     paymentId: string;
     outcome: 'SUCCEEDED' | 'FAILED';
     pspTransactionId?: string;
-    reason?: string;
+    reason: string;
+    resolvedBy: string;
   }): Promise<PaymentAggregate> {
     const payment = await this.getOwnedAmbiguous(params.paymentId);
 
@@ -106,6 +107,7 @@ export class AmbiguousPaymentService {
       }
 
       payment.markSucceeded(params.pspTransactionId);
+      payment.recordManualAmbiguousResolution(params.resolvedBy, params.reason);
 
       // Same sequence as WebhookProcessingService.markSucceeded()'s
       // ledger-booking — see that method's comments for why each piece
@@ -152,11 +154,12 @@ export class AmbiguousPaymentService {
         }
       });
 
-      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> SUCCEEDED (pspTransactionId=${params.pspTransactionId})${params.reason ? `: ${params.reason}` : ''}`);
+      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> SUCCEEDED by ${params.resolvedBy} (pspTransactionId=${params.pspTransactionId}): ${params.reason}`);
     } else {
-      payment.markFailed(params.reason ?? 'Manually resolved: operator confirmed no charge occurred at the PSP', 'MANUALLY_RESOLVED_AMBIGUOUS');
+      payment.markFailed(params.reason, 'MANUALLY_RESOLVED_AMBIGUOUS');
+      payment.recordManualAmbiguousResolution(params.resolvedBy, params.reason);
       await this.paymentRepository.update(payment);
-      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> FAILED${params.reason ? `: ${params.reason}` : ''}`);
+      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> FAILED by ${params.resolvedBy}: ${params.reason}`);
     }
 
     this.publish(payment);
