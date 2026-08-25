@@ -184,7 +184,7 @@ you.
 |---|---|
 | Req 3 — protect stored cardholder data | No PAN is stored, by design |
 | Req 4 — encrypt transmission over public networks | TLS termination + HSTS enforced at the ingress (`k8s/ingress.yaml`) |
-| Req 6 — secure development | Input validation (`class-validator`, whitelist mode), dependency audit performed, code review completed (this conversation) |
+| Req 6 — secure development | Input validation (`class-validator`, whitelist mode), dependency audit performed, code review completed |
 | Req 7 — restrict access by need-to-know | RBAC: `ADMIN` / `MERCHANT` / `OPERATOR` / `READONLY` / `AGENT` roles enforced by `RolesGuard` — `AGENT` is scoped further still, to exactly one route (`POST /payments/charge`) and its `Delegation`'s own `SpendPolicy`, see below |
 | Req 8.2 — unique IDs for each user | Every merchant has its own API Key ID/Secret and JWT identity; no shared credentials |
 | Req 8 — session/credential lifecycle | JWT revocation (this document, above), API key rotation, HMAC key rotation all implemented and take effect immediately |
@@ -214,7 +214,7 @@ assessment.
 |---|---|
 | **Req 8.4.2 — mandatory MFA for admin access** | The mechanism exists (see above) but isn't enforced for any role — an `ADMIN` merchant can still call `/admin/merchants/*` with MFA off. Making it mandatory for `ADMIN` (or any role judged "access into the CDE") is still open. |
 | **Req 10.5 — log integrity** | Logs are structured but not shipped anywhere tamper-evident (no SIEM, no centralized/immutable log store). Currently just stdout + optional local file in production config. |
-| **Req 11.3 / 11.4 — vulnerability scanning & penetration testing** | PCI DSS requires quarterly scans by an **Approved Scanning Vendor (ASV)** and periodic penetration testing by a qualified third party. Nothing in this repository — including this conversation's code review — satisfies that requirement. It has to be procured separately, from a party that is not the system's own developer. |
+| **Req 11.3 / 11.4 — vulnerability scanning & penetration testing** | PCI DSS requires quarterly scans by an **Approved Scanning Vendor (ASV)** and periodic penetration testing by a qualified third party. Nothing in this repository — including its own code review process — satisfies that requirement. It has to be procured separately, from a party that is not the system's own developer. |
 | **Req 12 — governance** | No incident response plan, no formal security policy documents, no vendor management program for Stripe/Adyen/AWS/etc. These are organizational artifacts, not something a codebase can contain. |
 
 ### If you take this to formal PCI DSS certification

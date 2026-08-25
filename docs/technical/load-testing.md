@@ -140,11 +140,7 @@ and [`../adr/0004-smart-routing-with-circuit-breaker.md`](../adr/0004-smart-rout
 limits: 6700 requests, **400 succeeded (`201`)**, 5278 hit the
 route-level `429` cap, **zero `5xx`s**. Matches the historical
 400-succeeded figure exactly — same shape, same conclusion, no
-regression. (This environment's Docker Compose stack — containers and
-volumes — had been removed entirely since the last pass, for reasons
-outside this session's own actions; rebuilt fresh via `docker compose
-up -d --build` before this run, same as every "fully rebuilt
-environment" pass above.)
+regression.
 
 ## Finding #2: read-path capacity, unconstrained by the charge-specific cap
 
