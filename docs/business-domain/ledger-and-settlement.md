@@ -202,6 +202,19 @@ for the full picture — resolving one is a manual admin action
 directly with the PSP, not something this job (or any automated path)
 does today.
 
+**A merchant whose `AMBIGUOUS` incidents pile up gets flagged for
+observation, separately from reconciliation.**
+`AmbiguousRiskMonitoringService` watches for two independent signals
+per merchant — more than a configurable threshold of incidents in a
+rolling 24h window, or a run of consecutive charges that were *all*
+ambiguous — and sets `MerchantEntity.ambiguousRiskFlagged` when either
+trips. Purely observational: it does not throttle, hold, or otherwise
+change how that merchant's charges are processed, and a flag auto-clears
+once no new incident has occurred for a configurable number of days
+(default 60). See
+[`../guide/api/merchants-and-auth.md`](../guide/api/merchants-and-auth.md#ambiguous-risk-observation)
+for the admin-facing endpoints.
+
 ## Fee model
 
 The platform fee rate is per-merchant: `MerchantEntity.platformFeeBps`

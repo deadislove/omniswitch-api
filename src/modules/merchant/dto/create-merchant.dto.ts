@@ -217,6 +217,27 @@ export class UpdateRiskTierAutoDto {
   enabled: boolean;
 }
 
+export class UpdateAmbiguousRiskFlagDto {
+  @ApiProperty({ example: true, description: 'true to flag this merchant for observation, false to clear the flag.' })
+  @IsBoolean()
+  flagged: boolean;
+
+  @ApiProperty({
+    example: 'Manually flagging after 3 customer complaints about failed charges this week',
+    description: 'Required — always needs a stated justification, same posture as AmbiguousPaymentService\'s manual resolution audit trail. Setting this also disables ambiguousRiskAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../ambiguous-risk-auto.',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  reason: string;
+}
+
+export class UpdateAmbiguousRiskAutoDto {
+  @ApiProperty({ example: true, description: 'true: AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).' })
+  @IsBoolean()
+  enabled: boolean;
+}
+
 export class SubmitKycDto {
   @ApiProperty({ example: 'Acme Marketplace Sellers LLC', description: 'Registered business/legal name' })
   @IsString()
@@ -282,6 +303,21 @@ export class MerchantSummaryDto {
 
   @ApiProperty({ example: ['STRIPE', 'ADYEN'], enum: VALID_PSP_PROVIDERS, isArray: true, description: 'PSPs this merchant\'s charges may route through' })
   enabledPspProviders: string[];
+
+  @ApiProperty({ example: false, description: 'Passive risk-observation flag — set when this merchant\'s AMBIGUOUS payment incidents cross a volume or streak threshold. Does not affect how charges are processed; visibility only.' })
+  ambiguousRiskFlagged: boolean;
+
+  @ApiProperty({ example: null, nullable: true })
+  ambiguousRiskFlaggedAt: string | null;
+
+  @ApiProperty({ example: null, nullable: true, description: 'Why this merchant is flagged — automated summary or an operator\'s own stated reason' })
+  ambiguousRiskFlagReason: string | null;
+
+  @ApiProperty({ example: null, nullable: true, description: 'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically' })
+  ambiguousRiskFlaggedBy: string | null;
+
+  @ApiProperty({ example: true, description: 'Whether AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant\'s ambiguousRiskFlagged' })
+  ambiguousRiskAutoManaged: boolean;
 
   @ApiProperty()
   createdAt: string;

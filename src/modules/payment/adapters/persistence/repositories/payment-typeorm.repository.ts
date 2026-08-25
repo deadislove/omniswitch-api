@@ -224,6 +224,44 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
       .getRawOne();
     return BigInt(total ?? 0);
   }
+
+  async countAmbiguousIncidentsSince(merchantId: string, since: Date): Promise<number> {
+    // Forced onto master — same reasoning as findAmbiguousOlderThan():
+    // this runs synchronously right after the merchant's own payment just
+    // transitioned to AMBIGUOUS in the same request, and needs to see
+    // that write immediately, not after the replica's ~1s streaming lag.
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // gotcha findByProviderAndDateRange() documents.
+      return await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.merchantId = :merchantId', { merchantId })
+        .andWhere('(p.status = :status OR p.ambiguousResolvedAt IS NOT NULL)', { status: 'AMBIGUOUS' })
+        .andWhere('p.createdAt >= :since', { since: since.toISOString() })
+        .getCount();
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async findRecentAmbiguousFlags(merchantId: string, limit: number): Promise<boolean[]> {
+    // Forced onto master — same reasoning as countAmbiguousIncidentsSince()
+    // above.
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: PaymentEntity[];
+    try {
+      entities = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.merchantId = :merchantId', { merchantId })
+        .orderBy('p.createdAt', 'DESC')
+        .take(limit)
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return entities.map((e) => e.status === 'AMBIGUOUS' || e.ambiguousResolvedAt != null);
+  }
 }
 
 /**

@@ -67,6 +67,7 @@ import { PayoutService } from './application/services/payout.service';
 import { DelegationService } from './application/services/delegation.service';
 import { LegalHoldService } from './application/services/legal-hold.service';
 import { AmbiguousPaymentService } from './application/services/ambiguous-payment.service';
+import { AmbiguousRiskMonitoringService } from './application/services/ambiguous-risk-monitoring.service';
 
 // Controller
 import { PaymentController } from './application/controllers/payment.controller';
@@ -83,6 +84,7 @@ import { MarketplacePayoutAdminController } from './application/controllers/mark
 import { DelegationController } from './application/controllers/delegation.controller';
 import { LegalHoldAdminController } from './application/controllers/legal-hold-admin.controller';
 import { AmbiguousPaymentAdminController } from './application/controllers/ambiguous-payment-admin.controller';
+import { AmbiguousRiskAdminController } from './application/controllers/ambiguous-risk-admin.controller';
 
 // Webhook Guards
 import { StripeWebhookGuard } from './adapters/psp/stripe/stripe-webhook.guard';
@@ -132,7 +134,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // already covers the whole app via @Global(); this one was pure
     // duplication that happened to be actively harmful, not just redundant.
   ],
-  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController, LegalHoldAdminController, AmbiguousPaymentAdminController],
+  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController, LegalHoldAdminController, AmbiguousPaymentAdminController, AmbiguousRiskAdminController],
   providers: [
     // PSP Adapters
     StripePSPAdapter,
@@ -213,6 +215,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     DelegationService,
     LegalHoldService,
     AmbiguousPaymentService,
+    AmbiguousRiskMonitoringService,
 
     // Auth
     JwtAuthGuard,

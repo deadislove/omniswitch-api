@@ -241,6 +241,68 @@ export class MerchantEntity {
   @Column({ name: 'enabled_psp_providers', type: 'jsonb', default: '["STRIPE","ADYEN"]' })
   enabledPspProviders: string[];
 
+  /**
+   * Passive risk-observation flag — set when this merchant's AMBIGUOUS
+   * payment incidents (see PaymentStatus.AMBIGUOUS's docblock) cross
+   * either of AmbiguousRiskMonitoringService's two thresholds within a
+   * given evaluation (a rolling-24h count, or N consecutive payments all
+   * having been AMBIGUOUS). Deliberately does not change how this
+   * merchant's charges are processed — no throttling, no forced review —
+   * this is visibility only (Phase 2.a); see
+   * docs/spec/future/ambiguous-payment-resolution.md for why an active
+   * enforcement phase (2.b) was deliberately deferred pending real data
+   * on how often this actually fires.
+   */
+  @Column({ name: 'ambiguous_risk_flagged', default: false })
+  ambiguousRiskFlagged: boolean;
+
+  /**
+   * The basis for AmbiguousRiskMonitoringService's daily auto-clear
+   * sweep: cleared once AMBIGUOUS_RISK_AUTO_CLEAR_DAYS has passed since
+   * this timestamp. Deliberately re-touched to "now" on every *new*
+   * AMBIGUOUS incident while already flagged, not just set once at
+   * initial flagging — the 2-month countdown is meant to measure "how
+   * long since this merchant's most recent incident," not "how long
+   * since they were first flagged," so a merchant with an ongoing
+   * trickle of incidents should never auto-clear mid-trickle. Null
+   * whenever ambiguousRiskFlagged is false.
+   */
+  @Column({ name: 'ambiguous_risk_flagged_at', type: 'timestamp', nullable: true })
+  ambiguousRiskFlaggedAt?: Date;
+
+  /**
+   * Why this merchant is flagged — either an automated summary (e.g.
+   * "142 AMBIGUOUS incidents in trailing 24h") or an operator's own
+   * stated reason for a manual flag/clear via PATCH .../ambiguous-risk.
+   * Explicit type: 'varchar' — see mfaSecretCiphertext's comment above
+   * for why a `string | undefined` column needs this.
+   */
+  @Column({ name: 'ambiguous_risk_flag_reason', type: 'varchar', nullable: true })
+  ambiguousRiskFlagReason?: string;
+
+  /**
+   * `merchantId` of the ADMIN/OPERATOR account that manually flagged or
+   * cleared this merchant via PATCH .../ambiguous-risk — null when the
+   * current flag state was set automatically by
+   * AmbiguousRiskMonitoringService. Same audit-trail posture as
+   * PaymentEntity.ambiguousResolvedBy — a manual override of a
+   * risk-relevant flag should always be attributable to who did it.
+   */
+  @Column({ name: 'ambiguous_risk_flagged_by', type: 'varchar', nullable: true })
+  ambiguousRiskFlaggedBy?: string;
+
+  /**
+   * When true (the default), AmbiguousRiskMonitoringService's automated
+   * flag/auto-clear logic may set ambiguousRiskFlagged for this merchant.
+   * Same "manual input pauses automation" behavior as
+   * riskTierAutoManaged above — flipped to false the moment an operator
+   * flags or clears this merchant by hand
+   * (PATCH .../ambiguous-risk), and only re-enabled explicitly
+   * (PATCH .../ambiguous-risk-auto).
+   */
+  @Column({ name: 'ambiguous_risk_auto_managed', default: true })
+  ambiguousRiskAutoManaged: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

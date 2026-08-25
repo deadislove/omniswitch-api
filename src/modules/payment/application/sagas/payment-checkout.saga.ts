@@ -14,6 +14,7 @@ import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper
 import { PaymentEntity } from '../../adapters/persistence/entities/payment.entity';
 import { ChargeLedgerParamsResolverService, ChargeLedgerParams } from '../services/charge-ledger-params-resolver.service';
 import { ReserveService } from '../services/reserve.service';
+import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
 import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
 
 export interface CheckoutSagaInput {
@@ -116,6 +117,7 @@ export class PaymentCheckoutSaga {
     private readonly eventEmitter: EventEmitter2,
     private readonly chargeLedgerParams: ChargeLedgerParamsResolverService,
     private readonly reserveService: ReserveService,
+    private readonly ambiguousRiskMonitoring: AmbiguousRiskMonitoringService,
   ) {}
 
   async execute(input: CheckoutSagaInput): Promise<CheckoutSagaResult> {
@@ -411,6 +413,17 @@ export class PaymentCheckoutSaga {
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
       this.logger.warn(`[Saga] Compensating transaction: Payment ${payment.id} marked AMBIGUOUS: ${reason}`);
+      // Best-effort, deliberately outside the try above's own scope of
+      // concern — a risk-flagging failure must never mask the real
+      // compensation outcome above, so it gets its own catch rather than
+      // falling into the same one and logging a misleading "compensation
+      // failed" for something that actually succeeded.
+      try {
+        await this.ambiguousRiskMonitoring.evaluate(payment.metadata.merchantId);
+      } catch (monitoringError: unknown) {
+        const msg = monitoringError instanceof Error ? monitoringError.message : String(monitoringError);
+        this.logger.error(`[Saga] Ambiguous-risk evaluation failed for merchant ${payment.metadata.merchantId} (payment ${payment.id} still correctly marked AMBIGUOUS): ${msg}`);
+      }
     } catch (compensationError: unknown) {
       const msg = compensationError instanceof Error ? compensationError.message : String(compensationError);
       this.logger.error(`[Saga] CRITICAL: Compensation failed for payment ${payment.id}: ${msg}`);

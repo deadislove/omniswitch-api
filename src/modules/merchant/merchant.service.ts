@@ -367,6 +367,53 @@ export class MerchantService {
     return merchant;
   }
 
+  /**
+   * Called only by AmbiguousRiskMonitoringService's detection/auto-clear
+   * logic — same posture as applyAutoRiskTier() above: does NOT touch
+   * ambiguousRiskAutoManaged (the caller already only acts on merchants
+   * where it's true), and does not record ambiguousRiskFlaggedBy (an
+   * automated action has no operator identity to attribute it to).
+   */
+  async applyAutoAmbiguousRiskFlag(merchantId: string, flagged: boolean, reason: string): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.ambiguousRiskFlagged = flagged;
+    merchant.ambiguousRiskFlaggedAt = flagged ? new Date() : undefined;
+    merchant.ambiguousRiskFlagReason = flagged ? reason : undefined;
+    merchant.ambiguousRiskFlaggedBy = undefined;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`ambiguousRiskFlagged for merchant ${merchantId} automatically set to ${flagged}${flagged ? `: ${reason}` : ''}`);
+    return merchant;
+  }
+
+  /**
+   * Operator-initiated via PATCH .../ambiguous-risk — always disables
+   * ambiguousRiskAutoManaged, the same "manual input pauses automation"
+   * behavior updateReservePolicy() uses for riskTierAutoManaged. reason
+   * and resolvedBy are both required — this is the same audit-trail
+   * posture AmbiguousPaymentService.resolve() uses for manually
+   * resolving a payment.
+   */
+  async setAmbiguousRiskFlagManual(merchantId: string, flagged: boolean, reason: string, flaggedBy: string): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.ambiguousRiskFlagged = flagged;
+    merchant.ambiguousRiskFlaggedAt = flagged ? new Date() : undefined;
+    merchant.ambiguousRiskFlagReason = reason;
+    merchant.ambiguousRiskFlaggedBy = flaggedBy;
+    merchant.ambiguousRiskAutoManaged = false;
+    await this.merchantRepo.save(merchant);
+    this.logger.warn(`ambiguousRiskFlagged for merchant ${merchantId} manually set to ${flagged} by ${flaggedBy}: ${reason} (ambiguousRiskAutoManaged disabled)`);
+    return merchant;
+  }
+
+  /** Re-enables AmbiguousRiskMonitoringService's automated flag/auto-clear logic for this merchant — same pattern as setRiskTierAutoManaged() above. */
+  async setAmbiguousRiskAutoManaged(merchantId: string, enabled: boolean): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.ambiguousRiskAutoManaged = enabled;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`ambiguousRiskAutoManaged for merchant ${merchantId} set to ${enabled}`);
+    return merchant;
+  }
+
   async setActive(merchantId: string, isActive: boolean): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
     merchant.isActive = isActive;

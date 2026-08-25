@@ -92,4 +92,30 @@ export abstract class PaymentRepositoryPort {
    * `AMBIGUOUS` payment regardless of age.
    */
   abstract findAmbiguousOlderThan(olderThanMinutes: number): Promise<PaymentAggregate[]>;
+
+  /**
+   * Count of this merchant's payments that were *ever* `AMBIGUOUS` since a
+   * point in time — `status = 'AMBIGUOUS' OR ambiguousResolvedAt IS NOT NULL`,
+   * not just currently-`AMBIGUOUS`, since AmbiguousPaymentService's manual
+   * resolution moves a payment out of `AMBIGUOUS` into `SUCCEEDED`/`FAILED`
+   * without erasing the fact that it was, at some point, a real ambiguous
+   * incident for this merchant. Used by AmbiguousRiskMonitoringService's
+   * rolling-window threshold check.
+   */
+  abstract countAmbiguousIncidentsSince(merchantId: string, since: Date): Promise<number>;
+
+  /**
+   * Whether this merchant was *ever* `AMBIGUOUS` (same definition as
+   * countAmbiguousIncidentsSince above), for each of its most recent
+   * `limit` payments, newest first. Used by
+   * AmbiguousRiskMonitoringService's consecutive-incidents check — a
+   * merchant whose last N payments were *all* ambiguous is a stronger,
+   * more specific signal than raw volume within a window (a high-volume
+   * merchant could rack up many ambiguous incidents during a PSP's bad
+   * stretch without every single one of its charges being affected).
+   * Shorter than `limit` if the merchant has fewer than `limit` payments
+   * total — callers should treat that as "not enough history to trigger
+   * this check yet", not as a false streak.
+   */
+  abstract findRecentAmbiguousFlags(merchantId: string, limit: number): Promise<boolean[]>;
 }
