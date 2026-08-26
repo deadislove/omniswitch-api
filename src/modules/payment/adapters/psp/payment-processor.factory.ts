@@ -17,6 +17,24 @@ export function isAmbiguousOutcomeError(err: unknown): boolean {
 }
 
 /**
+ * True when `err` was thrown because the PSP responded with its own 5xx
+ * server error — a response WAS received (unlike isAmbiguousOutcomeError,
+ * this is not "we don't know what happened"), but it reflects a problem
+ * in the PSP's own infrastructure, not a business decision about this
+ * charge. Contrast a 4xx (e.g. a declined card): that's the PSP's
+ * deliberate, final answer and must never be retried. HTTP status code
+ * semantics (RFC 9110) are the PSP's own classification here, not a
+ * guess — 5xx always means "the server failed to process a seemingly
+ * valid request," never "the request was rejected." Both PSP adapters'
+ * makeRequest() already attach statusCode to the error they throw on a
+ * non-ok response; this just reads it.
+ */
+export function isTransientPspError(err: unknown): boolean {
+  const statusCode = err && typeof err === 'object' ? (err as { statusCode?: unknown }).statusCode : undefined;
+  return typeof statusCode === 'number' && statusCode >= 500;
+}
+
+/**
  * Payment Processor Factory
  * Implements the Factory Pattern to dynamically instantiate and select
  * the correct PSP adapter at runtime based on:
@@ -119,14 +137,23 @@ export class PaymentProcessorFactory {
     // An ambiguous primary outcome (PSP call got no response at all) must
     // NEVER fall through to a different PSP: that PSP has never seen this
     // idempotency key and would process a genuinely new charge, risking a
-    // double charge if the ambiguous attempt actually succeeded. Instead,
-    // retry the SAME provider once — its own idempotency-key replay
-    // guarantee returns the original result if it already went through,
-    // or safely reprocesses if it didn't. Only once the outcome resolves
-    // to a definite decline is it safe to consider a fallback.
-    if (isAmbiguousOutcomeError(primaryError)) {
+    // double charge if the ambiguous attempt actually succeeded. A
+    // transient PSP-side 5xx carries no such double-charge risk on its
+    // own (a response was received, so we know this attempt didn't
+    // silently succeed) — it's included here anyway, for the same
+    // idempotency-key-replay safety margin, since a struggling PSP is
+    // often good again a moment later and retrying the SAME provider
+    // first (rather than immediately routing a fresh attempt to a PSP
+    // that's never seen this idempotency key) is the more conservative
+    // choice. Retry the SAME provider once — its own idempotency-key
+    // replay guarantee returns the original result if it already went
+    // through, or safely reprocesses if it didn't. Only once the outcome
+    // resolves to a definite decline (or a repeat of either failure
+    // class above) is it safe to consider a fallback.
+    if (isAmbiguousOutcomeError(primaryError) || isTransientPspError(primaryError)) {
+      const retryReason = isAmbiguousOutcomeError(primaryError) ? 'outcome ambiguous' : 'returned a transient server error';
       this.logger.warn(
-        `Primary PSP ${decision.selectedProvider} outcome ambiguous — retrying the same provider once via idempotency replay before considering any fallback`,
+        `Primary PSP ${decision.selectedProvider} ${retryReason} — retrying the same provider once via idempotency replay before considering any fallback`,
       );
       try {
         const result = await operation(adapter);
@@ -138,6 +165,9 @@ export class PaymentProcessorFactory {
             { isAmbiguousOutcome: true },
           );
         }
+        // A retry that resolves to a transient 5xx again (or now a 4xx
+        // decline) is a confirmed, non-ambiguous failure — safe to fall
+        // through to the normal fallback loop below.
         primaryError = retryError;
       }
     }

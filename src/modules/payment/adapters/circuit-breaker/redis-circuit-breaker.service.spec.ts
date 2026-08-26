@@ -164,13 +164,97 @@ describe('RedisCircuitBreakerService', () => {
     expect(metrics.state).toBe('CLOSED');
   });
 
-  it('does not open the circuit on a slow-but-successful call', async () => {
-    // recordSuccess with high latency must not be treated as a failure —
-    // the circuit breaker only opens on a thrown exception (recordFailure),
-    // never on latency alone, by current design.
+  it('does not open the circuit on a single slow-but-successful call — one sample is not a reliable rate', async () => {
+    // A single slow success can't tell "consistently degrading" apart from
+    // "one call happened to be slow" — SLOW_CALL_MIN_CALLS exists precisely
+    // to require more than one data point before treating latency as a
+    // trip signal.
     await breaker.recordSuccess('STRIPE', 25_000);
     await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
     const metrics = await breaker.getMetrics('STRIPE');
     expect(metrics.state).toBe('CLOSED');
+  });
+
+  it('opens the circuit on a slow-call-rate trip even though every call succeeded (no thrown exception at all)', async () => {
+    // A PSP that hangs but never errors would otherwise be invisible to
+    // the breaker no matter how slow it got, since recordFailure() (the
+    // only other trip path) is never reached by a call that resolves
+    // successfully.
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordSuccess('STRIPE', 6_000); // over SLOW_CALL_THRESHOLD_MS (5s)
+    }
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+  });
+
+  it('does not trip on the slow-call-rate path when most recent calls are fast', async () => {
+    // 1 slow out of 5 is 20% — under SLOW_CALL_RATE_THRESHOLD (50%).
+    await breaker.recordSuccess('STRIPE', 6_000);
+    for (let i = 0; i < 4; i++) {
+      await breaker.recordSuccess('STRIPE', 50);
+    }
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
+  });
+
+  it('trips on the slow-call-rate path once slow calls cross the 50% threshold', async () => {
+    // 3 slow, 2 fast = 60% slow, over SLOW_CALL_RATE_THRESHOLD, and
+    // SLOW_CALL_MIN_CALLS (5) has been reached.
+    await breaker.recordSuccess('STRIPE', 6_000);
+    await breaker.recordSuccess('STRIPE', 50);
+    await breaker.recordSuccess('STRIPE', 6_000);
+    await breaker.recordSuccess('STRIPE', 50);
+    await breaker.recordSuccess('STRIPE', 6_000);
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+  });
+
+  it('trips even when the call that crosses SLOW_CALL_MIN_CALLS is itself fast', async () => {
+    // 4 slow calls first (still under the 5-sample minimum, so no trip
+    // yet), then one fast call that happens to be the 5th sample. The rate
+    // (4/5 = 80%) is well past threshold and must still open the circuit —
+    // the trip decision has to be evaluated on every call once the sample
+    // size is met, not only on calls that were themselves slow.
+    for (let i = 0; i < 4; i++) {
+      await breaker.recordSuccess('STRIPE', 6_000);
+    }
+    await breaker.recordSuccess('STRIPE', 50);
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+  });
+
+  it('recovers the slow-call window on TTL expiry once the PSP stops being slow', async () => {
+    for (let i = 0; i < 4; i++) {
+      await breaker.recordSuccess('STRIPE', 6_000);
+    }
+    // Still under SLOW_CALL_MIN_CALLS (5), circuit not yet open.
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
+
+    // The slow-call window (60s) fully lapses with no further calls.
+    jest.advanceTimersByTime(61_000);
+
+    // A fresh burst of fast calls afterward should not inherit the earlier
+    // slow calls — this is a fresh window, not a naive all-time count.
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordSuccess('STRIPE', 50);
+    }
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
+  });
+
+  it('the HALF_OPEN -> CLOSED recovery transition resets the slow-call window too', async () => {
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordFailure('STRIPE');
+    }
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+
+    jest.advanceTimersByTime(31_000); // past RECOVERY_TIME_MS
+    await breaker.assertAvailable('STRIPE'); // flips to HALF_OPEN
+
+    await breaker.recordSuccess('STRIPE', 50); // closes the circuit
+    const metrics = await breaker.getMetrics('STRIPE');
+    expect(metrics.state).toBe('CLOSED');
+
+    // A handful of fast calls right after recovery shouldn't be able to
+    // combine with anything left over from before the outage.
+    for (let i = 0; i < 4; i++) {
+      await breaker.recordSuccess('STRIPE', 50);
+    }
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
   });
 });

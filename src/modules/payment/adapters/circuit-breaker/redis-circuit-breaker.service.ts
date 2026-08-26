@@ -12,6 +12,26 @@ export interface CircuitMetrics {
 
 const FAILURE_THRESHOLD = 5;
 const RECOVERY_TIME_MS = 30000;
+
+// A call that never throws but is consistently slow is otherwise invisible
+// to the breaker: recordFailure() below is only ever reached via a thrown
+// exception, and the adapters' hard timeout is 30s, so a PSP that's
+// silently hanging (not erroring, just never responding) would need up to
+// FAILURE_THRESHOLD consecutive full 30s timeouts (2.5 minutes) before the
+// existing failure-count path notices anything is wrong. This tracks the
+// recent-call slow rate independently of that path and opens the circuit
+// directly once enough of the last few calls were slow — without waiting
+// for any of them to actually fail — the same "slow call rate" trip
+// Resilience4j's SlowCallRateThreshold config implements.
+// 5s is well under the adapters' 30s hard abort, so this fires on real
+// degradation, not on ordinary latency variance.
+const SLOW_CALL_THRESHOLD_MS = 5000;
+// Below this many recent calls, the rate isn't a reliable signal yet — one
+// slow call out of one is 100% "slow" but tells us nothing.
+const SLOW_CALL_MIN_CALLS = 5;
+// Matches Resilience4j's typical default posture: roughly half of recent
+// calls running slow is treated as a real degradation, not noise.
+const SLOW_CALL_RATE_THRESHOLD = 0.5;
 // How long a run of failures stays "live" for the OPEN-trip decision.
 // failureCount's TTL is refreshed on every recordFailure() call (below), so
 // it behaves as a sliding activity window: failures with no gap longer than
@@ -55,6 +75,13 @@ const METRICS_BUCKET_TTL_SECONDS = (METRICS_WINDOW_MINUTES + 5) * 60;
  * stayed baked into the reported success rate forever. Fixed by bucketing
  * writes into per-minute keys (each with its own short TTL) and summing the
  * last METRICS_WINDOW_MINUTES of them at read time.
+ *
+ * Two independent triggers can open the circuit: recordFailure() reaching
+ * FAILURE_THRESHOLD (a hard error was thrown), or recordSuccess() seeing
+ * enough recent calls exceed SLOW_CALL_THRESHOLD_MS even though none of
+ * them actually failed (see SLOW_CALL_THRESHOLD_MS above) — a hanging-but-
+ * not-yet-erroring PSP trips the breaker on the second path long before it
+ * could ever accumulate FAILURE_THRESHOLD real failures.
  */
 @Injectable()
 export class RedisCircuitBreakerService {
@@ -110,6 +137,41 @@ export class RedisCircuitBreakerService {
     if (state === 'HALF_OPEN') {
       await this.cache.set(this.key(provider, 'state'), 'CLOSED');
       await this.cache.set(this.key(provider, 'failureCount'), 0);
+      await this.cache.set(this.key(provider, 'recentCallCount'), 0);
+      await this.cache.set(this.key(provider, 'slowCallCount'), 0);
+      return;
+    }
+
+    await this.recordSlowCallSample(provider, latencyMs);
+  }
+
+  /** See SLOW_CALL_THRESHOLD_MS above for why this exists. */
+  private async recordSlowCallSample(provider: string, latencyMs: number): Promise<void> {
+    const isSlow = latencyMs > SLOW_CALL_THRESHOLD_MS;
+    const recentCallKey = this.key(provider, 'recentCallCount');
+    const slowCallKey = this.key(provider, 'slowCallCount');
+
+    const [recentCallCount] = await Promise.all([
+      this.cache.incr(recentCallKey),
+      // Sliding window, same TTL-refresh-on-every-write pattern as
+      // recordFailure()'s failureCount — see FAILURE_WINDOW_SECONDS above.
+      this.cache.expire(recentCallKey, FAILURE_WINDOW_SECONDS),
+      isSlow ? this.cache.incr(slowCallKey) : Promise.resolve(0),
+      isSlow ? this.cache.expire(slowCallKey, FAILURE_WINDOW_SECONDS) : Promise.resolve(),
+    ]);
+
+    // Evaluated on every call once the sample size is met, not only when
+    // *this* call was slow — otherwise a slow burst that happens to be
+    // followed by one fast call would skip the check entirely, even if
+    // the accumulated rate is already well past the threshold.
+    if (recentCallCount < SLOW_CALL_MIN_CALLS) return;
+
+    const slowCallCount = (await this.cache.get<number>(slowCallKey)) ?? 0;
+    if (slowCallCount / recentCallCount >= SLOW_CALL_RATE_THRESHOLD) {
+      await Promise.all([
+        this.cache.set(this.key(provider, 'state'), 'OPEN'),
+        this.cache.set(this.key(provider, 'lastFailureTime'), Date.now()),
+      ]);
     }
   }
 

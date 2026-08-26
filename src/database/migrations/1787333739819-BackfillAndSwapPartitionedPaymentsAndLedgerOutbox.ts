@@ -1,8 +1,7 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
 /**
- * Stage 2 of the payments/ledger_outbox partitioning migration (Phase 3,
- * task #9 — see docs/spec/future/database-scaling.md Option 2).
+ * Stage 2 of the payments/ledger_outbox partitioning migration.
  *
  * Stage 1 (`1787325352938-CreatePartitionedPaymentsAndLedgerOutbox.ts`)
  * created empty, correctly-partitioned staging tables. This migration

@@ -81,7 +81,14 @@ const timedOutOnceForKey = new Set();
 
 function shouldForceTimeout(paymentMethodRef, idempotencyKey) {
   const lower = (paymentMethodRef || '').toLowerCase();
-  if (lower.includes('forcetimeoutalways')) return true;
+  // forcetimeoutresolvesucceed/forcetimeoutresolvefail times out every
+  // attempt too, same as forcetimeoutalways — including the same-provider
+  // retry PaymentProcessorFactory.executeWithFallback() makes, so the
+  // payment genuinely reaches AMBIGUOUS through the existing mechanism
+  // before a later queryOutcome() lookup reveals what "really" happened.
+  if (lower.includes('forcetimeoutalways') || lower.includes('forcetimeoutresolvesucceed') || lower.includes('forcetimeoutresolvefail')) {
+    return true;
+  }
   if (lower.includes('forcetimeoutonce')) {
     if (timedOutOnceForKey.has(idempotencyKey)) return false;
     timedOutOnceForKey.add(idempotencyKey);
@@ -94,10 +101,81 @@ function forceTimeout(res) {
   res.socket.destroy();
 }
 
+// Records the outcome the PSP actually reached for a request whose response
+// never made it back to the caller (forceTimeout above) — real Stripe/Adyen
+// idempotency-key replay would return this if the same key were used again;
+// this is what the /lookup routes below read back for
+// PSPAdapterPort.queryOutcome(). Keyed by idempotency key. Only
+// forcetimeoutresolvesucceed/forcetimeoutresolvefail ever write an entry
+// here — forcetimeoutalways (and forcetimeoutonce, already resolved in-band
+// by its own retry-succeeds behavior) leave no entry, which is exactly the
+// STILL_UNKNOWN case a lookup needs to be able to return: the PSP itself has
+// no record either.
+const resolvedOutcomeForKey = new Map();
+
+function maybeRecordTimeoutResolution(paymentMethodRef, idempotencyKey, id, amount, currency) {
+  const lower = (paymentMethodRef || '').toLowerCase();
+  if (lower.includes('forcetimeoutresolvesucceed')) {
+    resolvedOutcomeForKey.set(idempotencyKey, { outcome: 'SUCCEEDED', id, amount, currency });
+  } else if (lower.includes('forcetimeoutresolvefail')) {
+    resolvedOutcomeForKey.set(idempotencyKey, { outcome: 'FAILED', id, declineCode: 'card_declined' });
+  }
+}
+
+// Simulates a PSP call that eventually succeeds but takes real wall-clock
+// time to do so — distinct from forceTimeout above (no response at all).
+// This is what the slow-call-rate circuit-breaker trigger (see
+// RedisCircuitBreakerService.recordSlowCallSample()) is meant to detect: a
+// hanging-but-not-erroring PSP. Delay is deliberately real (not mocked
+// timers) so an e2e test exercises the actual code path — the adapter's
+// real fetch(), the real elapsed-time measurement feeding recordSuccess().
+const FORCE_SLOW_DELAY_MS = 6000; // over SLOW_CALL_THRESHOLD_MS (5s)
+
+function shouldForceSlow(paymentMethodRef) {
+  return (paymentMethodRef || '').toLowerCase().includes('forceslow');
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Simulates the PSP's own transient 5xx server error — a response IS
+// received (unlike forceTimeout above), just an unsuccessful one, and it's
+// not a business decision about the charge the way a decline is. This is
+// what PaymentProcessorFactory.isTransientPspError()/the same-provider
+// retry it triggers is meant to handle. Keyed by idempotency key, not by
+// which adapter is calling — PaymentProcessorFactory's same-provider
+// retry AND its fallback-to-a-different-provider both reuse the exact
+// same idempotency key for the same charge, and this marker string
+// travels with paymentMethodId regardless of which PSP ends up
+// processing it, so "once"/"twice" here means "for the first N calls
+// carrying this idempotency key, from whichever adapter," not
+// "N calls to this specific PSP."
+const serverErrorCountForKey = new Map();
+
+function shouldForceServerError(paymentMethodRef, idempotencyKey) {
+  const lower = (paymentMethodRef || '').toLowerCase();
+  if (lower.includes('forceservererroralways')) return true;
+
+  let failuresRemaining = 0;
+  if (lower.includes('forceservererrortwice')) failuresRemaining = 2;
+  else if (lower.includes('forceservererroronce')) failuresRemaining = 1;
+  else return false;
+
+  const failuresSoFar = serverErrorCountForKey.get(idempotencyKey) || 0;
+  if (failuresSoFar >= failuresRemaining) return false;
+  serverErrorCountForKey.set(idempotencyKey, failuresSoFar + 1);
+  return true;
+}
+
+function forceServerError(res) {
+  send(res, 500, { error: { message: 'mock-psp: simulated internal server error' } });
+}
+
 const server = http.createServer((req, res) => {
   let data = '';
   req.on('data', (c) => (data += c));
-  req.on('end', () => {
+  req.on('end', async () => {
     const url = req.url;
 
     const path = url.split('?')[0];
@@ -112,7 +190,17 @@ const server = http.createServer((req, res) => {
       const currency = (params.get('currency') || 'usd').toUpperCase();
       const binCountry = (params.get('metadata[bin_country]') || '').toUpperCase();
       if (shouldForceTimeout(params.get('payment_method'), req.headers['idempotency-key'])) {
+        maybeRecordTimeoutResolution(params.get('payment_method'), req.headers['idempotency-key'], id, amount, currency);
+        if (resolvedOutcomeForKey.get(req.headers['idempotency-key'])?.outcome === 'SUCCEEDED') {
+          stripeSettlements.push({ id, amount, currency, createdAt: new Date().toISOString() });
+        }
         return forceTimeout(res);
+      }
+      if (shouldForceServerError(params.get('payment_method'), req.headers['idempotency-key'])) {
+        return forceServerError(res);
+      }
+      if (shouldForceSlow(params.get('payment_method'))) {
+        await delay(FORCE_SLOW_DELAY_MS);
       }
       const declineCode = declineCodeFor(params.get('payment_method'));
       if (declineCode) {
@@ -138,6 +226,31 @@ const server = http.createServer((req, res) => {
       }
       stripeSettlements.push({ id, amount, currency, createdAt: new Date().toISOString() });
       return send(res, 200, { id, status: 'succeeded', object: 'payment_intent' });
+    }
+    // PSPAdapterPort.queryOutcome()'s target — a read-only lookup by
+    // idempotency key, not a replay of the original charge request (this
+    // mock has no card reference to replay with, matching what a real
+    // automated resolution sweep would also be missing). Real Stripe
+    // doesn't expose a GET-by-idempotency-key endpoint like this; this
+    // models the same information a real Idempotency-Key header replay
+    // would surface, without requiring a full request body this mock
+    // (and the calling adapter) can no longer construct.
+    if (path === '/v1/payment_intents/lookup' && req.method === 'GET') {
+      const key = query.get('idempotency_key');
+      const resolved = resolvedOutcomeForKey.get(key);
+      if (!resolved) {
+        return send(res, 200, { found: false });
+      }
+      if (resolved.outcome === 'SUCCEEDED') {
+        return send(res, 200, { found: true, id: resolved.id, status: 'succeeded', object: 'payment_intent' });
+      }
+      return send(res, 200, {
+        found: true,
+        id: resolved.id,
+        status: 'requires_payment_method',
+        object: 'payment_intent',
+        last_payment_error: { code: resolved.declineCode, message: 'The card was declined.' },
+      });
     }
     if (segments[0] === 'v1' && segments[1] === 'payment_intents' && segments[3] === 'capture') {
       const id = segments[2];
@@ -236,7 +349,17 @@ const server = http.createServer((req, res) => {
       const amountCurrency = (parsedBody.amount || {}).currency || 'USD';
       const isManualCapture = (parsedBody.additionalData || {}).manualCapture === 'true';
       if (shouldForceTimeout((parsedBody.paymentMethod || {}).storedPaymentMethodId, req.headers['idempotency-key'])) {
+        maybeRecordTimeoutResolution((parsedBody.paymentMethod || {}).storedPaymentMethodId, req.headers['idempotency-key'], pspReference, amountValue, amountCurrency);
+        if (resolvedOutcomeForKey.get(req.headers['idempotency-key'])?.outcome === 'SUCCEEDED') {
+          adyenSettlements.push({ id: pspReference, amount: amountValue, currency: amountCurrency, createdAt: new Date().toISOString() });
+        }
         return forceTimeout(res);
+      }
+      if (shouldForceServerError((parsedBody.paymentMethod || {}).storedPaymentMethodId, req.headers['idempotency-key'])) {
+        return forceServerError(res);
+      }
+      if (shouldForceSlow((parsedBody.paymentMethod || {}).storedPaymentMethodId)) {
+        await delay(FORCE_SLOW_DELAY_MS);
       }
       const declineCode = declineCodeFor((parsedBody.paymentMethod || {}).storedPaymentMethodId);
       if (declineCode) {
@@ -255,6 +378,25 @@ const server = http.createServer((req, res) => {
       }
       adyenSettlements.push({ id: pspReference, amount: amountValue, currency: amountCurrency, createdAt: new Date().toISOString() });
       return send(res, 200, { pspReference, resultCode: 'Authorised' });
+    }
+    // See the matching comment on the Stripe /v1/payment_intents/lookup
+    // route above — PSPAdapterPort.queryOutcome()'s Adyen-shaped target.
+    if (path === '/adyen/payments/lookup' && req.method === 'GET') {
+      const key = query.get('idempotencyKey');
+      const resolved = resolvedOutcomeForKey.get(key);
+      if (!resolved) {
+        return send(res, 200, { found: false });
+      }
+      if (resolved.outcome === 'SUCCEEDED') {
+        return send(res, 200, { found: true, pspReference: resolved.id, resultCode: 'Authorised' });
+      }
+      return send(res, 200, {
+        found: true,
+        pspReference: resolved.id,
+        resultCode: 'Refused',
+        refusalReasonCode: resolved.declineCode,
+        refusalReason: 'Refused',
+      });
     }
     if (segments[0] === 'adyen' && segments[1] === 'payments' && segments[3] === 'captures') {
       const id = segments[2];

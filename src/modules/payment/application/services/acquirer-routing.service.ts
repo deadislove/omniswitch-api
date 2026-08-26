@@ -1,10 +1,32 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
-import { SmartRoutingStrategy, RoutingContext, RoutingDecision } from '../../domain/services/smart-routing.strategy';
+import { RoutingContext, RoutingDecision, PreferredProviderNotEntitledError } from '../../domain/services/smart-routing.strategy';
 import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
 import { PSPAdapterPort } from '../../ports/outbound/psp-adapter.port';
+import { MerchantPspExposureService } from '../../adapters/circuit-breaker/merchant-psp-exposure.service';
+
+/**
+ * SmartRoutingStrategy.selectProvider() throws a plain
+ * PreferredProviderNotEntitledError — this file is the application-layer
+ * boundary that translates it into a NestJS exception, since the domain
+ * layer (smart-routing.strategy.ts) deliberately has zero framework
+ * dependencies. Both selectOptimalAdapter() and executeWithSmartRouting()
+ * below can trigger it (each independently calls selectProvider() via
+ * PaymentProcessorFactory), so it's centralized here rather than
+ * duplicated at each PaymentCheckoutSaga call site.
+ */
+function translateRoutingError(err: unknown): never {
+  if (err instanceof PreferredProviderNotEntitledError) {
+    throw new UnprocessableEntityException({
+      statusCode: 422,
+      error: err.message,
+      code: 'PREFERRED_PROVIDER_NOT_ENTITLED',
+    });
+  }
+  throw err;
+}
 
 /**
  * Acquirer Routing Service (Application Layer)
@@ -20,6 +42,7 @@ export class AcquirerRoutingService {
 
   constructor(
     private readonly processorFactory: PaymentProcessorFactory,
+    private readonly merchantPspExposure: MerchantPspExposureService,
   ) {}
 
   /**
@@ -30,15 +53,17 @@ export class AcquirerRoutingService {
     binInfo?: BinInfo;
     merchantId: string;
     preferredProvider?: PSPProvider;
+    entitledProviders?: PSPProvider[];
   }): Promise<{ adapter: PSPAdapterPort; decision: RoutingDecision }> {
     const context: RoutingContext = {
       amount: params.amount,
       binInfo: params.binInfo,
       merchantId: params.merchantId,
       preferredProvider: params.preferredProvider,
+      entitledProviders: params.entitledProviders,
     };
 
-    const result = await this.processorFactory.selectAdapter(context);
+    const result = await this.processorFactory.selectAdapter(context).catch(translateRoutingError);
 
     this.logger.log(
       `[AcquirerRouting] Selected ${result.decision.selectedProvider} ` +
@@ -59,6 +84,7 @@ export class AcquirerRoutingService {
       binInfo?: BinInfo;
       merchantId: string;
       preferredProvider?: PSPProvider;
+      entitledProviders?: PSPProvider[];
     },
     operation: (adapter: PSPAdapterPort) => Promise<T>,
   ): Promise<{ result: T; provider: PSPProvider; usedFallback: boolean }> {
@@ -67,9 +93,19 @@ export class AcquirerRoutingService {
       binInfo: params.binInfo,
       merchantId: params.merchantId,
       preferredProvider: params.preferredProvider,
+      entitledProviders: params.entitledProviders,
     };
 
-    return this.processorFactory.executeWithFallback(context, operation);
+    const result = await this.processorFactory.executeWithFallback(context, operation).catch(translateRoutingError);
+
+    // Recorded on the actual outcome (post-fallback), not the initial pick
+    // — this is what MerchantPspExposureService uses to decide whether the
+    // merchant's *next* charge should get a stricter throttle limit, so it
+    // should reflect where their traffic really landed, not where it was
+    // first aimed.
+    await this.merchantPspExposure.recordRouting(params.merchantId, result.provider);
+
+    return result;
   }
 
   /**

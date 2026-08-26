@@ -108,6 +108,7 @@ Onboards a new merchant — returns the API key secret **once**.
 | `accountType` | no | `PLATFORM` (default) or `CONNECTED` (requires `platformMerchantId`) |
 | `platformMerchantId` | required iff `accountType: 'CONNECTED'` | |
 | `payoutReserveBps` / `payoutReserveHoldDays` | no | Rolling payout reserve, `CONNECTED` merchants only |
+| `enabledPspProviders` | no | PSPs this merchant may route charges through — `STRIPE`/`ADYEN`. Default: every PSP this system has an adapter for (currently both) |
 
 **Response `201`**: merchant summary + `apiKeySecret` + `hmacSecret`
 (both shown once).
@@ -180,6 +181,61 @@ a `CONNECTED` merchant; gates payout transfers, not charges.
 
 - **Body**: `{ legalName: string, taxId: string }`
 
+### `PATCH /admin/merchants/:id/psp-entitlement`
+
+Sets which PSPs this merchant's charges may route through — takes
+effect on the next charge. Not a global kill switch: narrowing one
+merchant's entitlement doesn't affect any other merchant's ability to
+use that PSP. See
+[`../../business-domain/ledger-and-settlement.md#smart-psp-routing`](../../business-domain/ledger-and-settlement.md#smart-psp-routing).
+
+- **Body**: `{ enabledPspProviders: string[] }` — non-empty, values
+  restricted to `STRIPE`/`ADYEN`.
+- **Errors**: `422` if `enabledPspProviders` is empty.
+
+A charge (`POST /payments/charge`) whose `preferredProvider` names a
+PSP outside this list is rejected with `422
+PREFERRED_PROVIDER_NOT_ENTITLED` — not silently routed to a different
+PSP. See [`payments.md`](./payments.md#post-paymentscharge).
+
+### Ambiguous risk observation
+
+`AmbiguousRiskMonitoringService` flags a merchant whose `AMBIGUOUS`
+payment incidents (see
+[`../../business-domain/payment-lifecycle.md`](../../business-domain/payment-lifecycle.md)'s
+note on `AMBIGUOUS`) cross a volume or streak threshold — purely
+observational, does not change how that merchant's charges are
+processed. See
+[`../../business-domain/ledger-and-settlement.md`](../../business-domain/ledger-and-settlement.md)
+for the full design.
+
+#### `PATCH /admin/merchants/:id/ambiguous-risk`
+
+Manually flags or clears a merchant. `reason` is required and, along
+with the acting admin/operator's identity, is recorded as a permanent
+audit trail (`ambiguousRiskFlagReason`/`ambiguousRiskFlaggedBy`).
+Disables `ambiguousRiskAutoManaged` as a side effect — same "manual
+input pauses automation" behavior as `PATCH .../risk-tier-auto`.
+
+- **Body**: `{ flagged: boolean, reason: string }`
+- **Errors**: `422` if `reason` is missing/empty.
+
+#### `PATCH /admin/merchants/:id/ambiguous-risk-auto`
+
+Re-enables the automated flag/auto-clear logic for this merchant, after
+a manual `PATCH .../ambiguous-risk` disabled it.
+
+- **Body**: `{ enabled: boolean }`
+
+#### `POST /admin/merchants/ambiguous-risk/run-auto-clear`
+
+Triggers the daily auto-clear sweep on demand — the same logic the
+scheduled job runs, without waiting for it. Only clears merchants with
+`ambiguousRiskAutoManaged: true` whose most recent incident is older
+than `AMBIGUOUS_RISK_AUTO_CLEAR_DAYS` (default 60).
+
+- **Response `200`**: `{ cleared: number }`
+
 All the `PATCH`/`POST` endpoints above (except onboarding/rotation)
 return the merchant summary:
 
@@ -203,6 +259,12 @@ return the merchant summary:
   "payoutReserveBps": 0,
   "payoutReserveHoldDays": 0,
   "kycStatus": "NOT_STARTED",
+  "enabledPspProviders": ["STRIPE", "ADYEN"],
+  "ambiguousRiskFlagged": false,
+  "ambiguousRiskFlaggedAt": null,
+  "ambiguousRiskFlagReason": null,
+  "ambiguousRiskFlaggedBy": null,
+  "ambiguousRiskAutoManaged": true,
   "createdAt": "2026-01-01T00:00:00.000Z",
   "updatedAt": "2026-01-01T00:00:00.000Z"
 }

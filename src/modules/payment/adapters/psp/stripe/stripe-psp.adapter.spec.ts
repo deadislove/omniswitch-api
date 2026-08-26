@@ -3,7 +3,7 @@ import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-
 import { Money } from '../../../domain/value-objects/money.vo';
 import { PSPChargeRequest } from '../../../ports/outbound/psp-adapter.port';
 
-describe('StripePSPAdapter — ambiguous outcome tagging (Gap 1.2)', () => {
+describe('StripePSPAdapter — ambiguous outcome tagging', () => {
   let adapter: StripePSPAdapter;
   let circuitBreaker: { assertAvailable: jest.Mock; recordSuccess: jest.Mock; recordFailure: jest.Mock };
   const originalFetch = global.fetch;

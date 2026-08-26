@@ -114,6 +114,38 @@ export class PaymentEntity {
   @Column({ name: 'splits', type: 'jsonb', nullable: true })
   splits?: { merchantId: string; amountMinorUnits: string; currencyCode: string }[];
 
+  /**
+   * Audit trail for AmbiguousPaymentService.resolve() — deliberately
+   * separate columns from failureReason/failureCode above, which real
+   * PSP declines also write; conflating an operator's manual-override
+   * note into those would make it ambiguous later which kind of event
+   * actually produced a given FAILED payment's reason. Explicit
+   * type: 'varchar' on the two string columns — see MerchantEntity's
+   * mfaSecretCiphertext comment for why a `string | undefined` column
+   * needs this (TypeORM's reflected design:type collapses the union to
+   * bare Object without it).
+   */
+  @Column({ name: 'ambiguous_resolved_by', type: 'varchar', nullable: true })
+  ambiguousResolvedBy?: string;
+
+  @Column({ name: 'ambiguous_resolved_reason', type: 'varchar', nullable: true })
+  ambiguousResolvedReason?: string;
+
+  @Column({ name: 'ambiguous_resolved_at', type: 'timestamp', nullable: true })
+  ambiguousResolvedAt?: Date;
+
+  /**
+   * How many times AmbiguousPaymentService.runAutoResolutionSweep() has
+   * asked the PSP about this payment via queryOutcome() and gotten
+   * STILL_UNKNOWN back — separate from ambiguousResolvedBy/Reason/At
+   * above, which only ever get set by the *manual* admin resolve path.
+   * Once this reaches AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS the sweep
+   * stops touching the payment and leaves it for a human via the
+   * existing stale-alert path.
+   */
+  @Column({ name: 'ambiguous_auto_retry_count', type: 'int', default: 0 })
+  ambiguousAutoRetryCount: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

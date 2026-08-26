@@ -31,7 +31,7 @@ for the full internal flow.
 | `description` | string | no | |
 | `statementDescriptor` | string | no | Max 22 chars |
 | `binInfo` | object | no | `{ bin, country, cardBrand, cardType, issuingBank? }` — feeds smart routing (3DS/EU heuristics) |
-| `preferredProvider` | `'STRIPE'\|'ADYEN'\|'PAYPAL'\|'CHASE'` | no | Overrides smart routing (only Stripe/Adyen have adapters implemented) |
+| `preferredProvider` | `'STRIPE'\|'ADYEN'\|'PAYPAL'\|'CHASE'` | no | Overrides smart routing (only Stripe/Adyen have adapters implemented). Rejected with `422` if outside the merchant's PSP entitlement — see [`merchants-and-auth.md`](./merchants-and-auth.md#patch-adminmerchantsidpsp-entitlement) |
 | `metadata` | object | no | Free-form key-value pairs |
 | `category` | string | no | Only enforced for an `AGENT` caller against its delegation's `allowedCategories` — ignored otherwise |
 | `captureMethod` | `'automatic'\|'manual'` | no | `'manual'` authorizes without capturing; default `'automatic'` |
@@ -68,7 +68,10 @@ for the full internal flow.
 delegation has been revoked; `409` `splits` combined with
 `captureMethod: 'manual'`, or a split's settlement-currency conflict;
 `422` a raw-card-number-shaped reference, request validation failure,
-an invalid split recipient, or (`AGENT` only) a spend-policy violation
+an invalid split recipient, `preferredProvider` names a PSP outside
+the merchant's PSP entitlement (`PREFERRED_PROVIDER_NOT_ENTITLED` —
+see [`merchants-and-auth.md`](./merchants-and-auth.md#patch-adminmerchantsidpsp-entitlement)),
+or (`AGENT` only) a spend-policy violation
 (`DELEGATION_PER_TRANSACTION_LIMIT_EXCEEDED`,
 `DELEGATION_MONTHLY_LIMIT_EXCEEDED`, `DELEGATION_CATEGORY_NOT_ALLOWED`,
 `DELEGATION_CURRENCY_MISMATCH`).

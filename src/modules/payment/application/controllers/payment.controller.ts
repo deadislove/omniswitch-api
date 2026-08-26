@@ -29,7 +29,7 @@ import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../shared/guards/roles.guard';
 import { HmacSignatureGuard } from '../../../../shared/guards/hmac-signature.guard';
-import { MerchantThrottlerGuard } from '../../../../shared/guards/merchant-throttler.guard';
+import { DegradedPspAwareThrottlerGuard } from '../../../../shared/guards/degraded-psp-aware-throttler.guard';
 import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
 import { IdempotencyInterceptor } from '../interceptors/idempotency.interceptor';
 import { PaymentCheckoutSaga } from '../sagas/payment-checkout.saga';
@@ -61,10 +61,12 @@ import { Readable } from 'stream';
 // from process.env keeps the production default (100/min) unchanged while
 // letting e2e (test/setup-env.ts) and load-test (docker-compose.yml) runs
 // raise it: this route's cap is IP-scoped as well as merchant-scoped (see
-// MerchantThrottlerGuard's docblock), so every request in a single-machine
-// e2e/load-test run — regardless of which merchant it authenticates as —
-// competes for the same 100/min budget. See docs/technical/load-testing.md,
-// Finding #1, for how this was first found to be the actual ceiling.
+// MerchantThrottlerGuard's docblock — DegradedPspAwareThrottlerGuard
+// extends it, same IP/merchant-scoping behavior applies), so every
+// request in a single-machine e2e/load-test run — regardless of which
+// merchant it authenticates as — competes for the same 100/min budget.
+// See docs/technical/load-testing.md, Finding #1, for how this was first
+// found to be the actual ceiling.
 const CHARGE_RATE_LIMIT_MAX = Number(process.env.CHARGE_RATE_LIMIT_MAX) || 100;
 const CHARGE_RATE_LIMIT_TTL = Number(process.env.CHARGE_RATE_LIMIT_TTL) || 60000;
 
@@ -82,10 +84,11 @@ const CHARGE_RATE_LIMIT_TTL = Number(process.env.CHARGE_RATE_LIMIT_TTL) || 60000
 @ApiTags('Payments v1')
 @ApiBearerAuth()
 @Controller('payments')
-// MerchantThrottlerGuard must come after JwtAuthGuard — Nest runs guards in
-// array order, and it needs req.user (set by JwtAuthGuard) to key the quota
-// by merchant instead of falling back to IP.
-@UseGuards(JwtAuthGuard, RolesGuard, MerchantThrottlerGuard)
+// DegradedPspAwareThrottlerGuard (a MerchantThrottlerGuard subclass) must
+// come after JwtAuthGuard — Nest runs guards in array order, and it needs
+// req.user (set by JwtAuthGuard) to key the quota by merchant instead of
+// falling back to IP.
+@UseGuards(JwtAuthGuard, RolesGuard, DegradedPspAwareThrottlerGuard)
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
 
@@ -132,7 +135,7 @@ export class PaymentController {
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
   @ApiResponse({ status: 403, description: 'The caller\'s Delegation has been revoked' })
   @ApiResponse({ status: 409, description: 'splits requested with captureMethod "manual", or a split recipient has an incompatible settlement-currency conversion' })
-  @ApiResponse({ status: 422, description: 'Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, or (AGENT callers only) the charge violates the delegation\'s spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)' })
+  @ApiResponse({ status: 422, description: 'Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, preferredProvider is outside the merchant\'s PSP entitlement, or (AGENT callers only) the charge violates the delegation\'s spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)' })
   @ApiHeader({ name: 'Idempotency-Key', description: 'UUID v4 for idempotent requests', required: true })
   @ApiHeader({ name: 'X-Signature', description: 'HMAC-SHA256 signature (not required for an AGENT-authenticated call)', required: false })
   @ApiHeader({ name: 'X-Timestamp', description: 'Unix timestamp (not required for an AGENT-authenticated call)', required: false })

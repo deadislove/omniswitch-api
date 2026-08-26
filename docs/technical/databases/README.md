@@ -34,8 +34,7 @@ per tenant. Every table in [`schema.md`](./schema.md) lives in this one
 database, in one of two schemas: `public` (live, hot-path tables) or
 `archive` (cold storage for the data-retention policy — see
 [`../../compliance/data-retention.md`](../../compliance/data-retention.md)).
-This is a deliberate scope boundary: `docs/spec/future/database-scaling.md`
-(local-only, not tracked in git) is where multi-database/Citus-style
+This is a deliberate scope boundary: multi-database/Citus-style
 horizontal scaling was evaluated and explicitly deferred — see
 [`architecture.md`](./architecture.md#why-not-a-distributed-database)
-for the short version of why.
+for why.

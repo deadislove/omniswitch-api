@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse } from '../../../ports/outbound/psp-adapter.port';
+import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse, PSPQueryOutcomeResult } from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
 import { Money } from '../../../domain/value-objects/money.vo';
+import { Semaphore } from '../../../../../shared/utils/semaphore';
 
 /**
  * Stripe PSP Adapter
@@ -18,6 +19,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
   private readonly logger = new Logger(StripePSPAdapter.name);
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly bulkhead: Semaphore;
 
   constructor(
     private readonly configService: ConfigService,
@@ -25,6 +27,15 @@ export class StripePSPAdapter extends PSPAdapterPort {
   ) {
     super();
     this.apiKey = configService.get<string>('STRIPE_SECRET_KEY', 'sk_test_placeholder');
+    // Caps how many concurrent outbound calls to Stripe this pod will have
+    // in flight at once — see makeRequest() below, a bulkhead against one
+    // degrading dependency exhausting this pod's own connection pool.
+    // In-memory/per-pod, not Redis-backed: this protects this pod's own
+    // connection pool/event loop capacity, not a cross-replica quota.
+    // Read directly from process.env (not
+    // configService.get, which doesn't coerce numeric strings) — same
+    // reasoning and pattern as PaymentController's CHARGE_RATE_LIMIT_MAX.
+    this.bulkhead = new Semaphore(Number(process.env.PSP_BULKHEAD_MAX_CONCURRENT) || 20);
     // Configurable like the Adyen adapter's ADYEN_BASE_URL — needed to point
     // at a local mock in tests/dev instead of always hitting the real Stripe API.
     this.baseUrl = configService.get<string>('STRIPE_BASE_URL', 'https://api.stripe.com/v1');
@@ -235,6 +246,44 @@ export class StripePSPAdapter extends PSPAdapterPort {
     }
   }
 
+  /**
+   * See PSPAdapterPort.queryOutcome's docblock. Real Stripe: replaying
+   * any request with the same Idempotency-Key header returns the cached
+   * response of the original call regardless of body — this mock models
+   * that with a dedicated GET lookup instead, since a real replay would
+   * still require constructing a full request body this system no
+   * longer has the card reference for.
+   */
+  async queryOutcome(idempotencyKey: string): Promise<PSPQueryOutcomeResult> {
+    await this.circuitBreaker.assertAvailable(this.provider);
+    const startTime = Date.now();
+
+    try {
+      const response = await this.makeRequest(
+        'GET',
+        `/payment_intents/lookup?idempotency_key=${encodeURIComponent(idempotencyKey)}`,
+        new URLSearchParams(),
+      );
+      await this.circuitBreaker.recordSuccess(this.provider, Date.now() - startTime);
+
+      if (!response.found) {
+        return { outcome: 'STILL_UNKNOWN' };
+      }
+      if (response.status === 'succeeded') {
+        return { outcome: 'SUCCEEDED', pspTransactionId: response.id, rawResponse: response };
+      }
+      return {
+        outcome: 'FAILED',
+        pspTransactionId: response.id,
+        errorCode: response.last_payment_error?.code,
+        rawResponse: response,
+      };
+    } catch (error) {
+      await this.circuitBreaker.recordFailure(this.provider);
+      throw error;
+    }
+  }
+
   async getHealthStatus(): Promise<PSPHealthStatus> {
     const metrics = await this.circuitBreaker.getMetrics(this.provider);
     const successRate = metrics.totalRequests > 0
@@ -302,7 +351,20 @@ export class StripePSPAdapter extends PSPAdapterPort {
 
   // ─── HTTP Client ────────────────────────────────────────────────────────────
 
+  // Bulkhead-wrapped: acquires a permit before making the actual outbound
+  // call, queuing rather than piling up unboundedly if
+  // PSP_BULKHEAD_MAX_CONCURRENT Stripe calls are already in flight from
+  // this pod. See the constant's docblock above.
   private async makeRequest(
+    method: string,
+    path: string,
+    params: URLSearchParams,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    return this.bulkhead.run(() => this.makeRequestInner(method, path, params, idempotencyKey));
+  }
+
+  private async makeRequestInner(
     method: string,
     path: string,
     params: URLSearchParams,

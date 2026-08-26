@@ -206,11 +206,17 @@ state where cluster-wide state was actually needed) — but unlike those
 two, **it has not been fixed here**, only worked around, unevenly, on a
 service-by-service basis.
 
-There are five of these today: `LedgerOutboxRelayService` (every 10s),
-`ReconciliationService`, `ReserveService`, `SubscriptionService`, and
-`RiskTieringService` (all daily). At 20 replicas, the daily sweeps don't
-run once a day — they run up to 20 times, all within roughly the same
-moment.
+There are eight of these today (nine counting a purely read-only one):
+`LedgerOutboxRelayService.relay()` (every 10s) and its
+`detectStaleEvents()` (every 5min, log/alert-only — no state mutation,
+so not a duplication concern the way the others below are);
+`ReconciliationService` (hourly, not daily); `ReserveService`,
+`SubscriptionService`, and `RiskTieringService` (all daily); and
+`PayoutService`'s four separate sweeps — `runSweep()` (noon),
+`releaseEligibleReserves()` (midnight), `recheckKycBlocks()` (1am),
+and `initiateEligibleTransfers()` (2am). At 20 replicas, the daily/hourly
+sweeps don't run once a day/hour — they run up to 20 times, all within
+roughly the same moment.
 
 ### What actually happens per service (not a uniform story)
 
@@ -227,6 +233,19 @@ moment.
   saga or finds the charge already done and just advances the period.
   Both were built to survive a *process crash* mid-sweep, not multi-replica
   duplication specifically — but the same mechanism happens to cover both.
+- **`PayoutService` is a mixed picture, not audited as thoroughly as
+  the two above.** `releaseEligibleReserves()`/`recheckKycBlocks()`/
+  `initiateEligibleTransfers()` each go through an atomically-conditional
+  `UPDATE ... WHERE` (`PayoutPort.markReserveReleased()`/
+  `markKycCleared()`/`markTransferInitiated()`) — the same
+  race-safe-by-construction pattern `ReserveService` uses. `runSweep()`
+  (the noon job that actually creates `Payout` rows from a
+  windowStart/windowEnd derived from `findLatestSweepRun()`) was never
+  audited for this specifically — two replicas racing noon could in
+  principle both read the same "last sweep" window and both create
+  `Payout` rows for the same ledger events, a real open question, not
+  verified either way (same posture as `LedgerOutboxRelayService`
+  below).
 - **`ReconciliationService` is not self-healing** — a second replica
   running the same window's reconciliation produces a second, duplicate
   `ReconciliationRun` row recording the same (hopefully clean) result.
@@ -269,4 +288,5 @@ every replica, and design for that from the start — either make the work
 naturally idempotent/conflict-safe under concurrent execution (the
 pattern `ReserveService`/`SubscriptionService` happen to follow), or
 explicitly flag in its docblock that it isn't yet, the way this section
-flags `ReconciliationService` and `LedgerOutboxRelayService`.
+flags `ReconciliationService`, `LedgerOutboxRelayService`, and
+`PayoutService.runSweep()`.

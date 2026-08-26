@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse } from '../../../ports/outbound/psp-adapter.port';
+import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse, PSPQueryOutcomeResult } from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
 import { Money } from '../../../domain/value-objects/money.vo';
+import { Semaphore } from '../../../../../shared/utils/semaphore';
 
 /**
  * Adyen PSP Adapter
@@ -20,6 +21,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
   private readonly apiKey: string;
   private readonly merchantAccount: string;
   private readonly baseUrl: string;
+  private readonly bulkhead: Semaphore;
 
   constructor(
     private readonly configService: ConfigService,
@@ -29,6 +31,15 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     this.apiKey = configService.get<string>('ADYEN_API_KEY', 'adyen_test_placeholder');
     this.merchantAccount = configService.get<string>('ADYEN_MERCHANT_ACCOUNT', 'TestMerchant');
     this.baseUrl = configService.get<string>('ADYEN_BASE_URL', 'https://checkout-test.adyen.com/v71');
+    // Caps how many concurrent outbound calls to Adyen this pod will have
+    // in flight at once — see makeRequest() below, a bulkhead against one
+    // degrading dependency exhausting this pod's own connection pool.
+    // In-memory/per-pod, not Redis-backed: this protects this pod's own
+    // connection pool/event loop capacity, not a cross-replica quota.
+    // Read directly from process.env (not configService.get, which
+    // doesn't coerce numeric strings) — same reasoning and pattern as
+    // PaymentController's CHARGE_RATE_LIMIT_MAX.
+    this.bulkhead = new Semaphore(Number(process.env.PSP_BULKHEAD_MAX_CONCURRENT) || 20);
   }
 
   async charge(request: PSPChargeRequest): Promise<PSPChargeResponse> {
@@ -250,6 +261,42 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     }
   }
 
+  /**
+   * See PSPAdapterPort.queryOutcome's docblock and
+   * StripePSPAdapter.queryOutcome's matching comment on why this is a
+   * dedicated read-only lookup rather than an idempotency-key replay of
+   * the original /payments call.
+   */
+  async queryOutcome(idempotencyKey: string): Promise<PSPQueryOutcomeResult> {
+    await this.circuitBreaker.assertAvailable(this.provider);
+    const startTime = Date.now();
+
+    try {
+      const response = await this.makeRequest(
+        'GET',
+        `/payments/lookup?idempotencyKey=${encodeURIComponent(idempotencyKey)}`,
+        undefined,
+      );
+      await this.circuitBreaker.recordSuccess(this.provider, Date.now() - startTime);
+
+      if (!response.found) {
+        return { outcome: 'STILL_UNKNOWN' };
+      }
+      if (response.resultCode === 'Authorised') {
+        return { outcome: 'SUCCEEDED', pspTransactionId: response.pspReference, rawResponse: response };
+      }
+      return {
+        outcome: 'FAILED',
+        pspTransactionId: response.pspReference,
+        errorCode: response.refusalReasonCode,
+        rawResponse: response,
+      };
+    } catch (error: unknown) {
+      await this.circuitBreaker.recordFailure(this.provider);
+      throw error;
+    }
+  }
+
   async getHealthStatus(): Promise<PSPHealthStatus> {
     const metrics = await this.circuitBreaker.getMetrics(this.provider);
     const successRate = metrics.totalRequests > 0
@@ -316,7 +363,20 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     }
   }
 
+  // Bulkhead-wrapped: acquires a permit before making the actual outbound
+  // call, queuing rather than piling up unboundedly if
+  // PSP_BULKHEAD_MAX_CONCURRENT Adyen calls are already in flight from
+  // this pod. See the constant's docblock above.
   private async makeRequest(
+    method: string,
+    path: string,
+    body: unknown,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    return this.bulkhead.run(() => this.makeRequestInner(method, path, body, idempotencyKey));
+  }
+
+  private async makeRequestInner(
     method: string,
     path: string,
     body: unknown,

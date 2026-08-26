@@ -3,6 +3,11 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const VALID_ROLES = ['ADMIN', 'MERCHANT', 'OPERATOR', 'READONLY'];
+// Matches PaymentProcessorFactory's actual registered adapters (payment
+// module's PSPProvider type also allows 'PAYPAL'/'CHASE', but no adapter
+// exists for either yet — entitling a merchant to a PSP this system can't
+// actually route to would just be a confusing no-op).
+const VALID_PSP_PROVIDERS = ['STRIPE', 'ADYEN'];
 
 export class CreateMerchantDto {
   @ApiProperty({ example: 'merchant_acme_corp', description: 'Business-facing merchant identifier' })
@@ -101,6 +106,18 @@ export class CreateMerchantDto {
   @Min(0)
   @Max(3650)
   payoutReserveHoldDays?: number;
+
+  @ApiPropertyOptional({
+    example: ['STRIPE', 'ADYEN'],
+    enum: VALID_PSP_PROVIDERS,
+    isArray: true,
+    description: 'PSPs this merchant\'s charges may route through. Omit for the default: every PSP this system has an adapter for (currently STRIPE and ADYEN).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsIn(VALID_PSP_PROVIDERS, { each: true })
+  enabledPspProviders?: string[];
 }
 
 export class UpdateMerchantStatusDto {
@@ -181,8 +198,42 @@ export class UpdatePayoutReservePolicyDto {
   payoutReserveHoldDays: number;
 }
 
+export class UpdatePspEntitlementDto {
+  @ApiProperty({
+    example: ['STRIPE', 'ADYEN'],
+    enum: VALID_PSP_PROVIDERS,
+    isArray: true,
+    description: 'PSPs this merchant\'s charges may route through. Must be non-empty. Omitting a PSP here does not affect its liveness for other merchants — this is a per-merchant allowlist, not a global kill switch (use the routing health endpoint / circuit breaker for that).',
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsIn(VALID_PSP_PROVIDERS, { each: true })
+  enabledPspProviders: string[];
+}
+
 export class UpdateRiskTierAutoDto {
   @ApiProperty({ example: true, description: 'true: RiskTieringService\'s daily sweep may adjust this merchant\'s reserve policy automatically. false: leave it exactly as set (an operator\'s manual reserve-policy change already sets this to false as a side effect).' })
+  @IsBoolean()
+  enabled: boolean;
+}
+
+export class UpdateAmbiguousRiskFlagDto {
+  @ApiProperty({ example: true, description: 'true to flag this merchant for observation, false to clear the flag.' })
+  @IsBoolean()
+  flagged: boolean;
+
+  @ApiProperty({
+    example: 'Manually flagging after 3 customer complaints about failed charges this week',
+    description: 'Required — always needs a stated justification, same posture as AmbiguousPaymentService\'s manual resolution audit trail. Setting this also disables ambiguousRiskAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../ambiguous-risk-auto.',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  reason: string;
+}
+
+export class UpdateAmbiguousRiskAutoDto {
+  @ApiProperty({ example: true, description: 'true: AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).' })
   @IsBoolean()
   enabled: boolean;
 }
@@ -249,6 +300,24 @@ export class MerchantSummaryDto {
 
   @ApiProperty({ example: 'NOT_STARTED', enum: ['NOT_STARTED', 'VERIFIED', 'REJECTED'], description: 'Onboarding/KYC review status — only meaningful for a CONNECTED merchant, gates payouts (not charges)' })
   kycStatus: 'NOT_STARTED' | 'VERIFIED' | 'REJECTED';
+
+  @ApiProperty({ example: ['STRIPE', 'ADYEN'], enum: VALID_PSP_PROVIDERS, isArray: true, description: 'PSPs this merchant\'s charges may route through' })
+  enabledPspProviders: string[];
+
+  @ApiProperty({ example: false, description: 'Passive risk-observation flag — set when this merchant\'s AMBIGUOUS payment incidents cross a volume or streak threshold. Does not affect how charges are processed; visibility only.' })
+  ambiguousRiskFlagged: boolean;
+
+  @ApiProperty({ example: null, nullable: true })
+  ambiguousRiskFlaggedAt: string | null;
+
+  @ApiProperty({ example: null, nullable: true, description: 'Why this merchant is flagged — automated summary or an operator\'s own stated reason' })
+  ambiguousRiskFlagReason: string | null;
+
+  @ApiProperty({ example: null, nullable: true, description: 'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically' })
+  ambiguousRiskFlaggedBy: string | null;
+
+  @ApiProperty({ example: true, description: 'Whether AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant\'s ambiguousRiskFlagged' })
+  ambiguousRiskAutoManaged: boolean;
 
   @ApiProperty()
   createdAt: string;

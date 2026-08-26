@@ -1,11 +1,11 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
 /**
- * Cold storage for Option 3's archiving tier (Phase 3, task 10b — see
- * docs/spec/future/database-scaling.md Option 3). A separate Postgres
- * *schema* (not a separate database) — same instance, same backup/HA
- * story, no new vendor or connection to manage, per the design doc's
- * "stay inside the Postgres ecosystem" reasoning.
+ * Cold storage for the archiving tier — a separate Postgres *schema*
+ * (not a separate database) — same instance, same backup/HA story, no
+ * new vendor or connection to manage, staying inside the Postgres
+ * ecosystem rather than introducing a second storage system just for
+ * archived rows.
  *
  * `archive.payments` / `archive.ledger_outbox` are deliberately flat,
  * not partitioned — cold storage is written to rarely (once per

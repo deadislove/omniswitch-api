@@ -62,11 +62,14 @@ src/
 ├── modules/
 │   ├── merchant/                  # Tenant identity: credentials, MFA, admin CRUD, login,
 │   │   │                          # connected-account KYC submission
-│   │   ├── merchant.entity.ts     # Credentials + platformFeeBps/settlementCurrency/
+│   │   ├── merchant.entity.ts     # Credentials + platformFeeBps/feeTiers/settlementCurrency/
 │   │   │                          # reserveBps+reserveHoldDays+riskTierAutoManaged/MFA/
-│   │   │                          # accountType+platformMerchantId (marketplace)/kycStatus fields
+│   │   │                          # accountType+platformMerchantId (marketplace)/kycStatus/
+│   │   │                          # enabledPspProviders (per-merchant PSP entitlement) fields
 │   │   ├── merchant.service.ts    # verifyCredentials, createMerchant, rotate*, setActive,
-│   │   │                          # update{FeeRate,SettlementCurrency,ReservePolicy}, submitKyc
+│   │   │                          # update{FeeRate,FeeTiers,SettlementCurrency,ReservePolicy,
+│   │   │                          # PayoutReservePolicy,PspEntitlement}, setRiskTierAutoManaged,
+│   │   │                          # applyAutoRiskTier, submitKyc, revokeAllSessions
 │   │   ├── mfa.service.ts         # TOTP enroll/confirm/verify/disable (PCI DSS Req 8.4.2)
 │   │   ├── kyc-provider.port.ts + mock-kyc-provider.adapter.ts  # Connected-account KYC review
 │   │   │                          # (real HTTP call to an external verifier — mocked here)
@@ -83,7 +86,7 @@ src/
 │       │   │                      # PayoutSweepRun, Delegation
 │       │   ├── value-objects/     # Money, Currency, BinInfo, PaymentStatus, SpendPolicy
 │       │   ├── events/            # Domain events (PaymentCharged, PaymentDisputed, ...)
-│       │   └── services/          # SmartRoutingStrategy
+│       │   └── services/          # SmartRoutingStrategy, DisputePolicy
 │       ├── ports/outbound/        # One port per aggregate's persistence contract
 │       │                          # (PaymentRepositoryPort, LedgerOutboxPort,
 │       │                          # ReconciliationPort, DisputePort, ReserveHoldPort,
@@ -123,7 +126,7 @@ src/
 │           │                      # ReserveService, SubscriptionService, RiskTieringService,
 │           │                      # PlanService, PayoutService, DelegationService (spend-policy
 │           │                      # reservation/release, agent JWT issuance/revocation),
-│           │                      # LedgerOutboxRelayService — several of these are
+│           │                      # LegalHoldService, LedgerOutboxRelayService — several of these are
 │           │                      # recurring @Cron sweeps, each also exposed on demand via
 │           │                      # an admin POST endpoint (see the pattern table below)
 │           ├── interceptors/      # IdempotencyInterceptor

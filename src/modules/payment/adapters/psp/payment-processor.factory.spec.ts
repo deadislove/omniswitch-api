@@ -1,4 +1,4 @@
-import { PaymentProcessorFactory, isAmbiguousOutcomeError } from './payment-processor.factory';
+import { PaymentProcessorFactory, isAmbiguousOutcomeError, isTransientPspError } from './payment-processor.factory';
 import { RoutingContext } from '../../domain/services/smart-routing.strategy';
 import { Money } from '../../domain/value-objects/money.vo';
 
@@ -33,6 +33,27 @@ describe('isAmbiguousOutcomeError', () => {
   });
 });
 
+describe('isTransientPspError', () => {
+  it('is true for a 500-599 statusCode', () => {
+    expect(isTransientPspError(Object.assign(new Error('x'), { statusCode: 500 }))).toBe(true);
+    expect(isTransientPspError(Object.assign(new Error('x'), { statusCode: 503 }))).toBe(true);
+    expect(isTransientPspError(Object.assign(new Error('x'), { statusCode: 599 }))).toBe(true);
+  });
+
+  it('is false for a 4xx statusCode — an explicit decline must never be retried', () => {
+    expect(isTransientPspError(Object.assign(new Error('x'), { statusCode: 402 }))).toBe(false);
+    expect(isTransientPspError(Object.assign(new Error('x'), { statusCode: 400 }))).toBe(false);
+    expect(isTransientPspError(Object.assign(new Error('x'), { statusCode: 499 }))).toBe(false);
+  });
+
+  it('is false when there is no statusCode at all, and for non-error values', () => {
+    expect(isTransientPspError(new Error('x'))).toBe(false);
+    expect(isTransientPspError('plain string')).toBe(false);
+    expect(isTransientPspError(null)).toBe(false);
+    expect(isTransientPspError(undefined)).toBe(false);
+  });
+});
+
 describe('PaymentProcessorFactory.executeWithFallback', () => {
   const context: RoutingContext = {
     amount: Money.of(10, 'USD'),
@@ -42,6 +63,7 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
 
   const timeoutError = () => Object.assign(new Error('Stripe request failed with no response: timeout'), { isAmbiguousOutcome: true });
   const declineError = () => Object.assign(new Error('card_declined'), { code: 'card_declined', statusCode: 402 });
+  const serverError = () => Object.assign(new Error('internal_server_error'), { statusCode: 500 });
 
   it('primary succeeds: no retry, no fallback', async () => {
     const stripe = makeFakeAdapter('STRIPE');
@@ -102,6 +124,55 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
 
     expect(result).toEqual({ result: { ok: true }, provider: 'ADYEN', usedFallback: true });
     expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('primary returns a transient 5xx, same-provider retry succeeds: fallback is never touched', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+
+    const operation = jest.fn()
+      .mockRejectedValueOnce(serverError())
+      .mockResolvedValueOnce({ ok: true });
+
+    const result = await factory.executeWithFallback(context, operation);
+
+    expect(result).toEqual({ result: { ok: true }, provider: 'STRIPE', usedFallback: false });
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(adyen.isAvailable).not.toHaveBeenCalled();
+  });
+
+  it('primary returns a transient 5xx, retry also 5xx: falls back and succeeds (not treated as ambiguous)', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+
+    const operation = jest.fn()
+      .mockRejectedValueOnce(serverError()) // primary attempt
+      .mockRejectedValueOnce(serverError()) // same-provider retry
+      .mockResolvedValueOnce({ ok: true }); // fallback
+
+    const result = await factory.executeWithFallback(context, operation);
+
+    expect(result).toEqual({ result: { ok: true }, provider: 'ADYEN', usedFallback: true });
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('primary returns a transient 5xx, retry becomes ambiguous: throws isAmbiguousOutcome, not a confirmed failure', async () => {
+    const stripe = makeFakeAdapter('STRIPE');
+    const adyen = makeFakeAdapter('ADYEN');
+    const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
+
+    const operation = jest.fn()
+      .mockRejectedValueOnce(serverError()) // primary attempt — transient 5xx
+      .mockRejectedValueOnce(timeoutError()); // same-provider retry — no response at all
+
+    const err: any = await factory.executeWithFallback(context, operation).catch((e) => e);
+
+    expect(err.isAmbiguousOutcome).toBe(true);
+    expect(err.message).toContain('remains ambiguous after one retry');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(adyen.isAvailable).not.toHaveBeenCalled();
   });
 
   it('primary explicit decline, no viable fallback: fails without any retry', async () => {

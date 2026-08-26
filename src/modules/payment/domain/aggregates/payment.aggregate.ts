@@ -87,6 +87,10 @@ export class PaymentAggregate {
     private _updatedAt: Date = new Date(),
     private _settlementConversion?: SettlementConversion,
     private _splits?: PaymentSplit[],
+    private _ambiguousResolvedBy?: string,
+    private _ambiguousResolvedReason?: string,
+    private _ambiguousResolvedAt?: Date,
+    private _ambiguousAutoRetryCount: number = 0,
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -140,6 +144,10 @@ export class PaymentAggregate {
     updatedAt?: Date;
     settlementConversion?: SettlementConversion;
     splits?: PaymentSplit[];
+    ambiguousResolvedBy?: string;
+    ambiguousResolvedReason?: string;
+    ambiguousResolvedAt?: Date;
+    ambiguousAutoRetryCount?: number;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -161,6 +169,10 @@ export class PaymentAggregate {
       params.updatedAt ?? new Date(),
       params.settlementConversion,
       params.splits,
+      params.ambiguousResolvedBy,
+      params.ambiguousResolvedReason,
+      params.ambiguousResolvedAt,
+      params.ambiguousAutoRetryCount ?? 0,
     );
   }
 
@@ -295,6 +307,35 @@ export class PaymentAggregate {
     this.addDomainEvent(
       new PaymentAmbiguousEvent(this._id, reason, this._pspProvider),
     );
+  }
+
+  /**
+   * Records who resolved an AMBIGUOUS payment and why — a manual admin
+   * override of financial state (see AmbiguousPaymentService), not a
+   * status transition itself, so this is called alongside
+   * markSucceeded()/markFailed() rather than instead of them. Deliberately
+   * separate fields from failureReason/failureCode above: those are
+   * written by real PSP declines too, and conflating an operator's audit
+   * note into a field also used for that would make it ambiguous later
+   * which kind of event actually produced a given FAILED payment's
+   * reason.
+   */
+  recordManualAmbiguousResolution(resolvedBy: string, reason: string): void {
+    this._ambiguousResolvedBy = resolvedBy;
+    this._ambiguousResolvedReason = reason;
+    this._ambiguousResolvedAt = new Date();
+  }
+
+  /**
+   * One attempt of the automated sweep (AmbiguousPaymentService.
+   * runAutoResolutionSweep()) asked the PSP about this payment via
+   * queryOutcome() and got STILL_UNKNOWN back — not a status transition,
+   * just a counter so the sweep can stop retrying once
+   * AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS is reached and leave the
+   * payment for a human via the existing stale-alert path instead.
+   */
+  incrementAmbiguousAutoRetryCount(): void {
+    this._ambiguousAutoRetryCount++;
   }
 
   cancel(): void {
@@ -479,6 +520,10 @@ export class PaymentAggregate {
   get updatedAt(): Date { return this._updatedAt; }
   get settlementConversion(): SettlementConversion | undefined { return this._settlementConversion; }
   get splits(): PaymentSplit[] | undefined { return this._splits; }
+  get ambiguousResolvedBy(): string | undefined { return this._ambiguousResolvedBy; }
+  get ambiguousResolvedReason(): string | undefined { return this._ambiguousResolvedReason; }
+  get ambiguousResolvedAt(): Date | undefined { return this._ambiguousResolvedAt; }
+  get ambiguousAutoRetryCount(): number { return this._ambiguousAutoRetryCount; }
 
   get totalRefunded(): Money {
     return this._refunds.reduce(

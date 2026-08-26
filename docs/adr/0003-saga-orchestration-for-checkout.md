@@ -69,6 +69,22 @@ inside a `try`/`catch` that itself logs (not throws) if the
 compensation write fails, since a failed compensation still needs to
 surface somewhere rather than crash the request path a second time.
 
+**A third, distinct outcome exists alongside success/failure**: if the
+PSP call gets no response at all (not a decline) and a same-provider
+retry also gets no response, `compensate_markAmbiguous()` marks the
+payment `AMBIGUOUS` and the saga **returns normally** (`200`) instead
+of throwing. This is deliberate, not an oversight — throwing here
+would make `IdempotencyInterceptor` delete its Redis lock/cache (it
+does that on any thrown error), so a client's legitimate retry with
+the same `Idempotency-Key` would generate a brand-new `paymentId` and
+re-run the whole saga, risking a second real charge attempt on top of
+a first attempt that might have already succeeded at the PSP.
+Returning normally means the retry instead hits the interceptor's
+cached `AMBIGUOUS` response. See
+[`../business-domain/payment-lifecycle.md`](../business-domain/payment-lifecycle.md)
+for how `AMBIGUOUS` eventually resolves (an automated sweep queries the
+PSP directly; manual admin resolution covers whatever that doesn't).
+
 ## Consequences
 
 **What this buys**: exactly one place to read to understand the whole

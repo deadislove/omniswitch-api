@@ -473,14 +473,6 @@ split into:
   the retention periods (`ARCHIVE_THRESHOLD_DAYS`,
   `DELETION_THRESHOLD_YEARS`, and related env vars) for a specific
   jurisdiction without a code change
-- **`docs/spec/future/`** — internal BA/planning docs, `.gitignore`'d
-  (local only, not on GitHub): proposals not yet (or not fully)
-  executed, evaluated options, scope of impact, and a recommended
-  sequence, written before the work happens. Currently holds a
-  database-scaling proposal — PgBouncer, table partitioning, and the
-  archiving/deletion policy are all now done (see Performance above and
-  `docs/compliance/data-retention.md`); Citus remains proposal-stage.
-
 Start at [`docs/README.md`](docs/README.md).
 
 ---

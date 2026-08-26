@@ -147,11 +147,14 @@ alongside this verification pass.
 Every gap this document originally flagged is now closed. What's left is
 lower-value, not "did this ever actually run":
 
-- No load test or chaos-style test (killing a container mid-request, e.g.
-  restarting `postgres-master` while a payment is in flight) has been done —
-  everything so far has verified *startup* and one *happy-path* request, not
-  resilience under load or mid-operation failure. See Tier 2 item #11 in
-  `DEV_README.md`.
+- Load testing is now done — see
+  [`load-testing.md`](./load-testing.md) for the real, reproducible
+  charge-path/read-path capacity numbers against the production Docker
+  image. What's still not done is a **chaos-style** test (killing a
+  container mid-request, e.g. restarting `postgres-master` while a
+  payment is in flight) — resilience under *mid-operation failure*,
+  as opposed to sustained load, remains unverified. See Tier 2 item #11
+  in `DEV_README.md`.
 
 The seeded-merchant-via-raw-SQL step used to verify the Docker image above
 was itself a real gap — there was no way to create the *first* merchant on a

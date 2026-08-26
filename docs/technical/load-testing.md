@@ -130,6 +130,18 @@ succeeded (`201`), 5548 hit the route-level `429` cap, **zero `5xx`s**.
 Matches the historical 400-succeeded figure exactly — same shape, same
 conclusion, no regression.
 
+**Re-run 2026-08-24**, on a fully rebuilt environment (fresh volumes,
+fresh image build) after this round's per-merchant PSP entitlement
+work (`MerchantEntity.enabledPspProviders`, the `preferredProvider`
+true-override fix, and an e2e-only circuit-breaker-state-leak fix —
+see [`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../business-domain/ledger-and-settlement.md#smart-psp-routing)
+and [`../adr/0004-smart-routing-with-circuit-breaker.md`](../adr/0004-smart-routing-with-circuit-breaker.md))
+— none of which touch the charge path's rate-limiting. 200 seeded merchants, default rate
+limits: 6700 requests, **400 succeeded (`201`)**, 5278 hit the
+route-level `429` cap, **zero `5xx`s**. Matches the historical
+400-succeeded figure exactly — same shape, same conclusion, no
+regression.
+
 ## Finding #2: read-path capacity, unconstrained by the charge-specific cap
 
 `GET /payments/:id` has no route-level `@Throttle` override — only the
@@ -227,6 +239,41 @@ warm, are tight and consistent with each other. **Conclusion: no
 regression in success rate; once warm, latency is as good as or better
 than every prior date in this section.** CPU (measured precisely, not
 sampled) is covered below.
+
+**Re-run 2026-08-24**, same rebuilt environment and same methodology
+as the charge-path re-run above (200 seeded merchants, 200 payments
+pre-seeded, one per merchant, `RATE_LIMIT_MAX`/`RATE_LIMIT_BURST_MAX`/
+`AUTH_LOGIN_RATE_LIMIT` raised for setup and this run, restored to
+defaults afterward). CPU measured the same way as the 2026-08-22 entry
+below — `/proc/<pid>/stat`'s `utime+stime`, read immediately before
+and after each run via `docker exec`, divided by that run's exact
+wall-clock duration — not `docker stats` sampling:
+
+| Metric | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| Requests succeeded | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 |
+| p50 latency | 3ms | 3ms | 3ms |
+| p95 latency | 6ms | 6ms | 6ms |
+| p99 latency | 10.9ms | 10.9ms | 10.9ms |
+| max latency | 84ms | 77ms | 54ms |
+| Error rate | 0% | 0% | 0% |
+| CPU, average | 23.32% (≈233m) | 23.15% (≈232m) | 23.11% (≈231m) |
+
+50,700 requests total, zero failures. Memory spot-checked once after
+all three runs: **61.85MiB** (≈12% of the 512Mi limit) — consistent
+with the 2026-08-21 low-memory finding, not the higher ~104-127MiB
+range seen on cold/earlier passes. No Run 1 cold-start tail this time
+(p50/p95/p99 identical across all three runs, max latency actually
+*decreasing* run-over-run) — plausibly because the charge-path
+load-test run (seeding + Finding #1's own 6700 requests) immediately
+beforehand had already warmed the JIT/connection pools before this
+Finding's own Run 1 started, unlike prior passes that measured Finding
+#2 cold. **Conclusion: no throughput, latency, or memory regression
+from this round's per-merchant-PSP-entitlement work** — CPU (≈23%,
+≈231-233m) sits between the 2026-08-21 outlier-low reading (≈1%,
+never reproduced since, still retracted) and the 2026-08-22 reading
+(≈26-27%), consistent with 2026-08-22's own conclusion that the
+2026-08-21 figure remains an anomaly, not the new baseline.
 
 ## What this means for `k8s/hpa.yaml`
 
@@ -341,6 +388,32 @@ finding ("HPA would scale out fairly eagerly under sustained read
 load") holds. Memory stays well under the 80% (205Mi) trigger — as in
 every pass to date, memory is not what would drive scale-out for this
 traffic shape.
+
+**Re-measured 2026-08-24**, the same three runs reported under Finding
+#2's 2026-08-24 entry, same `/proc/<pid>/stat` method as 2026-08-22
+directly above:
+
+| Metric | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| CPU, average | 23.32% (≈233m) | 23.15% (≈232m) | 23.11% (≈231m) |
+
+No cold Run 1 to discount this time (see Finding #2's 2026-08-24 entry
+for why) — all three runs already reflect steady state. **Conclusion:
+steady-state CPU is ≈23%, tighter and more consistent run-to-run than
+either 2026-08-22's ≈26–27% or 2026-08-21's unreproduced ≈1% outlier,
+but the same order of magnitude as 2026-08-22** — nothing this round's
+application changes did shifted this measurably; the small (≈3–4
+point) difference from 2026-08-22 reads as normal run-to-run/host
+variance (see this doc's repeated warnings about host-level
+contention confounding CPU readings), not a real regression or
+improvement.
+
+Reframed against the HPA's actual basis: steady-state CPU (≈231–233m)
+sits at ≈92–93% of the 250m request — still comfortably past the 70%
+trigger (175m) before a pod reaches 150 req/s of read traffic alone,
+same conclusion as every prior dated entry in this section. Memory
+(≈61.85MiB, ≈24% of the 256Mi request) stays well under the 80%
+trigger, as always.
 
 ## Finding #3: PgBouncer adds no read-path cost, once it's actually resource-isolated
 

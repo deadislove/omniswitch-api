@@ -2,12 +2,10 @@ import 'dotenv/config';
 import { AppDataSource } from '../database/data-source';
 
 /**
- * Archiving job (Phase 3, tasks 10a-10c — see
- * docs/spec/future/database-scaling.md Option 3).
+ * Archiving job.
  *
  * Standalone script, not a `@Cron()` method on a running service —
- * deliberately, per the "how the job actually runs" decision in that
- * doc: `@Cron()` runs once per pod, which at `k8s/hpa.yaml`'s
+ * deliberately: `@Cron()` runs once per pod, which at `k8s/hpa.yaml`'s
  * `maxReplicas: 20` would mean up to 20 concurrent archiving runs racing
  * each other. This script is instead the target of a k8s `CronJob`
  * (`k8s/archiving-cronjob.yaml`), which only ever spins up one pod per
@@ -16,7 +14,7 @@ import { AppDataSource } from '../database/data-source';
  * (outside the Nest DI container — this job needs raw SQL access, not
  * the app's HTTP-serving dependency graph).
  *
- * Eligibility (10a) — a payment is archived when ALL of:
+ * Eligibility — a payment is archived when ALL of:
  *   - `created_at` is older than `ARCHIVE_THRESHOLD_DAYS` (default 180)
  *   - `status` is terminal (SUCCEEDED, FAILED, CANCELLED, REFUNDED,
  *     PARTIALLY_REFUNDED) — excludes anything still in flight or

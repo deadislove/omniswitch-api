@@ -176,7 +176,7 @@ This is a real, documented gap, not an oversight — see
 | `run-archiving-job.ts` | CronJob, daily | No | e2e (`test/data-retention-jobs.e2e-spec.ts`) |
 | `run-deletion-job.ts` | CronJob, weekly | No | e2e + unit (`backup-storage/*.spec.ts`) |
 | `create-partitions-job.ts` | CronJob, weekly | No | e2e (`test/partition-maintenance-job.e2e-spec.ts`) |
-| `drop-cutover-tables.ts` | Job, one-time | No | manual verification (destructive; not run in the automated e2e suite against seeded data) |
+| `drop-cutover-tables.ts` | Job, one-time | No | e2e (`test/data-retention-jobs.e2e-spec.ts`'s `drop-cutover-tables` block, against a synthetic dummy table — destructive, so never run against the real seeded `payments_old`/`ledger_outbox_old` tables) |
 | `legal-hold.service.ts` | HTTP endpoint (`LegalHoldAdminController`) | **Yes** — `@Injectable()`, registered in `payment.module.ts` | e2e (`test/legal-hold.e2e-spec.ts`) |
 
 `legal-hold.service.ts` is listed here because it's part of the same

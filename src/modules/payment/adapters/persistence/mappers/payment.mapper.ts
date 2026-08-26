@@ -77,6 +77,10 @@ export class PaymentMapper {
       updatedAt: entity.updatedAt,
       settlementConversion: entity.settlementConversion ?? undefined,
       splits,
+      ambiguousResolvedBy: entity.ambiguousResolvedBy,
+      ambiguousResolvedReason: entity.ambiguousResolvedReason,
+      ambiguousResolvedAt: entity.ambiguousResolvedAt,
+      ambiguousAutoRetryCount: entity.ambiguousAutoRetryCount,
     });
   }
 
@@ -103,6 +107,10 @@ export class PaymentMapper {
     entity.paymentMetadata = aggregate.metadata.metadata;
     entity.fxSnapshot = aggregate.amount.fxSnapshot as any;
     entity.settlementConversion = aggregate.settlementConversion;
+    entity.ambiguousResolvedBy = aggregate.ambiguousResolvedBy;
+    entity.ambiguousResolvedReason = aggregate.ambiguousResolvedReason;
+    entity.ambiguousResolvedAt = aggregate.ambiguousResolvedAt;
+    entity.ambiguousAutoRetryCount = aggregate.ambiguousAutoRetryCount;
     entity.splits = aggregate.splits?.map((s) => ({
       merchantId: s.merchantId,
       amountMinorUnits: s.amount.amountMinorUnits.toString(),

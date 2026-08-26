@@ -3,8 +3,9 @@ import { AppDataSource } from '../database/data-source';
 import { getBackupStorage } from './backup-storage/get-backup-storage';
 
 /**
- * Deletion job (Phase 3, task 10c's second tier — see
- * docs/spec/future/database-scaling.md Option 3's "Three-tier policy").
+ * Deletion job — the second tier of the archive/delete lifecycle,
+ * running after a record has already spent its time in the archive
+ * schema.
  *
  * Same standalone-script, k8s-CronJob-driven shape as
  * `run-archiving-job.ts` — see that file's docblock for why this isn't
