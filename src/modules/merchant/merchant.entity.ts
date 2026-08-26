@@ -248,10 +248,9 @@ export class MerchantEntity {
    * given evaluation (a rolling-24h count, or N consecutive payments all
    * having been AMBIGUOUS). Deliberately does not change how this
    * merchant's charges are processed — no throttling, no forced review —
-   * this is visibility only (Phase 2.a); see
-   * docs/spec/future/ambiguous-payment-resolution.md for why an active
-   * enforcement phase (2.b) was deliberately deferred pending real data
-   * on how often this actually fires.
+   * this is visibility only; an active-enforcement layer on top was
+   * deliberately deferred pending real data on how often this actually
+   * fires.
    */
   @Column({ name: 'ambiguous_risk_flagged', default: false })
   ambiguousRiskFlagged: boolean;

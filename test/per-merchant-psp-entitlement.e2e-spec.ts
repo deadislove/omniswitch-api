@@ -15,7 +15,7 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * charge that explicitly requests a preferredProvider outside the
  * entitlement rather than silently rerouting it, since that's a
  * permission boundary an operator configured on purpose, not a technical
- * unavailability. See docs/spec/future/per-merchant-psp-entitlement.md.
+ * unavailability.
  */
 describe('Per-merchant PSP entitlement (e2e)', () => {
   let app: INestApplication;

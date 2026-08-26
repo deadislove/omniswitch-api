@@ -14,8 +14,6 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * response gets one same-provider retry before falling back, the same
  * idempotency-key-replay safety margin the ambiguous-outcome path uses,
  * but for a genuinely different failure class (a response WAS received).
- * See docs/spec/future/distributed-resilience-and-cde-isolation.md
- * (§1, Gap 1.1) for the full design rationale.
  *
  * Uses mock-psp's forceservererroronce/forceservererroralways markers
  * (scripts/mock-psp/server.js) — a synchronous 500 response, no real

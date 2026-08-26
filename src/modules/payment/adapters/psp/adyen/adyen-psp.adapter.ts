@@ -32,13 +32,13 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     this.merchantAccount = configService.get<string>('ADYEN_MERCHANT_ACCOUNT', 'TestMerchant');
     this.baseUrl = configService.get<string>('ADYEN_BASE_URL', 'https://checkout-test.adyen.com/v71');
     // Caps how many concurrent outbound calls to Adyen this pod will have
-    // in flight at once — see makeRequest() below and
-    // docs/spec/future/distributed-resilience-and-cde-isolation.md (§3,
-    // Gap 3.4) for why. In-memory/per-pod, not Redis-backed: this protects
-    // this pod's own connection pool/event loop capacity, not a
-    // cross-replica quota. Read directly from process.env (not
-    // configService.get, which doesn't coerce numeric strings) — same
-    // reasoning and pattern as PaymentController's CHARGE_RATE_LIMIT_MAX.
+    // in flight at once — see makeRequest() below, a bulkhead against one
+    // degrading dependency exhausting this pod's own connection pool.
+    // In-memory/per-pod, not Redis-backed: this protects this pod's own
+    // connection pool/event loop capacity, not a cross-replica quota.
+    // Read directly from process.env (not configService.get, which
+    // doesn't coerce numeric strings) — same reasoning and pattern as
+    // PaymentController's CHARGE_RATE_LIMIT_MAX.
     this.bulkhead = new Semaphore(Number(process.env.PSP_BULKHEAD_MAX_CONCURRENT) || 20);
   }
 

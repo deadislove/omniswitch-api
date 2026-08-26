@@ -2,10 +2,9 @@ import 'dotenv/config';
 import { AppDataSource } from '../database/data-source';
 
 /**
- * Partition-maintenance job (Phase 3 follow-up #1 — see
- * docs/spec/future/database-scaling.md Option 2, and the "does not
- * itself set up recurring maintenance" note in Stage 1's own migration
- * docblock: `1787325352938-CreatePartitionedPaymentsAndLedgerOutbox.ts`).
+ * Partition-maintenance job — see the "does not itself set up recurring
+ * maintenance" note in Stage 1's own migration docblock:
+ * `1787325352938-CreatePartitionedPaymentsAndLedgerOutbox.ts`.
  *
  * That migration created partitions for a fixed window relative to
  * *when it ran* (6 months back, 2 forward) — correct at the time, but

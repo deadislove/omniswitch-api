@@ -4,13 +4,12 @@ import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.p
 import { MerchantService } from '../../../merchant/merchant.service';
 
 /**
- * Ambiguous Risk Monitoring Service — Phase 2.a of the AMBIGUOUS-resolution
- * gap (see docs/spec/future/ambiguous-payment-resolution.md). Purely
- * observational: flags a merchant whose AMBIGUOUS incidents cross either
- * of two thresholds, so an operator can see it — does **not** change how
- * that merchant's charges are processed (no throttling, no forced
- * review). Whether to add an active-enforcement phase (2.b) is a
- * deliberately separate, not-yet-made decision — see that doc.
+ * Ambiguous Risk Monitoring Service. Purely observational: flags a
+ * merchant whose AMBIGUOUS incidents cross either of two thresholds, so
+ * an operator can see it — does **not** change how that merchant's
+ * charges are processed (no throttling, no forced review). Whether to
+ * add an active-enforcement layer on top is a deliberately separate,
+ * not-yet-made decision.
  *
  * Two independent triggers, evaluated per merchant right after one of
  * their payments transitions to AMBIGUOUS (see evaluate(), called from

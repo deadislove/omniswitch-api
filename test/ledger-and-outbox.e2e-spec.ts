@@ -88,7 +88,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
     expect(await ledgerEntryCount(res.body.paymentId)).toBe(1);
   });
 
-  it('manual capture books exactly one ledger entry, not two (regression test for a real bug found this session)', async () => {
+  it('manual capture books exactly one ledger entry, not two (regression test)', async () => {
     const chargeRes = await signedRequest('post', '/api/v1/payments/charge', {
       amount: 20,
       currency: 'USD',

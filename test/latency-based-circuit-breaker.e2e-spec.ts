@@ -12,9 +12,8 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * Proves the slow-call-rate circuit-breaker trigger
  * (RedisCircuitBreakerService.recordSlowCallSample()) actually opens the
  * circuit against a real, no-shortcuts elapsed-time delay, not just against
- * FakeCachePort's simulated clock in the unit tests. See
- * docs/spec/future/distributed-resilience-and-cde-isolation.md for the
- * full design rationale.
+ * FakeCachePort's simulated clock in the unit tests — see that method's
+ * own docblock for the full design rationale.
  *
  * Deliberately uses real wall-clock delays (mock-psp's `forceslow` marker,
  * scripts/mock-psp/server.js) rather than jest fake timers or a

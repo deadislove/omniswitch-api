@@ -30,10 +30,10 @@ const REGISTERED_PROVIDERS = ['STRIPE', 'ADYEN'];
  * Deliberately protects the merchant's own throughput, not the platform's
  * overall load — a merchant whose traffic is landing on a healthy PSP
  * (including via automatic fallback) is never throttled by this, even
- * while some *other* PSP is degraded. See
- * docs/spec/future/distributed-resilience-and-cde-isolation.md for the
- * design rationale (including why this option was chosen over a
- * platform-wide slowdown).
+ * while some *other* PSP is degraded. Chosen over a platform-wide
+ * slowdown: this targets exactly the merchants actually exposed to the
+ * degraded PSP instead of penalizing everyone for one provider's
+ * problems.
  */
 @Injectable()
 export class DegradedPspAwareThrottlerGuard extends MerchantThrottlerGuard {

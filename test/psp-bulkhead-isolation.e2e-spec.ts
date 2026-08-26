@@ -12,9 +12,8 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * Proves the per-PSP bulkhead (Semaphore, wired into
  * StripePSPAdapter/AdyenPSPAdapter's makeRequest()) actually bounds
  * concurrent in-flight calls to a PSP, rather than just existing in code
- * with no observable effect. See
- * docs/spec/future/distributed-resilience-and-cde-isolation.md (§3, Gap
- * 3.4) for the full design rationale.
+ * with no observable effect — see the bulkhead's own docblock in either
+ * adapter for the full design rationale.
  *
  * Deliberately uses real wall-clock delays (mock-psp's `forceslow`
  * marker, the same one Gap 3.2's circuit-breaker test uses) rather than

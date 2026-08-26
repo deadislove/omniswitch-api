@@ -9,12 +9,10 @@ import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monit
 import { UpdateAmbiguousRiskFlagDto, UpdateAmbiguousRiskAutoDto, MerchantSummaryDto } from '../../../merchant/dto/create-merchant.dto';
 
 /**
- * Ambiguous Risk Admin Controller — Phase 2.a of the AMBIGUOUS-resolution
- * gap (see AmbiguousRiskMonitoringService's docblock and
- * docs/spec/future/ambiguous-payment-resolution.md). Manual override of,
- * and on-demand trigger for, the automated flag/auto-clear logic — purely
- * observational, does not change how any merchant's charges are
- * processed.
+ * Ambiguous Risk Admin Controller — see AmbiguousRiskMonitoringService's
+ * docblock. Manual override of, and on-demand trigger for, the automated
+ * flag/auto-clear logic — purely observational, does not change how any
+ * merchant's charges are processed.
  */
 @ApiTags('Admin — Ambiguous Risk Monitoring')
 @ApiBearerAuth()

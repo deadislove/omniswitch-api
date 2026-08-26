@@ -26,8 +26,7 @@ const DEGRADED_CONCENTRATION_THRESHOLD = 0.5;
  * platform's overall load: a merchant whose recent charges are landing on
  * a healthy PSP (including via automatic fallback) is never throttled by
  * this, even if some *other* PSP is degraded — only a merchant whose own
- * traffic is actually concentrated on the degraded one is. See
- * docs/spec/future/distributed-resilience-and-cde-isolation.md.
+ * traffic is actually concentrated on the degraded one is.
  */
 @Injectable()
 export class MerchantPspExposureService {

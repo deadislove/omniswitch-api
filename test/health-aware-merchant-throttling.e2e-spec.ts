@@ -12,10 +12,8 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * Proves DegradedPspAwareThrottlerGuard actually lowers a merchant's
  * charge-rate ceiling once their recent charges are concentrated on a PSP
  * that is currently OPEN — and that this is scoped to that merchant's own
- * exposure, not a platform-wide slowdown. See
- * docs/spec/future/distributed-resilience-and-cde-isolation.md for the
- * full design rationale (including why "protect the merchant" was chosen
- * over "protect the platform").
+ * exposure, not a platform-wide slowdown — see that guard's own docblock
+ * for the full design rationale.
  */
 describe('Health-aware merchant throttling (e2e)', () => {
   let app: INestApplication;

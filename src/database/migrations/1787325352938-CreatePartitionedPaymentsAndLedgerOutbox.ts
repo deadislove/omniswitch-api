@@ -1,8 +1,7 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
 /**
- * Stage 1 of the payments/ledger_outbox partitioning migration (Phase 3,
- * task 8a/8b — see docs/spec/future/database-scaling.md Option 2).
+ * Stage 1 of the payments/ledger_outbox partitioning migration.
  *
  * Creates NEW, empty, range-partitioned tables (`payments_partitioned`,
  * `ledger_outbox_partitioned`) — deliberately staging-named, not yet the

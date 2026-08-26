@@ -82,7 +82,8 @@ a first attempt that might have already succeeded at the PSP.
 Returning normally means the retry instead hits the interceptor's
 cached `AMBIGUOUS` response. See
 [`../business-domain/payment-lifecycle.md`](../business-domain/payment-lifecycle.md)
-for why `AMBIGUOUS` currently has no automated way back out.
+for how `AMBIGUOUS` eventually resolves (an automated sweep queries the
+PSP directly; manual admin resolution covers whatever that doesn't).
 
 ## Consequences
 

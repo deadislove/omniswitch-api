@@ -12,10 +12,9 @@ import { PaymentEntity } from '../src/modules/payment/adapters/persistence/entit
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 
 /**
- * Phase 2.a (passive risk observation) of the AMBIGUOUS-resolution gap —
- * see AmbiguousRiskMonitoringService's docblock and
- * docs/spec/future/ambiguous-payment-resolution.md. Purely observational:
- * flags a merchant, doesn't change how their charges are processed.
+ * Passive risk observation for AMBIGUOUS-prone merchants — see
+ * AmbiguousRiskMonitoringService's docblock. Purely observational: flags
+ * a merchant, doesn't change how their charges are processed.
  *
  * Two describe blocks, each with its own app instance and its own
  * threshold env vars — AmbiguousRiskMonitoringService reads

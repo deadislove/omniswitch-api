@@ -12,8 +12,8 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * End-to-end coverage of the ambiguous-outcome recovery path, using
  * mock-psp's forcetimeoutonce/forcetimeoutalways markers
  * (scripts/mock-psp/server.js) to simulate a PSP call getting no response
- * at all, without waiting out the real 30s adapter timeout. See
- * docs/spec/future/distributed-resilience-and-cde-isolation.md for the
+ * at all, without waiting out the real 30s adapter timeout — see
+ * PaymentCheckoutSaga.compensate_markAmbiguous()'s own docblock for the
  * full design rationale.
  *
  * Every timeout here is a thrown error against STRIPE, which
