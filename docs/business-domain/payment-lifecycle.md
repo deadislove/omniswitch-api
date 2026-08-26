@@ -14,8 +14,8 @@ PENDING ──────► PROCESSING ──────► SUCCEEDED ──�
    │                │  │  │            └──► DISPUTED ──┬──► SUCCEEDED (dispute won)
    │                │  │  │                             └──► REFUNDED (dispute lost)
    │                │  │  │
-   │                │  │  └──► AMBIGUOUS ──┬──► SUCCEEDED (manual admin action only — see note below)
-   │                │  │                    └──► FAILED    (manual admin action only — see note below)
+   │                │  │  └──► AMBIGUOUS ──┬──► SUCCEEDED (automated PSP query, or manual admin action — see note below)
+   │                │  │                    └──► FAILED    (automated PSP query, or manual admin action — see note below)
    │                │  │
    │                │  └──► REQUIRES_CAPTURE ──┬──► SUCCEEDED
    │                │                            ├──► PARTIALLY_CAPTURED ──► SUCCEEDED
@@ -35,26 +35,40 @@ enforces every transition explicitly (`assertValidTransition`), and
 `FAILED` to `PENDING`; a failed charge attempt means creating a *new*
 payment (new `paymentId`), not retrying the old one in place.
 
-**`AMBIGUOUS` has no *automated* way out today.** `PaymentStatus.vo.ts`'s
-transition table allows `AMBIGUOUS → SUCCEEDED`/`FAILED`, but nothing in
-this codebase automatically calls either transition for an `AMBIGUOUS`
-payment: `WebhookProcessingService` looks payments up by
-`pspTransactionId` (an ambiguous outcome never received one — that's
-the definition of ambiguous, see below), and even where a webhook did
-somehow match, its status guard only accepts `PROCESSING`/
-`REQUIRES_ACTION`, not `AMBIGUOUS`. `ReconciliationService` skips any
-payment without a `pspTransactionId` for the same reason — it is not a
-transient state that resolves itself. What *does* exist: a manual
-escape hatch for an operator who has checked the PSP's own
-dashboard/API directly — `AmbiguousPaymentService`/
-`AmbiguousPaymentAdminController`
-(`GET /admin/payments/ambiguous`, `POST /admin/payments/:id/resolve-ambiguous`
-— see [`../guide/api/platform-ops.md`](../guide/api/platform-ops.md#ambiguous-payment-resolution-adminpaymentsambiguous-adminpaymentsidresolve-ambiguous)),
-plus a stale-alert sweep (`AmbiguousPaymentService.alertOnStale()`,
-every 5 minutes) that logs an error for anything still `AMBIGUOUS`
-after 15 minutes, so at least someone finds out. Still no automated
-*resolution* — an operator always has to check the PSP directly and
-supply the real outcome by hand.
+**`AMBIGUOUS` resolves two ways: automated first, manual as a
+fallback.** `PaymentStatus.vo.ts`'s transition table allows
+`AMBIGUOUS → SUCCEEDED`/`FAILED`. Nothing resolves it through the
+normal charge-confirmation paths: `WebhookProcessingService` looks
+payments up by `pspTransactionId` (an ambiguous outcome never received
+one — that's the definition of ambiguous, see below), and even where a
+webhook did somehow match, its status guard only accepts `PROCESSING`/
+`REQUIRES_ACTION`, not `AMBIGUOUS`; `ReconciliationService` skips any
+payment without a `pspTransactionId` for the same reason. Instead:
+
+- **Automated PSP-query resolution** —
+  `AmbiguousPaymentService.runAutoResolutionSweep()` (`@Cron` every 10
+  minutes, plus on-demand via
+  `POST /admin/payments/ambiguous/run-auto-resolution`) asks the PSP
+  itself what happened, via `PSPAdapterPort.queryOutcome(idempotencyKey)`
+  — a read-only lookup, not a resubmitted charge (this system never
+  persists the card reference past the original request, so there's
+  nothing to resubmit with even if it wanted to). `SUCCEEDED` books the
+  same ledger entries a webhook confirmation would; `FAILED` records
+  that no charge occurred; if the PSP still has no record either, the
+  payment's `ambiguousAutoRetryCount` increments and it's tried again
+  next sweep, up to `AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS` (default
+  5) attempts.
+- **Manual escape hatch** — for whatever the automated sweep's retry
+  budget doesn't resolve, an operator who has checked the PSP's own
+  dashboard/API directly can close it out via
+  `AmbiguousPaymentService`/`AmbiguousPaymentAdminController`
+  (`GET /admin/payments/ambiguous`, `POST /admin/payments/:id/resolve-ambiguous`
+  — see [`../guide/api/platform-ops.md`](../guide/api/platform-ops.md#ambiguous-payment-resolution-adminpaymentsambiguous-adminpaymentsidresolve-ambiguous)).
+- **Stale alert** — `AmbiguousPaymentService.alertOnStale()`, every 5
+  minutes, logs an error for anything still `AMBIGUOUS` after 15
+  minutes (deliberately well before the automated sweep exhausts its
+  own retry budget, so a human finds out early rather than only once
+  automation has already given up).
 
 ## What triggers each transition
 
@@ -72,7 +86,7 @@ supply the real outcome by hand.
 | `PENDING` → `FAILED` | Charge-ledger-params validation fails (`INVALID_CHARGE_PARAMS` — e.g. an invalid marketplace split), or smart routing finds no available/entitled PSP for this charge | Fails before any PSP is ever contacted — `payment.startProcessing()` hasn't run yet, so the payment is still `PENDING` when `compensate_markFailed` marks it `FAILED` |
 | `PROCESSING`/`REQUIRES_ACTION` → `FAILED` | PSP declines, or all PSPs in the fallback chain fail | Compensating transaction (`compensate_markFailed`) |
 | `PROCESSING` → `AMBIGUOUS` | The PSP call got no response at all (not a decline — a timeout/network failure), and the same-provider idempotency-key retry also got no response | `compensate_markAmbiguous`, `errorCode: 'PSP_TIMEOUT_AMBIGUOUS'` — the saga returns normally (200) instead of throwing, specifically so `IdempotencyInterceptor` doesn't wipe its cache and cause a client retry to re-run the whole saga as a brand-new charge. Never falls back to a different PSP after an ambiguous primary failure — that PSP has never seen this idempotency key and would risk a genuine double charge |
-| `AMBIGUOUS` → `SUCCEEDED`/`FAILED` | Nothing, today | Structurally allowed by `PaymentStatus.vo.ts`, but no code path currently triggers it — see the note above the state diagram |
+| `AMBIGUOUS` → `SUCCEEDED`/`FAILED` | `AmbiguousPaymentService.runAutoResolutionSweep()` (automated, PSP query) or `POST /admin/payments/:id/resolve-ambiguous` (manual) | See the note above the state diagram |
 | `SUCCEEDED` → `PARTIALLY_REFUNDED` / `REFUNDED` | `POST /payments/:id/refund` | Amount defaults to the full remaining refundable balance if omitted |
 | `SUCCEEDED` → `DISPUTED` | `charge.dispute.created` (Stripe) / `NOTIFICATION_OF_CHARGEBACK` (Adyen) webhook | No corresponding "create a dispute" API — disputes only ever originate from the PSP. Also creates a `Dispute` record — see Dispute accounting below |
 | `DISPUTED` → `SUCCEEDED` | `charge.dispute.closed` with `status: 'won'` (Stripe) / `CHARGEBACK_REVERSED` (Adyen) webhook | The PSP/card network's decision, not an operator action — see Dispute accounting |

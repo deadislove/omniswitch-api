@@ -262,6 +262,31 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     }
     return entities.map((e) => e.status === 'AMBIGUOUS' || e.ambiguousResolvedAt != null);
   }
+
+  async findAmbiguousEligibleForAutoResolution(maxAttempts: number, minAgeMinutes: number): Promise<PaymentAggregate[]> {
+    // Forced onto master — same reasoning as findAmbiguousOlderThan(): this
+    // backs an automated sweep that can also be triggered on demand right
+    // after another write in the same request (the admin run-now endpoint),
+    // and AMBIGUOUS payments are rare enough that the extra master read is
+    // trivial.
+    const cutoff = new Date(Date.now() - minAgeMinutes * 60 * 1000);
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: PaymentEntity[];
+    try {
+      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // gotcha findAmbiguousOlderThan() above documents.
+      entities = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.status = :status', { status: 'AMBIGUOUS' })
+        .andWhere('p.ambiguousAutoRetryCount < :maxAttempts', { maxAttempts })
+        .andWhere('p.createdAt <= :cutoff', { cutoff: cutoff.toISOString() })
+        .orderBy('p.createdAt', 'ASC')
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return entities.map(PaymentMapper.toDomain);
+  }
 }
 
 /**

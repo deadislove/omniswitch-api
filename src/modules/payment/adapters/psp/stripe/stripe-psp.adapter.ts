@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse } from '../../../ports/outbound/psp-adapter.port';
+import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse, PSPQueryOutcomeResult } from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
@@ -242,6 +242,44 @@ export class StripePSPAdapter extends PSPAdapterPort {
       await this.circuitBreaker.recordFailure(this.provider);
       const latency = Date.now() - startTime;
       this.logger.error(`Stripe payment method verification failed after ${latency}ms: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * See PSPAdapterPort.queryOutcome's docblock. Real Stripe: replaying
+   * any request with the same Idempotency-Key header returns the cached
+   * response of the original call regardless of body — this mock models
+   * that with a dedicated GET lookup instead, since a real replay would
+   * still require constructing a full request body this system no
+   * longer has the card reference for.
+   */
+  async queryOutcome(idempotencyKey: string): Promise<PSPQueryOutcomeResult> {
+    await this.circuitBreaker.assertAvailable(this.provider);
+    const startTime = Date.now();
+
+    try {
+      const response = await this.makeRequest(
+        'GET',
+        `/payment_intents/lookup?idempotency_key=${encodeURIComponent(idempotencyKey)}`,
+        new URLSearchParams(),
+      );
+      await this.circuitBreaker.recordSuccess(this.provider, Date.now() - startTime);
+
+      if (!response.found) {
+        return { outcome: 'STILL_UNKNOWN' };
+      }
+      if (response.status === 'succeeded') {
+        return { outcome: 'SUCCEEDED', pspTransactionId: response.id, rawResponse: response };
+      }
+      return {
+        outcome: 'FAILED',
+        pspTransactionId: response.id,
+        errorCode: response.last_payment_error?.code,
+        rawResponse: response,
+      };
+    } catch (error) {
+      await this.circuitBreaker.recordFailure(this.provider);
       throw error;
     }
   }

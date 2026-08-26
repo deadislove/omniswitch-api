@@ -118,4 +118,19 @@ export abstract class PaymentRepositoryPort {
    * this check yet", not as a false streak.
    */
   abstract findRecentAmbiguousFlags(merchantId: string, limit: number): Promise<boolean[]>;
+
+  /**
+   * Still-`AMBIGUOUS` payments eligible for
+   * AmbiguousPaymentService.runAutoResolutionSweep() to ask the PSP about
+   * via queryOutcome(): `ambiguousAutoRetryCount < maxAttempts` (once a
+   * payment hits the cap the sweep stops touching it and leaves it for a
+   * human via the existing stale-alert path) and old enough
+   * (`createdAt <= now - minAgeMinutes`, so the sweep doesn't immediately
+   * re-query a PSP that only just failed to respond — the same PSP may
+   * still be in the middle of whatever caused the original timeout).
+   * Across every merchant, like findAmbiguousOlderThan(). A payment a
+   * human already resolved manually is naturally excluded: its status is
+   * no longer `AMBIGUOUS` once AmbiguousPaymentService.resolve() runs.
+   */
+  abstract findAmbiguousEligibleForAutoResolution(maxAttempts: number, minAgeMinutes: number): Promise<PaymentAggregate[]>;
 }

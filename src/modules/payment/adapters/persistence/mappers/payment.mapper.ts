@@ -80,6 +80,7 @@ export class PaymentMapper {
       ambiguousResolvedBy: entity.ambiguousResolvedBy,
       ambiguousResolvedReason: entity.ambiguousResolvedReason,
       ambiguousResolvedAt: entity.ambiguousResolvedAt,
+      ambiguousAutoRetryCount: entity.ambiguousAutoRetryCount,
     });
   }
 
@@ -109,6 +110,7 @@ export class PaymentMapper {
     entity.ambiguousResolvedBy = aggregate.ambiguousResolvedBy;
     entity.ambiguousResolvedReason = aggregate.ambiguousResolvedReason;
     entity.ambiguousResolvedAt = aggregate.ambiguousResolvedAt;
+    entity.ambiguousAutoRetryCount = aggregate.ambiguousAutoRetryCount;
     entity.splits = aggregate.splits?.map((s) => ({
       merchantId: s.merchantId,
       amountMinorUnits: s.amount.amountMinorUnits.toString(),

@@ -197,10 +197,12 @@ no response at all never received a `pspTransactionId`, so it has
 nothing to match against a PSP settlement record; `ReconciliationService`
 skips any payment without one. See
 [`payment-lifecycle.md`](./payment-lifecycle.md)'s note on `AMBIGUOUS`
-for the full picture — resolving one is a manual admin action
-(`POST /admin/payments/:id/resolve-ambiguous`) after an operator checks
-directly with the PSP, not something this job (or any automated path)
-does today.
+for the full picture — a separate automated sweep asks the PSP directly
+what happened (a read-only lookup by idempotency key, not something
+this reconciliation job itself does), and books the same ledger entries
+as a webhook confirmation once it gets a definitive answer; a manual
+admin action (`POST /admin/payments/:id/resolve-ambiguous`) remains
+available for whatever that sweep's retry budget doesn't resolve.
 
 **A merchant whose `AMBIGUOUS` incidents pile up gets flagged for
 observation, separately from reconciliation.**

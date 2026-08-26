@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse } from '../../../ports/outbound/psp-adapter.port';
+import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse, PSPQueryOutcomeResult } from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
@@ -257,6 +257,42 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
       await this.circuitBreaker.recordFailure(this.provider);
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Adyen payment method verification failed: ${msg}`);
+      throw error;
+    }
+  }
+
+  /**
+   * See PSPAdapterPort.queryOutcome's docblock and
+   * StripePSPAdapter.queryOutcome's matching comment on why this is a
+   * dedicated read-only lookup rather than an idempotency-key replay of
+   * the original /payments call.
+   */
+  async queryOutcome(idempotencyKey: string): Promise<PSPQueryOutcomeResult> {
+    await this.circuitBreaker.assertAvailable(this.provider);
+    const startTime = Date.now();
+
+    try {
+      const response = await this.makeRequest(
+        'GET',
+        `/payments/lookup?idempotencyKey=${encodeURIComponent(idempotencyKey)}`,
+        undefined,
+      );
+      await this.circuitBreaker.recordSuccess(this.provider, Date.now() - startTime);
+
+      if (!response.found) {
+        return { outcome: 'STILL_UNKNOWN' };
+      }
+      if (response.resultCode === 'Authorised') {
+        return { outcome: 'SUCCEEDED', pspTransactionId: response.pspReference, rawResponse: response };
+      }
+      return {
+        outcome: 'FAILED',
+        pspTransactionId: response.pspReference,
+        errorCode: response.refusalReasonCode,
+        rawResponse: response,
+      };
+    } catch (error: unknown) {
+      await this.circuitBreaker.recordFailure(this.provider);
       throw error;
     }
   }

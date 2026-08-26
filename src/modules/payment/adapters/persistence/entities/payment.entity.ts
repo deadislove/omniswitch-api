@@ -134,6 +134,18 @@ export class PaymentEntity {
   @Column({ name: 'ambiguous_resolved_at', type: 'timestamp', nullable: true })
   ambiguousResolvedAt?: Date;
 
+  /**
+   * How many times AmbiguousPaymentService.runAutoResolutionSweep() has
+   * asked the PSP about this payment via queryOutcome() and gotten
+   * STILL_UNKNOWN back — separate from ambiguousResolvedBy/Reason/At
+   * above, which only ever get set by the *manual* admin resolve path.
+   * Once this reaches AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS the sweep
+   * stops touching the payment and leaves it for a human via the
+   * existing stale-alert path.
+   */
+  @Column({ name: 'ambiguous_auto_retry_count', type: 'int', default: 0 })
+  ambiguousAutoRetryCount: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

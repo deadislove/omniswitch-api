@@ -38,6 +38,7 @@ const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
   findAmbiguousOlderThan: jest.fn(),
   countAmbiguousIncidentsSince: jest.fn(),
   findRecentAmbiguousFlags: jest.fn(),
+  findAmbiguousEligibleForAutoResolution: jest.fn(),
 });
 
 const createMockLedgerOutbox = (): jest.Mocked<LedgerOutboxPort> => ({

@@ -90,6 +90,7 @@ export class PaymentAggregate {
     private _ambiguousResolvedBy?: string,
     private _ambiguousResolvedReason?: string,
     private _ambiguousResolvedAt?: Date,
+    private _ambiguousAutoRetryCount: number = 0,
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -146,6 +147,7 @@ export class PaymentAggregate {
     ambiguousResolvedBy?: string;
     ambiguousResolvedReason?: string;
     ambiguousResolvedAt?: Date;
+    ambiguousAutoRetryCount?: number;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -170,6 +172,7 @@ export class PaymentAggregate {
       params.ambiguousResolvedBy,
       params.ambiguousResolvedReason,
       params.ambiguousResolvedAt,
+      params.ambiguousAutoRetryCount ?? 0,
     );
   }
 
@@ -321,6 +324,18 @@ export class PaymentAggregate {
     this._ambiguousResolvedBy = resolvedBy;
     this._ambiguousResolvedReason = reason;
     this._ambiguousResolvedAt = new Date();
+  }
+
+  /**
+   * One attempt of the automated sweep (AmbiguousPaymentService.
+   * runAutoResolutionSweep()) asked the PSP about this payment via
+   * queryOutcome() and got STILL_UNKNOWN back — not a status transition,
+   * just a counter so the sweep can stop retrying once
+   * AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS is reached and leave the
+   * payment for a human via the existing stale-alert path instead.
+   */
+  incrementAmbiguousAutoRetryCount(): void {
+    this._ambiguousAutoRetryCount++;
   }
 
   cancel(): void {
@@ -508,6 +523,7 @@ export class PaymentAggregate {
   get ambiguousResolvedBy(): string | undefined { return this._ambiguousResolvedBy; }
   get ambiguousResolvedReason(): string | undefined { return this._ambiguousResolvedReason; }
   get ambiguousResolvedAt(): Date | undefined { return this._ambiguousResolvedAt; }
+  get ambiguousAutoRetryCount(): number { return this._ambiguousAutoRetryCount; }
 
   get totalRefunded(): Money {
     return this._refunds.reduce(

@@ -70,6 +70,9 @@ export class AmbiguousPaymentSummaryDto {
 
   @ApiProperty({ example: 42, description: 'Minutes since this payment was created (and, in practice, since it became AMBIGUOUS — the transition happens synchronously within the original charge request)' })
   ageMinutes: number;
+
+  @ApiProperty({ example: 1, description: 'How many times the automated PSP-query resolution sweep has asked about this payment and gotten no definitive answer back. Stops advancing once it reaches AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS — from then on this payment is left for manual resolution.' })
+  ambiguousAutoRetryCount: number;
 }
 
 /**

@@ -126,10 +126,10 @@ A payment reaches `AMBIGUOUS` when a PSP call gets no response at all
 (not a decline — a timeout/network failure) and a same-provider retry
 also gets no response — see
 [`../../business-domain/payment-lifecycle.md`](../../business-domain/payment-lifecycle.md)'s
-note on `AMBIGUOUS`. There is currently no automated way for this
-system to resolve one on its own — these two endpoints are the manual
-escape hatch: find one, then record what an operator found by checking
-the PSP's own dashboard/API directly.
+note on `AMBIGUOUS`. An automated sweep tries to resolve one first by
+asking the PSP directly what happened; these endpoints cover listing,
+triggering that sweep on demand, and the manual escape hatch for
+whatever it doesn't resolve within its own retry budget.
 
 - **Roles**: `ADMIN`, `OPERATOR`
 
@@ -139,15 +139,35 @@ List `AMBIGUOUS` payments across every merchant. Optional
 `?olderThanMinutes=` — omit (or `0`) to list every currently
 `AMBIGUOUS` payment regardless of age.
 
-**Shape**: `{ paymentId, merchantId, amount, currency, pspProvider?, failureReason, createdAt, ageMinutes }`
+**Shape**: `{ paymentId, merchantId, amount, currency, pspProvider?, failureReason, createdAt, ageMinutes, ambiguousAutoRetryCount }`
+
+### `POST /admin/payments/ambiguous/run-auto-resolution`
+
+Triggers the automated PSP-query resolution sweep on demand — the same
+logic the periodic background job runs, without waiting for its
+schedule. For each eligible `AMBIGUOUS` payment (still `AMBIGUOUS`,
+under the auto-retry attempt cap, old enough that the PSP has plausibly
+had time to recover from whatever caused the original timeout), asks
+the PSP what actually happened via a read-only lookup keyed by
+idempotency key — not a resubmitted charge; this system never keeps the
+card reference past the original request, so there's nothing to
+resubmit with even if it wanted to. `SUCCEEDED` books the same ledger
+entries a webhook confirmation would; `FAILED` records that no charge
+occurred; if the PSP still has no record either, the attempt count
+increments and it's left for the next sweep (or escalated to a human
+via the stale alert below, once the attempt cap is reached).
+
+**Response `200`**: `{ succeeded: number, failed: number, stillUnknown: number, skipped: number }`
 
 ### `POST /admin/payments/:id/resolve-ambiguous`
 
-Records what actually happened at the PSP. `SUCCEEDED` books the same
-ledger entries a webhook confirmation would (fee/reserve/split
-resolution, a real ledger outbox entry) — this is recording a real
-charge as collected, not just flipping a status flag. `FAILED` records
-that no charge occurred; nothing is booked.
+Records what actually happened at the PSP — the manual path, for
+whatever the automated sweep above hasn't resolved (or when an operator
+needs to close one out immediately rather than wait for the sweep).
+`SUCCEEDED` books the same ledger entries a webhook confirmation would
+(fee/reserve/split resolution, a real ledger outbox entry) — this is
+recording a real charge as collected, not just flipping a status flag.
+`FAILED` records that no charge occurred; nothing is booked.
 
 **Body**: `{ outcome: 'SUCCEEDED'|'FAILED', pspTransactionId?: string, reason: string }`
 — `pspTransactionId` is required when `outcome` is `SUCCEEDED` (an
@@ -158,16 +178,13 @@ of financial state, so it always needs a stated justification.
 **Response `200`**: the payment detail shape (same as `GET /payments/:id`),
 plus a permanent audit trail for this action: `ambiguousResolvedBy`
 (the resolving ADMIN/OPERATOR's `merchantId`), `ambiguousResolvedReason`
-(the `reason` supplied), `ambiguousResolvedAt`.
+(the `reason` supplied), `ambiguousResolvedAt`. These three fields stay
+unset for a payment the automated sweep resolved — the audit trail only
+ever records an actual human decision.
 
 - **Errors**: `404` payment not found; `409` payment is not currently
   `AMBIGUOUS`; `422` `outcome: 'SUCCEEDED'` without `pspTransactionId`,
   or `reason` missing/empty.
-
-**What this doesn't do**: actively query the PSP to resolve the
-ambiguity automatically — an operator still has to go check the PSP
-directly. A scheduled sweep that does this on its own is a larger,
-separate piece of work, not yet built.
 
 ---
 
