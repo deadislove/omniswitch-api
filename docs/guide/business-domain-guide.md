@@ -125,6 +125,8 @@ response) shows up repeatedly across the codebase — e.g. it's exactly
 why decline-code-aware dunning (§6) only classifies *real* PSP decline
 codes, not routing exceptions.
 
+Full detail: [`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../business-domain/ledger-and-settlement.md#smart-psp-routing).
+
 ## 5. Recurring billing / subscriptions
 
 A `Subscription` is a genuinely different domain object from a payment
@@ -200,18 +202,25 @@ gets a bigger reserve without an operator noticing and reacting late; a
 manual override (an operator setting the policy by hand) sticks and
 isn't silently clobbered by the next automated sweep.
 
+Full detail: [`../business-domain/ledger-and-settlement.md#merchant-risk-tiering--reserves`](../business-domain/ledger-and-settlement.md#merchant-risk-tiering--reserves).
+
 ## 8. Disputes & chargebacks
 
 A `Dispute` only ever originates from the PSP via webhook — there's no
 API to create one directly, because a real chargeback is initiated by
 the cardholder's bank, not by this system. Once one exists, it has its
-own lifecycle (`NEEDS_RESPONSE → UNDER_REVIEW → WON/LOST`), a response
+own lifecycle (`NEEDS_RESPONSE → UNDER_REVIEW → WON/LOST`, though
+`UNDER_REVIEW` isn't mandatory — the PSP can hand back a final
+`WON`/`LOST` straight from `NEEDS_RESPONSE`, e.g. a withdrawn dispute or
+a lapsed response window with no evidence ever submitted), a response
 deadline, and — the part worth knowing before you touch it — an
 **automatic decision policy**: every new dispute is classified
 `ACCEPT`/`CONTEST`/`MANUAL_REVIEW` by amount and reason code, and
 `CONTEST` immediately auto-submits templated evidence to the PSP for
 real, no operator action. A `LOST` dispute claws funds back through the
 exact same ledger path a refund uses.
+
+Full detail: [`../business-domain/payment-lifecycle.md#dispute-accounting`](../business-domain/payment-lifecycle.md#dispute-accounting).
 
 ## 9. Cross-border settlement
 
@@ -225,6 +234,8 @@ more or less than they actually received, a real double-entry mismatch
 this system specifically closes. `presentmentCurrency` is a separate,
 purely-cosmetic concept — what the *customer's* statement shows, never
 touching what's actually captured or settled.
+
+Full detail: [`../business-domain/ledger-and-settlement.md#fx-conversion-merchant-settlement-currency`](../business-domain/ledger-and-settlement.md#fx-conversion-merchant-settlement-currency).
 
 ## 10. Agentic payments: delegation & spend policy
 

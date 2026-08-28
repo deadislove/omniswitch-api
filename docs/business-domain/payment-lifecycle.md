@@ -160,7 +160,12 @@ A dispute/chargeback is tracked as its own record (`Dispute`, the
 dispute has a lifecycle of its own (`NEEDS_RESPONSE` → `UNDER_REVIEW` →
 `WON`/`LOST`, plus a response deadline) that `PaymentAggregate`'s state
 machine has no room to represent, and an operator needs to see and act on
-it independently of the payment record.
+it independently of the payment record. `UNDER_REVIEW` isn't mandatory
+on the way there, though: `DisputeAggregate.resolve()` is reachable
+directly from `NEEDS_RESPONSE` too — the PSP/card network can hand back
+a final `WON`/`LOST` decision without the merchant ever having formally
+submitted evidence (e.g. the dispute is withdrawn, or the response
+window lapses with nothing submitted).
 
 **Creation**: a dispute-created webhook creates the `Dispute` record
 (`respondBy` defaults to 7 days out — a documented default, since neither

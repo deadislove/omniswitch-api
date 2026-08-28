@@ -100,29 +100,32 @@ update against production.
 every charge — there's no caching or sticky routing, every charge
 re-decides.
 
-**Per-merchant PSP entitlement** (checked first, before any other
-filter): `MerchantEntity.enabledPspProviders` (`jsonb`, defaults to
+**Per-merchant PSP entitlement**: `MerchantEntity.enabledPspProviders` (`jsonb`, defaults to
 every PSP this system has an adapter for — currently `STRIPE` and
 `ADYEN` — so every existing merchant is unaffected until narrowed via
 `PATCH /admin/merchants/:id/psp-entitlement`) restricts which PSPs a
 merchant's charges may ever route through. If the charge request set
 `preferredProvider` and it's outside this merchant's entitlement, the
 charge is **rejected** with `422 PREFERRED_PROVIDER_NOT_ENTITLED` —
-not silently routed to a different, entitled PSP. This is a
-deliberate asymmetry from the availability/currency/country filter
-below: entitlement reflects a merchant's real contractual relationship
-with a PSP (a merchant onboarded to Stripe hasn't necessarily agreed
-to have Adyen ever touch its transactions), a permission boundary an
-operator configured on purpose — silently rerouting around it would
-hide a real integration bug (a client still requesting a PSP that was
-deliberately revoked) rather than surfacing it. A PSP outside the
-entitlement is also dropped from the general candidate pool for
-charges with no preference, same as the filter below.
+checked explicitly, before candidate filtering even runs — not
+silently routed to a different, entitled PSP. This is a deliberate
+asymmetry from the availability/currency/country filter below:
+entitlement reflects a merchant's real contractual relationship with a
+PSP (a merchant onboarded to Stripe hasn't necessarily agreed to have
+Adyen ever touch its transactions), a permission boundary an operator
+configured on purpose — silently rerouting around it would hide a real
+integration bug (a client still requesting a PSP that was deliberately
+revoked) rather than surfacing it.
 
-**Filtering** (always applied next): of the entitled PSPs, a PSP is
-only a candidate if it's available, its circuit breaker isn't `OPEN`,
-it supports the transaction's currency, and — if BIN country info is
-present — it supports that country.
+**Filtering** (applied to build the general candidate pool — used both
+for scoring when there's no preference, and to validate a preferred
+provider that passed the entitlement check above): a single pass over
+the entitled PSPs, checked in this order — available and circuit
+breaker not `OPEN`, entitled (redundant with the explicit check above
+for a `preferredProvider`, but this is also where a non-preferred PSP
+gets dropped from the pool for lacking entitlement), supports the
+transaction's currency, and — if BIN country info is present —
+supports that country.
 
 **Preference override** (checked before scoring): if the charge
 request set `preferredProvider` and that PSP survived entitlement and
@@ -150,11 +153,16 @@ next-highest-scored PSP that's currently available, in order, until one
 succeeds or the list is exhausted (`usedFallback: true` in the response
 tells the caller this happened).
 
-**Circuit breaker**: 5 consecutive failures opens the circuit for 30
-seconds, after which it moves to `HALF_OPEN` and a single success closes it
-again. State lives in Redis (`RedisCircuitBreakerService`, via the same
-`CachePort` idempotency already uses — no new connection), shared across
-every replica — this used to be per-process instance fields on
+**Circuit breaker**: 5 failures **within a 60-second window** opens the
+circuit for 30 seconds, after which it moves to `HALF_OPEN` and a single
+success closes it again — not 5 *consecutive* failures: the failure count
+is a Redis counter with a 60-second TTL refreshed on every failure, and a
+success while the circuit is still `CLOSED` does not reset it (only a
+`HALF_OPEN → CLOSED` recovery does), so 5 failures scattered across that
+window with successes interspersed still trips it. State lives in Redis
+(`RedisCircuitBreakerService`, via the same `CachePort` idempotency
+already uses — no new connection), shared across every replica — this
+used to be per-process instance fields on
 `StripePSPAdapter`/`AdyenPSPAdapter`, which meant each pod made its own
 independent availability judgment about each PSP with zero coordination
 between them. Verified live: forcing 5 failures against one replica trips
