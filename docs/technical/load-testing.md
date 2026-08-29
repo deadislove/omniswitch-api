@@ -145,6 +145,27 @@ route-level `429` cap, **zero `5xx`s**. Matches the historical
 400-succeeded figure exactly — same shape, same conclusion, no
 regression.
 
+**Re-run 2026-08-30**, on a fully rebuilt environment (`docker compose
+down -v`, fresh image build) after `PayoutService.runSweep()`'s
+multi-replica distributed-lock fix and a round of `k8s/`/documentation
+work — neither touches the charge path's rate-limiting. Bringing the
+environment up surfaced a real, pre-existing, unrelated bug along the
+way: the `api` service's own Docker healthcheck
+(`wget http://localhost:3000/health/live`) reported the container
+`unhealthy` even though the app was serving requests correctly — the
+same class of bug the `vault` service's healthcheck already had fixed
+(see [`infra-verification-status.md`](./infra-verification-status.md)):
+`localhost` resolves to `::1` inside the container, and `main.ts`'s
+`app.listen(port, '0.0.0.0')` only binds IPv4, so the healthcheck's own
+request never reaches anything. Confirmed via `docker exec omniswitch-api
+wget ... http://127.0.0.1:3000/health/live`, which succeeded immediately
+against the same running app. Fixed by pointing the healthcheck at
+`127.0.0.1` instead, matching vault's existing fix. 200 seeded merchants,
+default rate limits: 6700 requests, **400 succeeded (`201`)**, 5551 hit
+the route-level `429` cap, **zero `5xx`s**. Matches the historical
+400-succeeded figure exactly — same shape, same conclusion, no
+regression from any of this round's changes.
+
 ## Finding #2: read-path capacity, unconstrained by the charge-specific cap
 
 `GET /payments/:id` has no route-level `@Throttle` override — only the
@@ -277,6 +298,42 @@ from this round's per-merchant-PSP-entitlement work** — CPU (≈23%,
 never reproduced since, still retracted) and the 2026-08-22 reading
 (≈26-27%), consistent with 2026-08-22's own conclusion that the
 2026-08-21 figure remains an anomaly, not the new baseline.
+
+**Re-run 2026-08-30**, same environment/methodology as the 2026-08-30
+charge-path re-run above. CPU/memory measured via periodic `docker
+stats --no-stream` sampling (every 5s through each run) rather than the
+more precise `/proc/<pid>/stat` delta method the 2026-08-22/08-24
+entries use — a coarser signal, noted here rather than presented as
+equally precise:
+
+| Metric | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| Requests succeeded | 16,900/16,900 | 16,900/16,900 | 16,900/16,900 |
+| p50 latency | 3ms | 3ms | 3ms |
+| p95 latency | 6ms | 8.9ms | 10.1ms |
+| p99 latency | 12.1ms | 18ms | 21.1ms |
+| max latency | 126ms | 92ms | 93ms |
+| Error rate | 0% | 0% | 0% |
+| CPU, peak (sampled) | 34.3% | 56.2% | not sampled* |
+
+\* Run 3 completed before the sampling loop's first poll landed — no
+samples captured for that run specifically.
+
+50,700 requests total, zero failures — same conclusion as every prior
+date in this section. Unlike prior re-runs, this one was **not** run on
+an isolated/quiet host: CPU peaked 34%→56% run-over-run climbing rather
+than holding steady, and p95/p99 grew monotonically across the three
+runs (6/8.9/10.1ms and 12.1/18/21.1ms) rather than settling once warm
+the way 2026-08-22/08-24's runs did. Both patterns point the same
+direction — background load on the host increasing over the ~8 minutes
+these three runs took, not a per-request cost that changed — consistent
+with this project's own documented P0-3 gap (no dedicated,
+isolated performance-testing environment exists yet). Still comfortably
+within `k8s/deployment.yaml`'s 512Mi limit and well under its 1000m CPU
+limit even at the noisiest sampled point. **Conclusion: no regression in
+success rate; the elevated tail latency versus 2026-08-21/08-24's
+readings is explained by host contention, not by any change made this
+round.**
 
 ## What this means for `k8s/hpa.yaml`
 

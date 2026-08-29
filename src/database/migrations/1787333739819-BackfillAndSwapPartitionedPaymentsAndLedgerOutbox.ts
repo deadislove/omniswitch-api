@@ -27,10 +27,10 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  *
  * At this project's current data volume (thousands of rows, not
  * 100M+), a single `INSERT ... SELECT` is fine. At real production
- * scale this step needs batching and would be a genuinely long-running,
- * closely-supervised operation — see Option 2's note on this in
- * database-scaling.md. This migration is the reference shape of that
- * runbook, not a batching implementation.
+ * scale this step needs batching (e.g. paginated by primary key range)
+ * and would be a genuinely long-running, closely-supervised operation —
+ * this migration is the reference shape of that runbook, not a
+ * batching implementation.
  */
 export class BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819 implements MigrationInterface {
     name = 'BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819'

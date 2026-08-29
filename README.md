@@ -327,8 +327,9 @@ connecting through PgBouncer (transaction-mode pooling, itself capped to
 
 Last verified 2026-08-21 with PgBouncer (`pgbouncer-master`/
 `pgbouncer-replica`) added in front of Postgres — connection-count
-headroom under `k8s/hpa.yaml`'s scale-out, see the internal database-scaling
-proposal doc for the full reasoning. Matches or beats the pre-PgBouncer
+headroom under `k8s/hpa.yaml`'s scale-out, see
+[`docs/technical/k8s/data-layer.md`](docs/technical/k8s/data-layer.md)
+for the full reasoning. Matches or beats the pre-PgBouncer
 baseline on every metric once
 the poolers are resource-isolated the way a real cluster would enforce
 them; an earlier uncapped test run showed elevated CPU/tail-latency that

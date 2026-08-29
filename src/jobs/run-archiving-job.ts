@@ -195,9 +195,10 @@ async function main(): Promise<void> {
       status: 'success',
     };
     // Structured, single-line JSON — greppable in CronJob pod logs
-    // without a Pushgateway (see docblock/database-scaling.md's
-    // observability note for why a short-lived CLI process can't be
-    // scraped the normal prom-client way).
+    // without a Pushgateway. A short-lived CLI process like this one
+    // exits before a normal prom-client pull-based scrape could ever
+    // reach it, so structured stdout is the observability mechanism
+    // here instead of a /metrics endpoint.
     console.log(JSON.stringify({ job: 'archiving', ...summary }));
   } catch (err) {
     const summary: Partial<RunSummary> = {

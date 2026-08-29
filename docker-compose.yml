@@ -36,7 +36,7 @@ services:
       # Database — routed through PgBouncer (transaction-mode pooling),
       # not directly at postgres-master/postgres-replica. See the
       # pgbouncer-master/pgbouncer-replica services below and
-      # docs/spec/future/database-scaling.md (Option 1).
+      # docs/technical/k8s/data-layer.md's PgBouncer section.
       DB_MASTER_HOST: pgbouncer-master
       DB_MASTER_PORT: 5432
       DB_REPLICA_HOST: pgbouncer-replica
@@ -111,7 +111,17 @@ services:
     networks:
       - omniswitch-net
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health/live"]
+      # 127.0.0.1, not localhost — same reasoning as the vault service's
+      # healthcheck below: inside this container "localhost" resolves to
+      # ::1 first, and main.ts's `app.listen(port, '0.0.0.0')` only binds
+      # IPv4, so a "localhost" healthcheck reports Connection refused even
+      # though the app answers fine on 127.0.0.1. Verified live: `docker
+      # exec omniswitch-api wget ... http://localhost:3000/...` fails with
+      # "can't connect to remote host: Connection refused" while the same
+      # command against 127.0.0.1 succeeds — a real, pre-existing bug, not
+      # host-load flakiness (confirmed via the healthcheck's own retry
+      # history: identical failure every 30s regardless of load).
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -175,8 +185,8 @@ services:
   # `max_connections=200` server — already over budget at full scale,
   # independent of data volume. Transaction-mode pooling multiplexes many
   # app-side connections onto a much smaller, bounded set of real backend
-  # connections. See docs/spec/future/database-scaling.md (Option 1) for
-  # the full reasoning.
+  # connections. See docs/technical/k8s/data-layer.md for the full
+  # reasoning.
   #
   # Migrations (`npm run migration:run`, `pretest:e2e`) intentionally keep
   # connecting directly to postgres-master's own port (15432 on the host)

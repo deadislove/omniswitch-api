@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Query, UseGuards, HttpCode, HttpStatus, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, UseGuards, HttpCode, HttpStatus, NotFoundException, ConflictException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
 import { PayoutService } from '../services/payout.service';
@@ -176,8 +176,12 @@ export class MarketplacePayoutAdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Run the payout sweep now instead of waiting for the daily schedule — batches every CONNECTED merchant\'s unswept MERCHANT-ledger balance into a Payout, withholding each merchant\'s configured rolling reserve' })
   @ApiResponse({ status: 200, type: PayoutSweepRunResultDto })
+  @ApiResponse({ status: 409, description: 'A sweep (this one or the scheduled @Cron tick) is already in progress' })
   async runPayouts(): Promise<PayoutSweepRunResultDto> {
     const run = await this.payoutService.runSweep();
+    if (!run) {
+      throw new ConflictException({ statusCode: 409, error: 'A payout sweep is already in progress', code: 'PAYOUT_SWEEP_IN_PROGRESS' });
+    }
     return toSweepRunResult(run);
   }
 

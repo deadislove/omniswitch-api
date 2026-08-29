@@ -32,9 +32,9 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * hard-fails with "no partition found" the way it would without one.
  * Rows landing in the DEFAULT partition are a signal that
  * partition-maintenance (creating next month's partition ahead of time)
- * has fallen behind — this migration only creates the *initial* set,
- * it does not itself set up that recurring maintenance; see the open
- * follow-up noted in database-scaling.md.
+ * has fallen behind — this migration only creates the *initial* set;
+ * the recurring maintenance itself is `create-partitions-job.ts`, run
+ * as `k8s/partition-maintenance-cronjob.yaml`.
  *
  * Primary key / unique constraints both include `created_at` — Postgres
  * requires this for any partitioned table's PK/unique constraints (see

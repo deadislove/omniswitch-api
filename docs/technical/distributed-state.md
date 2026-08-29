@@ -236,19 +236,45 @@ up to 20 times, all within roughly the same moment.
   saga or finds the charge already done and just advances the period.
   Both were built to survive a *process crash* mid-sweep, not multi-replica
   duplication specifically — but the same mechanism happens to cover both.
-- **`PayoutService` is a mixed picture, not audited as thoroughly as
-  the two above.** `releaseEligibleReserves()`/`recheckKycBlocks()`/
+- **`PayoutService` — mixed mechanisms, all verified race-safe.**
+  `releaseEligibleReserves()`/`recheckKycBlocks()`/
   `initiateEligibleTransfers()` each go through an atomically-conditional
   `UPDATE ... WHERE` (`PayoutPort.markReserveReleased()`/
   `markKycCleared()`/`markTransferInitiated()`) — the same
   race-safe-by-construction pattern `ReserveService` uses. `runSweep()`
-  (the noon job that actually creates `Payout` rows from a
-  windowStart/windowEnd derived from `findLatestSweepRun()`) was never
-  audited for this specifically — two replicas racing noon could in
-  principle both read the same "last sweep" window and both create
-  `Payout` rows for the same ledger events, a real open question, not
-  verified either way (same posture as `LedgerOutboxRelayService`
-  below).
+  (the noon job that creates `Payout` rows from a windowStart/windowEnd
+  derived from `findLatestSweepRun()`) used a different mechanism: two
+  replicas racing noon previously both read the same "last sweep" window
+  and both created a `Payout` for the same ledger credit — confirmed
+  live via a real concurrent-call reproduction, not just theorized from
+  reading the code. Fixed with a `CachePort.setNX()` distributed lock
+  around the whole method (the same primitive `IdempotencyInterceptor`
+  already uses for per-request locking, applied here to a batch job
+  instead) — a losing caller returns `null` rather than racing the
+  winner. Verified live: the same reproduction now produces exactly one
+  `Payout`, with a permanent regression test in
+  `test/marketplace-payouts.e2e-spec.ts`.
+
+  **Deliberate trade-off, not an oversight**: the lock is the only
+  safeguard — there is no DB-level uniqueness constraint backstopping
+  it. Adding one properly would need a new `window_start` column on
+  `payouts` (today's `sweep_run_id` doesn't work as a uniqueness key
+  here, since two racing calls each mint their own fresh
+  `sweepRunId`), a backfill migration, and application code to treat a
+  unique-violation as an expected, safely-skippable outcome — real
+  schema work, not a small addition. Skipped because the lock already
+  closes the reproduced race, and Redis being unreachable fails
+  `setNX()` loudly (the sweep errors out) rather than silently granting
+  every caller the lock — there's no silent-failure mode a backstop
+  would specifically catch at today's scale. The lock's own failure
+  mode that a DB constraint *would* catch — a legitimately slow sweep
+  outliving its lock's TTL and genuinely racing the next scheduled tick
+  — is a scale problem (this method sweeps every eligible merchant in
+  one sequential pass under one global lock), not a correctness gap in
+  the lock itself. If/when that scale is reached, the DB constraint is
+  worth building alongside whichever sharding/batching/queue redesign
+  actually addresses the sweep's own throughput, not in isolation
+  before then.
 - **`ReconciliationService` is not self-healing** — a second replica
   running the same window's reconciliation produces a second, duplicate
   `ReconciliationRun` row recording the same (hopefully clean) result.
@@ -302,7 +328,8 @@ loose end.
 **If you add a new `@Cron` job**: assume it will run concurrently across
 every replica, and design for that from the start — either make the work
 naturally idempotent/conflict-safe under concurrent execution (the
-pattern `ReserveService`/`SubscriptionService` happen to follow), or
-explicitly flag in its docblock that it isn't yet, the way this section
-flags `ReconciliationService`, `LedgerOutboxRelayService`, and
-`PayoutService.runSweep()`.
+pattern `ReserveService`/`SubscriptionService` happen to follow), guard
+it with a distributed lock the way `PayoutService.runSweep()` now does,
+or explicitly flag in its docblock that it isn't yet safe either way,
+the way this section flags `ReconciliationService` and
+`LedgerOutboxRelayService`.
