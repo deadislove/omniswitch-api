@@ -5,10 +5,9 @@
 # hpa.yaml's maxReplicas: 20 would mean up to 20 concurrent archiving
 # runs racing each other over the same rows. A CronJob only ever spins up
 # one pod per scheduled run, so that coordination problem doesn't exist
-# by construction — see docs/spec/future/database-scaling.md Option 3,
-# "How the job actually runs," for the full reasoning (chose this over a
-# @Cron() + Redis-lock design specifically because this makes the
-# coordination problem moot rather than solving it).
+# by construction — see docs/technical/jobs.md for the full reasoning
+# (chose this over a @Cron() + Redis-lock design specifically because
+# this makes the coordination problem moot rather than solving it).
 #
 # Same production image as deployment.yaml — just a different container
 # command, running the compiled job script directly instead of booting

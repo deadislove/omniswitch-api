@@ -8,7 +8,10 @@ measured. This is a real, reproducible baseline against the real stack
 (Docker Compose Postgres/Redis/mock-psp, the actual production Docker
 image, [Artillery](https://www.artillery.io/) as the load generator — not
 a synthetic in-process benchmark), plus what it took to get a *meaningful*
-number out of this specific system.
+number out of this specific system. Findings #1–3 run against
+Docker Compose; Finding #4 (`k8s/network-policy.yaml`'s latency cost)
+needed a real Kubernetes cluster instead, since Docker Compose has no
+`NetworkPolicy` equivalent to test against.
 
 ## Setup
 
@@ -505,6 +508,139 @@ The absolute CPU/latency levels on both sides are still well above the
 Finding #2) — but the *relative* comparison this Finding exists to
 make (PgBouncer vs. no PgBouncer) continues to hold the same direction
 it always has.
+
+## Finding #4: `k8s/network-policy.yaml` adds no measurable charge-latency overhead
+
+Findings #1–3 above all ran against `docker-compose.yml`, which has no
+`NetworkPolicy` equivalent at all. Answering "does the defense-in-depth
+`NetworkPolicy` (see
+[`security-and-compliance.md`](./security-and-compliance.md#network-segmentation--defense-in-depth-added-full-cde-isolation-intentionally-out-of-scope))
+cost anything" needed a different environment: a local `kind` cluster
+running Calico as the CNI (kind's own default CNI doesn't enforce
+`NetworkPolicy` at all — a policy applied against it would silently
+no-op), with real `postgres`/`redis`/`hashicorp/vault`/`mock-psp`
+workloads and the actual production Docker image, not the fake
+TCP-listener stand-ins `scripts/network-policy-verify.sh` normally uses
+for pure policy-correctness checks.
+
+**Method**: the same "charge then read" Artillery scenario `smoke.yml`
+already uses, at 3 req/s for 30 seconds (90 charges), run once with no
+`NetworkPolicy` objects present in the namespace at all, then again with
+the full `k8s/network-policy.yaml` applied.
+
+| Metric | No `NetworkPolicy` | Full `k8s/network-policy.yaml` applied |
+|---|---|---|
+| mean | 22.4ms | 17.3ms |
+| median | 19.9ms | 16.9ms |
+| p95 | 56.3ms | 47.0ms |
+| p99 | 133.0ms | 51.9ms |
+| Charge success rate | 90/90 | 90/90 |
+
+No measurable regression — the "after" run was, if anything, faster,
+well within ordinary run-to-run variance on a shared single-node `kind`
+cluster. This matches the underlying mechanism: Calico enforces
+`NetworkPolicy` via kernel-level `iptables`/eBPF packet filtering,
+sub-millisecond per connection, negligible next to a charge's real cost
+(HTTP parsing, a Vault HMAC decrypt round trip, a real Postgres round
+trip via PgBouncer, JSON [de]serialization).
+
+**Caveat**: the load generator reached the cluster via `kubectl
+port-forward`, which connects directly into the pod's network namespace
+through the kubelet rather than through `kube-proxy`/the normal
+CNI-routed `Service` path — most CNIs, Calico included, don't subject
+that path to `NetworkPolicy` ingress enforcement. This means the
+inbound `ingress-nginx → omniswitch-api` rule specifically wasn't
+exercised by this latency measurement (it's verified separately, for
+correctness rather than latency, by
+`scripts/network-policy-verify.sh`). Every other rule the charge path
+actually depends on — `omniswitch-api → pgbouncer → postgres`,
+`omniswitch-api → redis`, `omniswitch-api → vault` — **was** genuinely
+exercised, since those are real pod-to-pod calls over the normal
+CNI-routed path.
+
+## Finding #5: same result for database throughput — `k8s/network-policy.yaml` adds no measurable pgbench overhead
+
+Finding #4 measured the charge path end-to-end but, per its own caveat,
+via `kubectl port-forward` for the inbound hop. This finding isolates
+just the database leg (`omniswitch-api`-labeled pod → `pgbouncer-master`
+→ `postgres-master`), fully over the normal CNI-routed `Service` path
+with no port-forward involved, once `k8s/postgres.yaml` gave this rule
+something real to connect to (previously only fake TCP-listener stand-ins
+existed for this check — see `scripts/network-policy-verify.sh`'s own
+comment on why that's fine for correctness but not for a latency number).
+
+**Method**: a `postgres:16-alpine` pod labeled `app: omniswitch-api` (so
+it takes the same `NetworkPolicy` path the real app does) ran
+`pgbench -i -s 5` against `pgbouncer-master.payments.svc.cluster.local`,
+then `pgbench -c 10 -j 4 -T 30` (10 clients, 4 threads, 30 seconds) twice
+with the full `k8s/network-policy.yaml` applied, then twice more with
+every `NetworkPolicy` object removed from the namespace
+(`kubectl delete networkpolicy --all -n payments`).
+
+| Condition | Run | TPS | Avg latency |
+|---|---|---|---|
+| `NetworkPolicy` applied | 1 | 2153.40 | 4.644 ms |
+| `NetworkPolicy` applied | 2 | 2136.06 | 4.682 ms |
+| `NetworkPolicy` removed | 1 | 2161.36 | 4.627 ms |
+| `NetworkPolicy` removed | 2 | 2124.64 | 4.707 ms |
+
+Averages: 2144.7 TPS / 4.663ms with the policy applied vs. 2143.0 TPS /
+4.667ms without it — under 0.1% difference, well inside run-to-run noise.
+Same conclusion as Finding #4, now confirmed for the database leg
+specifically rather than the full HTTP charge path: Calico's
+`NetworkPolicy` enforcement costs nothing measurable here either.
+
+## Finding #6: same result for the cache — `k8s/network-policy.yaml` adds no measurable redis-benchmark overhead
+
+Same question as Finding #5, now for `omniswitch-api → redis` once
+`k8s/redis.yaml` gave that rule something real to connect to.
+
+**Method**: a `redis:7-alpine` pod labeled `app: omniswitch-api` ran
+`redis-benchmark -n 100000 -c 20 -t set,get` against
+`redis.payments.svc.cluster.local:6379`, twice with the full
+`k8s/network-policy.yaml` applied, then twice with every `NetworkPolicy`
+object removed from the namespace.
+
+| Condition | Run | SET rps | GET rps |
+|---|---|---|---|
+| `NetworkPolicy` applied | 1 | 49875.31 | 55586.44 |
+| `NetworkPolicy` applied | 2 | 49627.79 | 56085.25 |
+| `NetworkPolicy` removed | 1 | 49925.11 | 58754.41 |
+| `NetworkPolicy` removed | 2 | 48076.93 | 55493.89 |
+
+Averages: SET 49751.6 vs. 49001.0 rps, GET 55835.9 vs. 57124.2 rps —
+differences of 1.5% and 2.3% respectively, in opposite directions, both
+within ordinary run-to-run noise on a shared single-node `kind` cluster.
+Same conclusion as Findings #4 and #5: no measurable `NetworkPolicy` cost,
+now confirmed for all three data-layer paths (HTTP charge path, Postgres,
+Redis) this app's `NetworkPolicy` actually gates.
+
+## Finding #7: same result for Vault Transit decrypt — `k8s/network-policy.yaml` adds no measurable overhead
+
+Same question as Findings #5 and #6, now for `omniswitch-api → vault`
+once `k8s/vault.yaml` gave that rule something real to connect to. This
+specifically exercises `decrypt`, since that's what `HmacSignatureGuard`
+calls on every HMAC-signed request (charge, refund, capture, cancel,
+dispute-evidence) — the actual hot-path call, not just a health check.
+
+**Method**: a `curlimages/curl` pod labeled `app: omniswitch-api` ran one
+Transit `encrypt` call to get a ciphertext, then looped 300 `decrypt`
+calls against `vault.payments.svc.cluster.local:8200`, timed end-to-end,
+twice with the full `k8s/network-policy.yaml` applied, then twice more
+with every `NetworkPolicy` object removed.
+
+| Condition | Run | Decrypt rps | Avg latency |
+|---|---|---|---|
+| `NetworkPolicy` applied | 1 | 389.9 | 2.565 ms |
+| `NetworkPolicy` applied | 2 | 432.1 | 2.315 ms |
+| `NetworkPolicy` removed | 1 | 395.3 | 2.530 ms |
+| `NetworkPolicy` removed | 2 | 420.3 | 2.379 ms |
+
+Averages: 411.0 vs. 407.8 rps, 2.440ms vs. 2.455ms average latency —
+under 1% difference either way, within run-to-run noise. Same conclusion
+as Findings #4–6: no measurable `NetworkPolicy` cost, now confirmed for
+every data-layer dependency (Postgres, Redis, Vault) plus the full HTTP
+charge path that this app's `NetworkPolicy` actually gates.
 
 ## What this doesn't cover
 

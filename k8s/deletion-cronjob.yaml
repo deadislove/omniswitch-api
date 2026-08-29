@@ -1,6 +1,6 @@
 # Deletion CronJob — the second, later tier of the data-retention policy
-# (see docs/spec/future/database-scaling.md Option 3's "Three-tier
-# policy" and docs/compliance/data-retention.md). Exports records past
+# (see docs/compliance/data-retention.md's "The three-tier policy"
+# section). Exports records past
 # DELETION_THRESHOLD_YEARS to a backup file, then deletes them from
 # `archive.payments`/`archive.ledger_outbox` — never touches the live
 # `payments`/`ledger_outbox` tables directly, only rows that already went

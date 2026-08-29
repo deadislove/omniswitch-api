@@ -191,6 +191,7 @@ you.
 | Req 10 — logging | Structured JSON logging (Winston) with correlation IDs on every request |
 | Req 3.6 — cryptographic key management | `hmac_secret` is envelope-encrypted via Vault's Transit engine before it ever reaches Postgres — the app only ever has plaintext in memory, briefly, at creation/rotation/verification time. A DB compromise alone yields ciphertext, not usable keys. See [`secret-management.md`](./secret-management.md) for the design and — importantly — what this *doesn't* cover (dev-mode Vault is not production-ready as-is; `JWT_SECRET`/DB credentials/K8s-level secrets are still plain env vars). |
 | Req 8.4.2 — multi-factor authentication | TOTP-based MFA now exists and works: `POST /auth/mfa/enroll`/`confirm`/`verify`/`disable`, opt-in per merchant, enforced at login once enabled — `JwtAuthGuard` rejects a post-login-but-pre-MFA token on every route except the verify step itself. Verified end to end in `test/mfa.e2e-spec.ts`. See the MFA section directly below for what this *doesn't* close. |
+| Req 1 — network segmentation (defense-in-depth, not full CDE isolation) | `k8s/network-policy.yaml` default-denies all ingress/egress in the `payments` namespace, with explicit allows for the app's real traffic paths. Verified against a real `NetworkPolicy`-enforcing CNI via `scripts/network-policy-verify.sh`, not just reviewed by eye. See the section directly below for what this does and doesn't cover. |
 
 ### MFA — what's covered and what isn't
 
@@ -207,6 +208,46 @@ alongside `RolesGuard` that rejects an `ADMIN`-role JWT whose merchant has
 `mfaEnabled: false`) is a deliberate policy decision this pass didn't
 make, not an oversight — worth doing before relying on this for a real
 assessment.
+
+### Network segmentation — defense-in-depth added, full CDE isolation intentionally out of scope
+
+`k8s/network-policy.yaml` adds least-privilege pod-to-pod traffic
+control to the `payments` namespace: it default-denies all ingress and
+egress, then explicitly allows only the app's real traffic paths
+(`omniswitch-api → pgbouncer → postgres`, `omniswitch-api → redis`,
+`omniswitch-api → vault`, the ingress controller → `omniswitch-api`,
+every batch job → `pgbouncer`, Prometheus → `omniswitch-api`'s
+`:3000/metrics`). Before this, any pod in the namespace could reach any
+other pod on any port, including the database/cache/secrets-store pods
+holding merchant credentials and HMAC/TOTP secrets.
+
+This is not full PCI DSS Requirement 1 CDE segmentation, and isn't
+meant to be — see
+["Scope: this system is designed to avoid touching cardholder data"](#scope-this-system-is-designed-to-avoid-touching-cardholder-data)
+above. Client-side tokenization means this system never holds a raw
+PAN, so there is no Cardholder Data Environment to isolate today; that
+conclusion holds only as long as this architecture decision stands, and
+would need revisiting if this system ever processes PANs directly.
+
+Rules are checked bidirectionally by `scripts/network-policy-verify.sh`
+against a real `NetworkPolicy`-enforcing CNI (a manifest reviewed by
+eye alone cannot prove a rule is both sufficient — nothing legitimate
+breaks — and effective — an unauthorized pod is actually refused):
+
+- **Verified working**: `omniswitch-api → pgbouncer → postgres`,
+  `omniswitch-api → redis`, `omniswitch-api → vault`, the
+  `ingress-nginx → omniswitch-api` rule, a batch-job pod → `pgbouncer`,
+  and Prometheus → `omniswitch-api`'s metrics port; a pod without the
+  right label/namespace is refused on every one of these; `omniswitch-api`
+  attempting to bypass pgbouncer and reach postgres directly is also
+  correctly refused.
+- **Not yet covered by this policy**: egress to the real Stripe/Adyen
+  endpoints (`k8s/configmap.yaml` points at live PSP URLs) — harder
+  than the rules above to express as a static policy, since Stripe/Adyen
+  don't publish fixed IP ranges a plain `ipBlock` could pin; and egress
+  for the deletion job to a cloud `BackupStorage` endpoint, when
+  `DELETION_BACKUP_STORAGE` isn't `"local"` (the default, which needs no
+  network egress at all).
 
 ### Gaps — what's missing before this could actually pass an assessment
 

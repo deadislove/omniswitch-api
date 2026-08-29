@@ -14,8 +14,9 @@ internally — see [`system-design.md`](../system-design.md#3-a-charge-end-to-en
 for the full internal flow.
 
 - **Roles**: `MERCHANT`, `ADMIN`, `AGENT`
-- **Guards**: HMAC + Idempotency-Key (both **skipped** for an `AGENT`
-  caller — see [`agentic-payments.md`](./agentic-payments.md))
+- **Guards**: HMAC + Idempotency-Key — HMAC is **skipped** for an
+  `AGENT` caller (see [`agentic-payments.md`](./agentic-payments.md));
+  `Idempotency-Key` is required unconditionally, for every role
 - **Rate limit**: 100/min
 
 **Request body**

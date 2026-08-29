@@ -69,7 +69,9 @@ src/
 │   │   ├── merchant.service.ts    # verifyCredentials, createMerchant, rotate*, setActive,
 │   │   │                          # update{FeeRate,FeeTiers,SettlementCurrency,ReservePolicy,
 │   │   │                          # PayoutReservePolicy,PspEntitlement}, setRiskTierAutoManaged,
-│   │   │                          # applyAutoRiskTier, submitKyc, revokeAllSessions
+│   │   │                          # applyAutoRiskTier, submitKyc, revokeAllSessions,
+│   │   │                          # applyAutoAmbiguousRiskFlag, setAmbiguousRiskFlagManual,
+│   │   │                          # setAmbiguousRiskAutoManaged
 │   │   ├── mfa.service.ts         # TOTP enroll/confirm/verify/disable (PCI DSS Req 8.4.2)
 │   │   ├── kyc-provider.port.ts + mock-kyc-provider.adapter.ts  # Connected-account KYC review
 │   │   │                          # (real HTTP call to an external verifier — mocked here)
@@ -110,9 +112,10 @@ src/
 │           ├── controllers/       # PaymentController (also the entry point for an AGENT
 │           │                      # token's delegated charge), WebhookController,
 │           │                      # SubscriptionController, PlanController,
-│           │                      # DelegationController, plus 8 focused admin controllers
+│           │                      # DelegationController, plus 10 focused admin controllers
 │           │                      # (Outbox/Reconciliation/Dispute/Reserve/Subscription/
-│           │                      # RiskTiering/MarketplacePayout/LegalHold — the last one
+│           │                      # RiskTiering/MarketplacePayout/LegalHold/AmbiguousPayment/
+│           │                      # AmbiguousRisk — LegalHold is
 │           │                      # POST/DELETE admin/payments/:id/legal-hold, see
 │           │                      # docs/compliance/data-retention.md)
 │           ├── sagas/             # PaymentCheckoutSaga (charge, compensating txns) — also
@@ -126,9 +129,11 @@ src/
 │           │                      # ReserveService, SubscriptionService, RiskTieringService,
 │           │                      # PlanService, PayoutService, DelegationService (spend-policy
 │           │                      # reservation/release, agent JWT issuance/revocation),
-│           │                      # LegalHoldService, LedgerOutboxRelayService — several of these are
-│           │                      # recurring @Cron sweeps, each also exposed on demand via
-│           │                      # an admin POST endpoint (see the pattern table below)
+│           │                      # LegalHoldService, LedgerOutboxRelayService,
+│           │                      # AmbiguousPaymentService, AmbiguousRiskMonitoringService —
+│           │                      # several of these are recurring @Cron sweeps, each also
+│           │                      # exposed on demand via an admin POST endpoint (see the
+│           │                      # pattern table below)
 │           ├── interceptors/      # IdempotencyInterceptor
 │           └── dto/               # ChargePaymentDto, RefundPaymentDto, SubscriptionDto,
 │                                  # PlanDto, DelegationDto, ...
@@ -260,7 +265,7 @@ directly in `PaymentModule` or `MerchantModule`.
 | Saga (orchestration, not choreography) | `PaymentCheckoutSaga` | Multi-step checkout (create intent → risk check → route → charge → confirm) with explicit compensating actions on failure |
 | Transactional Outbox | `LedgerOutboxEvent` + `LedgerOutboxRelayService` | Ledger entries are written atomically with the payment state change that confirms them, then relayed asynchronously by a cron job — see `docs/business-domain/ledger-and-settlement.md` for why *when* they're written matters |
 | Repository | `PaymentTypeOrmRepository`, `MerchantService` | Isolates persistence details from application services |
-| Recurring sweep + on-demand trigger | `LedgerOutboxRelayService`, `ReconciliationService`, `ReserveService`, `SubscriptionService`, `RiskTieringService`, `PayoutService` (payout batching, KYC-block recheck, and transfer initiation are each their own sweep) | Each pairs a `@Cron` schedule with an admin `POST .../run` endpoint doing the exact same work — an operator (or a test) doesn't have to wait for the schedule, and there's exactly one code path to reason about, not two. Every one of these is also individually resilient to a single item's failure (a per-item `try/catch` inside the sweep loop) — one bad subscription/reserve/merchant/payout doesn't abort the whole batch |
+| Recurring sweep + on-demand trigger | `LedgerOutboxRelayService`, `ReconciliationService`, `ReserveService`, `SubscriptionService`, `RiskTieringService`, `PayoutService` (payout batching, reserve release, KYC-block recheck, and transfer initiation are each their own sweep), `AmbiguousPaymentService` (auto-resolution and stale-alert sweeps), `AmbiguousRiskMonitoringService` (auto-clear sweep) | Each pairs a `@Cron` schedule with an admin `POST .../run` endpoint doing the exact same work — an operator (or a test) doesn't have to wait for the schedule, and there's exactly one code path to reason about, not two. Every one of these is also individually resilient to a single item's failure (a per-item `try/catch` inside the sweep loop) — one bad subscription/reserve/merchant/payout doesn't abort the whole batch |
 | Atomic conditional update (race-safe state transition) | `ReserveHoldPort.markReserveReleased()`, `PayoutPort.markKycCleared()`/`markTransferInitiated()`, `DelegationPort.tryReserveSpend()` | A single `UPDATE ... WHERE <preconditions>` (returning affected-row count, or a computed `RETURNING`) instead of a read-then-write — so two concurrent callers (an operator's manual action racing a scheduled sweep, or two concurrent agent charges against the same delegation) can't both succeed past a limit or double-apply a transition |
 | Deterministic idempotency key | `SubscriptionService.periodPaymentId()` (`uuidv5(subscriptionId:periodEnd)`) | Crash-recovery without a distributed transaction — a background job that can't share a DB transaction with `PaymentCheckoutSaga`'s own internal one instead derives a stable id per unit of work, checks whether that id already succeeded before acting, and gets at-most-once behavior from the payment table's own primary-key uniqueness rather than a 2PC/saga-of-sagas |
 

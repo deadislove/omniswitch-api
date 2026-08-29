@@ -1,0 +1,360 @@
+# Real postgres-master/postgres-replica backing pgbouncer.yaml's two
+# poolers (PGBOUNCER_MASTER_BACKEND_HOST/PGBOUNCER_REPLICA_BACKEND_HOST
+# in configmap.yaml) and the `app: postgres-master`/`app: postgres-replica`
+# pod labels network-policy.yaml's allow-pgbouncer-to-postgres and
+# allow-ingress-to-postgres rules already assumed before this file existed.
+#
+# Deployment, not StatefulSet: each of master/replica is a single
+# `replicas: 1` instance backed by its own PersistentVolumeClaim — a
+# StatefulSet's ordinal pod identity and per-replica PVC templating exist
+# to manage *multiple* replicas of the same role, which neither of these
+# has. `strategy: Recreate` (not the default RollingUpdate) on both,
+# because a ReadWriteOnce PVC can only be mounted by one pod at a time —
+# RollingUpdate would try to schedule the new pod before the old one
+# releases the volume and get stuck.
+#
+# From ports to credentials to init behavior, this mirrors
+# docker-compose.yml's postgres-master/postgres-replica services (same
+# postgres:16-alpine image, same `-c` flags, same pg_basebackup +
+# standby.signal bootstrap for the replica) with one deliberate
+# difference: docker-compose's scripts/postgres/init-master.sql hardcodes
+# the replication role's password as a literal string, and the
+# POSTGRES_REPLICATION_USER/PASSWORD env vars it sets are never actually
+# read by anything (the official postgres image doesn't recognize those
+# names). That's a fine shortcut for a local-only compose stack; it would
+# make DB_REPLICATION_PASSWORD in omniswitch-secrets a placeholder that
+# silently does nothing if copied as-is here. The init script below
+# instead reads REPLICATION_USER/REPLICATION_PASSWORD from the container
+# environment (sourced from configmap.yaml/omniswitch-secrets), so
+# overriding that secret in a real deployment actually takes effect.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-master-data
+  namespace: payments
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Starting point, not a capacity-planned number — resize (or move to
+      # a volume-expansion-capable StorageClass) once real data volume from
+      # the payments/ledger_outbox partitioning scheme is known — see
+      # docs/technical/databases/architecture.md.
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-master-init
+  namespace: payments
+  labels:
+    app: postgres-master
+data:
+  # Sourced (not executed — see docker-entrypoint.sh's docker_process_init_files,
+  # which sources non-executable .sh files) by the postgres image's own
+  # docker-entrypoint-initdb.d hook, once, only against a fresh (empty)
+  # data directory. Cluster-level setup only — must never create/alter
+  # application tables, or it will drift from and conflict with what
+  # src/database/migrations/ expects to find.
+  01-init-role.sh: |
+    #!/bin/bash
+    set -e
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+      DO \$\$
+      BEGIN
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$REPLICATION_USER') THEN
+          CREATE ROLE "$REPLICATION_USER" WITH REPLICATION LOGIN PASSWORD '$REPLICATION_PASSWORD';
+        END IF;
+      END
+      \$\$;
+    EOSQL
+    # REPLICATION LOGIN is what actually grants streaming-replication
+    # access — there is no PostgreSQL GRANT syntax for replication
+    # privileges on a specific database (unlike MySQL's
+    # `GRANT REPLICATION SLAVE`, which does not exist in PostgreSQL).
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+      -c 'CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";'
+  # Appends a pg_hba.conf rule permitting $REPLICATION_USER to open
+  # streaming-replication connections from other pods in the namespace —
+  # the default generated pg_hba.conf only covers loopback for the
+  # `replication` pseudo-database, and a plain `host all all all
+  # scram-sha-256` entry does not match replication connections.
+  02-init-hba.sh: |
+    #!/bin/bash
+    set -e
+    echo "host replication ${REPLICATION_USER} all scram-sha-256" >> "$PGDATA/pg_hba.conf"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-master
+  namespace: payments
+  labels:
+    app: postgres-master
+    component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres-master
+  template:
+    metadata:
+      labels:
+        app: postgres-master
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          args:
+            - postgres
+            - -c
+            - wal_level=replica
+            - -c
+            - max_wal_senders=3
+            - -c
+            - max_replication_slots=3
+            - -c
+            - hot_standby=on
+            - -c
+            - log_connections=on
+            - -c
+            - log_disconnections=on
+            - -c
+            - log_duration=off
+            - -c
+            - log_min_duration_statement=1000
+            - -c
+            - shared_preload_libraries=pg_stat_statements
+            - -c
+            - max_connections=200
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_NAME
+            - name: REPLICATION_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_REPLICATION_USER
+            - name: REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_REPLICATION_PASSWORD
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-master-data
+        - name: init-scripts
+          configMap:
+            name: postgres-master-init
+            defaultMode: 0555
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-master
+  namespace: payments
+  labels:
+    app: postgres-master
+    component: database
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres-master
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-replica-data
+  namespace: payments
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-replica
+  namespace: payments
+  labels:
+    app: postgres-replica
+    component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres-replica
+  template:
+    metadata:
+      labels:
+        app: postgres-replica
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          # On first start (empty PGDATA), pg_basebackup-clones
+          # postgres-master into this pod's own volume, marks itself a
+          # standby, and points primary_conninfo back at postgres-master
+          # before exec'ing into a normal postgres process — same
+          # bootstrap docker-compose.yml's postgres-replica service runs.
+          # On every subsequent restart, PGDATA is already populated and
+          # this block is skipped entirely; postgres starts directly as
+          # the standby it already is.
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              if [ -z "$(ls -A /var/lib/postgresql/data 2>/dev/null)" ]; then
+                until pg_basebackup -h "$POSTGRES_MASTER_HOST" -D /var/lib/postgresql/data -U "$PGUSER" -vP -w --wal-method=stream; do
+                  echo 'Waiting for master to be ready...'
+                  sleep 2
+                done
+                touch /var/lib/postgresql/data/standby.signal
+                echo "primary_conninfo = 'host=$POSTGRES_MASTER_HOST port=5432 user=$PGUSER password=$PGPASSWORD'" >> /var/lib/postgresql/data/postgresql.auto.conf
+                chmod 0700 /var/lib/postgresql/data
+                chown -R postgres:postgres /var/lib/postgresql/data
+              fi
+              exec gosu postgres postgres -c max_connections=200
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_NAME
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_REPLICATION_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: DB_REPLICATION_PASSWORD
+            - name: POSTGRES_MASTER_HOST
+              value: "postgres-master.payments.svc.cluster.local"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-replica-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replica
+  namespace: payments
+  labels:
+    app: postgres-replica
+    component: database
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres-replica
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

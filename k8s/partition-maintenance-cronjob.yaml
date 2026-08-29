@@ -1,6 +1,6 @@
 # Partition-maintenance CronJob — Phase 3 follow-up #1 (see
-# docs/spec/future/database-scaling.md Option 2 and
-# src/jobs/create-partitions-job.ts's docblock for the full reasoning:
+# src/jobs/create-partitions-job.ts's docblock and docs/technical/jobs.md
+# for the full reasoning:
 # Stage 1's migration only pre-creates partitions for a fixed window
 # relative to when *it* ran; without something extending that window as
 # real time moves forward, new rows eventually start silently landing

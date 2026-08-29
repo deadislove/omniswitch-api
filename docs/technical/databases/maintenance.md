@@ -60,10 +60,13 @@ replication is self-sustaining once established; PgBouncer just runs),
 but worth knowing the shape of if either ever needs troubleshooting —
 see [`architecture.md`](./architecture.md#masterreplica-streaming-replication).
 `postgres-replica`'s bootstrap (`pg_basebackup` against the master,
-`primary_conninfo` in `postgres.auto.conf`) is defined in
-`docker-compose.yml` for local dev; a real deployment's managed
-Postgres service (RDS, Cloud SQL, etc.) typically handles this
-natively rather than needing the same manual bootstrap.
+`primary_conninfo` in `postgres.auto.conf`) is defined in both
+`docker-compose.yml` (local dev) and `k8s/postgres.yaml` (this
+project's own self-managed Postgres deployment) — the same manual
+bootstrap either way. A real deployment using a managed Postgres
+service (RDS, Cloud SQL, etc.) instead of `k8s/postgres.yaml` would not
+need this; it's specific to self-managing Postgres rather than to any
+particular environment.
 
 ## What this page doesn't cover
 

@@ -1,6 +1,6 @@
 # PgBouncer — transaction-mode connection pooling in front of
-# postgres-master and postgres-replica (whichever StatefulSet/managed
-# service backs them; not defined in this repo — see configmap.yaml's
+# postgres-master and postgres-replica (see postgres.yaml, this directory,
+# for the Deployments/Services actually backing them — see configmap.yaml's
 # DB_MASTER_HOST/DB_REPLICA_HOST for where they're expected to live).
 #
 # Why: each pod opens up to `extra.max: 20` connections (app.module.ts,
@@ -8,14 +8,28 @@
 # maxReplicas: 20 that's up to 400 potential connections against each of
 # master and replica, both configured for max_connections=200 in the
 # local docker-compose stack. Already over budget at full scale,
-# independent of data volume. See
-# docs/spec/future/database-scaling.md (Option 1) for the full reasoning
-# and docker-compose.yml's pgbouncer-master/pgbouncer-replica services
-# for the equivalent local setup.
+# independent of data volume. See docs/technical/k8s/data-layer.md for
+# the full reasoning and docker-compose.yml's pgbouncer-master/
+# pgbouncer-replica services for the equivalent local setup.
 #
 # DEFAULT_POOL_SIZE: 50 per instance — real backend connections PgBouncer
 # opens to Postgres, well under a 200 max_connections budget, leaving
 # headroom for replication streams, migrations, and admin tooling.
+#
+# No pod-level `securityContext` forcing non-root, deliberately: the
+# `edoburu/pgbouncer` entrypoint always writes a generated pgbouncer.ini
+# containing a hardcoded `user = postgres` directive, which PgBouncer
+# itself then uses to `setuid()` from root down to the `postgres` user
+# after binding its listening socket — the image's own built-in
+# privilege-drop mechanism, not an oversight. Forcing this container to
+# already start as a non-root UID (as an earlier version of this
+# manifest did) doesn't harden it further; it breaks that self-drop
+# outright (`setuid` to a *different* user than the one you're already
+# running as always fails with `Operation not permitted`, `root`
+# excepted) and crash-loops the pod on both the userlist.txt write
+# (no writable volume at /etc/pgbouncer) and this setuid call. Verified
+# live against a real cluster with Postgres/Vault/Redis and the actual
+# application image all deployed.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,10 +53,6 @@ spec:
       labels:
         app: pgbouncer-master
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        runAsGroup: 1001
       containers:
         - name: pgbouncer
           image: edoburu/pgbouncer:v1.24.1-p1
@@ -139,10 +149,6 @@ spec:
       labels:
         app: pgbouncer-replica
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        runAsGroup: 1001
       containers:
         - name: pgbouncer
           image: edoburu/pgbouncer:v1.24.1-p1

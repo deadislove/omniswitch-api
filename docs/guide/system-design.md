@@ -224,12 +224,14 @@ piece of state becomes available, and where the two failure branches
   failure sets a *terminal* `FAILED` status (not auto-retried) — an
   operator resets it via `POST /admin/outbox/:id/retry`, deliberately,
   so a systemic downstream outage doesn't retry-storm forever.
-- **Marketplace payout sweep** (`PayoutService`, three independent
+- **Marketplace payout sweep** (`PayoutService`, four independent
   `@Cron` sweeps): batches split proceeds into `Payout` records with a
-  rolling reserve, separately rechecks KYC-blocked payouts as merchants
-  get verified, separately initiates bank transfers for eligible ones.
-  Three sweeps, not one, because each concern (batching, KYC, transfer)
-  can become eligible at a different time from the others.
+  rolling reserve, separately releases reserves once their hold period
+  elapses, separately rechecks KYC-blocked payouts as merchants get
+  verified, separately initiates bank transfers for eligible ones. Four
+  sweeps, not one, because each concern (batching, reserve release,
+  KYC, transfer) can become eligible at a different time from the
+  others.
 
 ## 5. Cross-cutting infrastructure concerns
 

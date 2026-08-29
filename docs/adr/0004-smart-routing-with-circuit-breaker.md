@@ -67,8 +67,11 @@ caller this happened.
 **Circuit breaker state lives in Redis**
 (`RedisCircuitBreakerService`, via the same `CachePort` idempotency
 already uses — no new connection), not on adapter instance fields —
-five consecutive failures opens the circuit for 30 seconds, then it
-moves to `HALF_OPEN`, and a single success closes it again. Because
+5 failures within a 60-second sliding window (a Redis counter with its
+TTL refreshed on every failure — not a run of *consecutive* failures;
+a success while the circuit is still `CLOSED` doesn't reset it) opens
+the circuit for 30 seconds, then it moves to `HALF_OPEN`, where a
+single success does close it again. Because
 this state is shared, not per-process, a circuit tripped by traffic
 hitting one replica is visible to every other replica's next routing
 decision immediately — verified live: forcing 5 failures against one

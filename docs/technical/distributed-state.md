@@ -206,17 +206,20 @@ state where cluster-wide state was actually needed) — but unlike those
 two, **it has not been fixed here**, only worked around, unevenly, on a
 service-by-service basis.
 
-There are eight of these today (nine counting a purely read-only one):
-`LedgerOutboxRelayService.relay()` (every 10s) and its
+There are thirteen of these today (fifteen counting the two purely
+read-only ones): `LedgerOutboxRelayService.relay()` (every 10s) and its
 `detectStaleEvents()` (every 5min, log/alert-only — no state mutation,
 so not a duplication concern the way the others below are);
 `ReconciliationService` (hourly, not daily); `ReserveService`,
-`SubscriptionService`, and `RiskTieringService` (all daily); and
+`SubscriptionService`, and `RiskTieringService` (all daily);
 `PayoutService`'s four separate sweeps — `runSweep()` (noon),
 `releaseEligibleReserves()` (midnight), `recheckKycBlocks()` (1am),
-and `initiateEligibleTransfers()` (2am). At 20 replicas, the daily/hourly
-sweeps don't run once a day/hour — they run up to 20 times, all within
-roughly the same moment.
+and `initiateEligibleTransfers()` (2am); `AmbiguousPaymentService`'s
+`runAutoResolutionSweep()` (every 10min) and `alertOnStale()` (every
+5min, log/alert-only, same posture as `detectStaleEvents()` above); and
+`AmbiguousRiskMonitoringService.runAutoClearSweep()` (3am). At 20
+replicas, the daily/hourly sweeps don't run once a day/hour — they run
+up to 20 times, all within roughly the same moment.
 
 ### What actually happens per service (not a uniform story)
 
@@ -267,6 +270,19 @@ roughly the same moment.
   this relay currently does — see `ledger-and-settlement.md` — would fire
   in each replica that read the same event) is a real open question, not
   verified either way.
+- **`AmbiguousPaymentService.runAutoResolutionSweep()` reduces but
+  doesn't eliminate the race**: each item re-reads the payment on the
+  master and skips it if its status is no longer `AMBIGUOUS`
+  immediately before acting, which closes the most obvious window, but
+  two replicas could still both pass that re-read check for the same
+  payment before either one's write lands — not verified either way,
+  same open-question posture as `LedgerOutboxRelayService` above.
+  `alertOnStale()` is read-only/alert-only, same non-concern as
+  `detectStaleEvents()`.
+- **`AmbiguousRiskMonitoringService.runAutoClearSweep()` is idempotent**
+  — it unconditionally sets a merchant's ambiguous-risk flag to cleared;
+  two replicas racing the same merchant both write the same end state,
+  not a double-effect the way creating a new row would be.
 
 ### Why this hasn't been fixed properly
 

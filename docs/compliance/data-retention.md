@@ -285,7 +285,9 @@ an extra safety measure — a record correctly deleted from
 
 Also not part of the three-tier retention policy, but closely related
 and worth documenting here: `1787325352938-CreatePartitionedPaymentsAndLedgerOutbox.ts`
-(Stage 1 of partitioning — see `database-scaling.md` Option 2) only
+(Stage 1 of partitioning — see
+[`../technical/databases/architecture.md`](../technical/databases/architecture.md))
+only
 pre-creates partitions for a fixed window relative to *when it ran* (6
 months back, 2 forward). Nothing keeps extending that window as real
 time moves past it — without a recurring job, new rows eventually start
@@ -427,10 +429,11 @@ compliance system:
   added on top of this flag, likely alongside whatever handles #4's
   gap above (both would want somewhere durable to write records, not
   just a database column).
-- **Row-level archiving, not partition-level.** `database-scaling.md`'s
-  Option 2 (table partitioning) discusses `DETACH PARTITION` as a
-  possible archiving mechanism once partitioning is in place — this
-  implementation does `INSERT` + `DELETE` per eligible row instead,
+- **Row-level archiving, not partition-level.** Now that `payments`/
+  `ledger_outbox` are partitioned (see
+  [`../technical/databases/architecture.md`](../technical/databases/architecture.md)),
+  `DETACH PARTITION` is a possible archiving mechanism in principle —
+  this implementation does `INSERT` + `DELETE` per eligible row instead,
   because eligibility (no open dispute) is per-record, not
   per-partition, and a partition can contain a mix of eligible and
   ineligible rows. Correct over fast, deliberately.

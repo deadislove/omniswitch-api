@@ -75,6 +75,16 @@ compliance posture. Read this if you're changing code.
   Blob `BackupStorage` adapters the deletion job can write to:
   configuration, credentials, and what's been (and hasn't been)
   verified against real cloud infrastructure
+- [`k8s/`](./technical/k8s/) — what every manifest in the repo's `k8s/`
+  folder actually does: the Postgres/Redis/Vault/PgBouncer data layer,
+  the application Deployment/Service/HPA/config, and the
+  `NetworkPolicy`/Ingress/TLS networking model — including real bugs
+  each one surfaced only once actually deployed to a live cluster
+- [`deployment/`](./technical/deployment/) — how to actually get `k8s/`
+  running: cluster prerequisites it assumes (ingress-nginx, cert-manager,
+  a `StorageClass`), the apply order, a table of silent-failure gotchas,
+  a full runbook, and how to stand up a temporary mock-PSP test
+  environment on top of a real deployment
 
 ## [`business-domain/`](./business-domain/)
 

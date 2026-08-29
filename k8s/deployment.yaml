@@ -95,16 +95,46 @@ spec:
                 configMapKeyRef:
                   name: omniswitch-config
                   key: DB_MASTER_HOST
+            # DB_MASTER_PORT/DB_REPLICA_PORT: app.module.ts defaults these
+            # independently if unset — DB_MASTER_PORT to 5432 (usually
+            # correct by coincidence) but DB_REPLICA_PORT to 5433 (almost
+            # never correct, since 5432 is the standard PgBouncer/Postgres
+            # port everyone actually uses). Omitting these two previously
+            # meant every replica connection attempt hit a port nothing
+            # was listening on — an immediate refusal, not a slow
+            # timeout — which fails `DataSource.initialize()` as a whole
+            # (TypeORM's `replication` mode treats master+replica startup
+            # as one unit) and prevents the application from booting at
+            # all. Verified live against a real cluster.
+            - name: DB_MASTER_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_MASTER_PORT
             - name: DB_REPLICA_HOST
               valueFrom:
                 configMapKeyRef:
                   name: omniswitch-config
                   key: DB_REPLICA_HOST
+            - name: DB_REPLICA_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_REPLICA_PORT
             - name: DB_NAME
               valueFrom:
                 configMapKeyRef:
                   name: omniswitch-config
                   key: DB_NAME
+            # Without this, `app.module.ts`'s `config.get('DB_SSL')` reads
+            # as unset and silently falls back to `ssl: false` even though
+            # this ConfigMap's own DB_SSL value is "true" — TLS to the
+            # database would be silently disabled, not fail loudly.
+            - name: DB_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: DB_SSL
             - name: REDIS_HOST
               valueFrom:
                 configMapKeyRef:
@@ -120,7 +150,22 @@ spec:
                 configMapKeyRef:
                   name: omniswitch-config
                   key: RATE_LIMIT_MAX
+            # Without this, VaultTransitService falls back to
+            # http://localhost:8200 with an empty token — HmacSignatureGuard
+            # calls it on every HMAC-signed request (charge, refund,
+            # capture, cancel, dispute-evidence), so this is on the
+            # money-moving hot path, not just a boot-time nicety.
+            - name: VAULT_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: VAULT_ADDR
             # Secrets
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: VAULT_TOKEN
             - name: DB_USERNAME
               valueFrom:
                 secretKeyRef:

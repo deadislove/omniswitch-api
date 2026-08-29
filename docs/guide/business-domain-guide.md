@@ -54,7 +54,7 @@ PENDING → PROCESSING → SUCCEEDED
                      ↘ REQUIRES_CAPTURE (manual capture) → PARTIALLY_CAPTURED → SUCCEEDED
                      ↘ FAILED
 SUCCEEDED → PARTIALLY_REFUNDED → REFUNDED
-SUCCEEDED / PARTIALLY_REFUNDED → DISPUTED → SUCCEEDED (won) / REFUNDED (lost)
+SUCCEEDED → DISPUTED → SUCCEEDED (won) / REFUNDED (lost)
 ```
 
 Every transition is validated (`assertValidTransition` in
