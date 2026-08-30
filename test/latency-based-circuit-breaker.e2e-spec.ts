@@ -119,4 +119,102 @@ describe('Latency-based circuit breaker (e2e)', () => {
     },
     60_000,
   );
+
+  it(
+    'once the recovery window passes, a fresh charge preferring STRIPE routes back to it — not stuck on ADYEN forever',
+    async () => {
+      // Self-contained trip, independent of the test above's leftover state.
+      await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
+
+      for (let i = 0; i < 5; i++) {
+        await signedCharge({
+          amount: 20,
+          currency: 'USD',
+          paymentMethodId: 'pm_forceslow',
+          orderId: uniqueId('order'),
+          binInfo: USD_BIN,
+          preferredProvider: 'STRIPE',
+        }).expect(201);
+      }
+      const tripped = await routingHealth().expect(200);
+      expect((tripped.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
+
+      // Real wall-clock wait past RECOVERY_TIME_MS (30s) — deliberately with
+      // no refund/capture call against STRIPE in between. Before this fix,
+      // that was the *only* thing that ever moved a stuck OPEN state
+      // forward; a plain health check (the routing layer's own read path)
+      // never did, so a PSP could stay excluded from all new-charge
+      // routing indefinitely past its recovery window.
+      await new Promise((resolve) => setTimeout(resolve, 31_000));
+
+      // The health check itself — a pure read, no charge attempted yet —
+      // must already report HALF_OPEN. This is the read path the routing
+      // filter actually consults; it used to report OPEN forever here.
+      const beforeAnyNewCharge = await routingHealth().expect(200);
+      expect((beforeAnyNewCharge.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('HALF_OPEN');
+
+      const recovered = await signedCharge({
+        amount: 10,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+        preferredProvider: 'STRIPE',
+      }).expect(201);
+      // Routed to STRIPE directly (not "failed, then fell back") — proves
+      // STRIPE re-entered the routing candidate pool on its own.
+      expect(recovered.body.pspProvider).toBe('STRIPE');
+      expect(recovered.body.usedFallback).toBe(false);
+
+      const closed = await routingHealth().expect(200);
+      expect((closed.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('CLOSED');
+    },
+    90_000,
+  );
+
+  it(
+    'an operator can force-close a stuck circuit without waiting out the recovery window',
+    async () => {
+      await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
+
+      for (let i = 0; i < 5; i++) {
+        await signedCharge({
+          amount: 20,
+          currency: 'USD',
+          paymentMethodId: 'pm_forceslow',
+          orderId: uniqueId('order'),
+          binInfo: USD_BIN,
+          preferredProvider: 'STRIPE',
+        }).expect(201);
+      }
+      const tripped = await routingHealth().expect(200);
+      expect((tripped.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
+
+      const reset = await request(app.getHttpServer())
+        .post('/api/v1/payments/routing/circuit-breaker/STRIPE/reset')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(reset.body.circuitBreaker).toBe('CLOSED');
+
+      // No 30s wait at all — the whole point of the escape hatch.
+      const chargeRightAfter = await signedCharge({
+        amount: 10,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+        preferredProvider: 'STRIPE',
+      }).expect(201);
+      expect(chargeRightAfter.body.pspProvider).toBe('STRIPE');
+      expect(chargeRightAfter.body.usedFallback).toBe(false);
+    },
+    60_000,
+  );
+
+  it('resetting an unknown provider is rejected with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/payments/routing/circuit-breaker/NOT_A_REAL_PSP/reset')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+  });
 });

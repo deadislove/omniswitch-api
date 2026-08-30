@@ -270,6 +270,61 @@ describe('RedisCircuitBreakerService', () => {
     await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
   });
 
+  it('getMetrics()/isAvailable() report HALF_OPEN once the recovery window has elapsed, even if nothing has called assertAvailable() yet', async () => {
+    // This is the routing-layer read path (SmartRoutingStrategy reads
+    // circuit state via getHealthStatus() -> getMetrics(), never via
+    // assertAvailable()) — confirmed live: a PSP that tripped OPEN and
+    // was never independently refunded/captured against (the only other
+    // caller of assertAvailable()) stayed reported as OPEN forever, even
+    // well past RECOVERY_TIME_MS, because nothing ever read-through the
+    // recovery-window check for it. A brand-new charge can never route
+    // back to a PSP that only ever "recovers" in the eyes of a read path
+    // that never actually performs the transition.
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordFailure('STRIPE');
+    }
+    expect((await breaker.getMetrics('STRIPE')).state).toBe('OPEN');
+    expect(await breaker.isAvailable('STRIPE')).toBe(false);
+
+    jest.advanceTimersByTime(31_000); // past RECOVERY_TIME_MS — nobody calls assertAvailable()
+
+    expect((await breaker.getMetrics('STRIPE')).state).toBe('HALF_OPEN');
+    expect(await breaker.isAvailable('STRIPE')).toBe(true);
+  });
+
+  it('reading effective state via getMetrics()/isAvailable() does not itself consume a HALF_OPEN trial slot', async () => {
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordFailure('STRIPE');
+    }
+    jest.advanceTimersByTime(31_000);
+
+    // Poll the read-only path several times before anyone actually tries
+    // the PSP — none of these should spend the one real trial call.
+    await breaker.getMetrics('STRIPE');
+    await breaker.isAvailable('STRIPE');
+    await breaker.getMetrics('STRIPE');
+
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined(); // the actual trial
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN'); // budget now spent
+  });
+
+  it('resetCircuit() force-closes a stuck breaker and clears its failure/trial state', async () => {
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordFailure('STRIPE');
+    }
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+
+    await breaker.resetCircuit('STRIPE');
+
+    expect((await breaker.getMetrics('STRIPE')).state).toBe('CLOSED');
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
+
+    // A single failure right after reset must not immediately re-trip —
+    // proves failureCount was actually cleared, not just the state field.
+    await breaker.recordFailure('STRIPE');
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
+  });
+
   it('recovers the slow-call window on TTL expiry once the PSP stops being slow', async () => {
     for (let i = 0; i < 4; i++) {
       await breaker.recordSuccess('STRIPE', 6_000);
