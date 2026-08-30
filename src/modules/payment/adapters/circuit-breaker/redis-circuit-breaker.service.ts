@@ -12,6 +12,11 @@ export interface CircuitMetrics {
 
 const FAILURE_THRESHOLD = 5;
 const RECOVERY_TIME_MS = 30000;
+// How many calls are admitted as trial probes per HALF_OPEN episode —
+// matches Resilience4j's typical permittedNumberOfCallsInHalfOpenState
+// default of a small, fixed budget rather than letting every concurrent
+// caller through. See assertAvailable()'s docblock.
+const HALF_OPEN_TRIAL_CALLS = 1;
 
 // A call that never throws but is consistently slow is otherwise invisible
 // to the breaker: recordFailure() below is only ever reached via a thrown
@@ -110,19 +115,48 @@ export class RedisCircuitBreakerService {
     ]);
   }
 
-  /** Throws if the circuit is OPEN and the recovery window hasn't elapsed yet. */
+  /**
+   * Throws if the circuit is OPEN and the recovery window hasn't elapsed
+   * yet, or if it's HALF_OPEN and the HALF_OPEN_TRIAL_CALLS budget for
+   * this recovery episode is already spent.
+   *
+   * HALF_OPEN only ever gates a small, fixed number of trial calls, not
+   * every caller — once the state flips, every replica's concurrent
+   * traffic would otherwise pass through simultaneously (the exact
+   * opposite of what HALF_OPEN exists to do: send a struggling PSP a
+   * small probe, not a resumed full burst right as it starts recovering).
+   * The trial budget is a shared Redis INCR, so it's enforced across
+   * every replica the same way the rest of this breaker's state is.
+   */
   async assertAvailable(provider: string): Promise<void> {
     const state = (await this.cache.get<CircuitState>(this.key(provider, 'state'))) ?? 'CLOSED';
-    if (state !== 'OPEN') return;
 
-    const lastFailureTime = await this.cache.get<number>(this.key(provider, 'lastFailureTime'));
-    if (lastFailureTime && Date.now() - lastFailureTime > RECOVERY_TIME_MS) {
-      // Benign race if two replicas both flip this at once — same target value.
+    if (state === 'CLOSED') return;
+
+    if (state === 'OPEN') {
+      const lastFailureTime = await this.cache.get<number>(this.key(provider, 'lastFailureTime'));
+      if (!lastFailureTime || Date.now() - lastFailureTime <= RECOVERY_TIME_MS) {
+        throw new Error(`${provider} circuit breaker is OPEN. Service unavailable.`);
+      }
+      // Recovery window elapsed. Benign race if multiple replicas hit this
+      // at once — same target value — they all fall through to the trial
+      // budget check below together, which is itself race-safe (atomic INCR).
       await this.cache.set(this.key(provider, 'state'), 'HALF_OPEN');
-      return;
     }
 
-    throw new Error(`${provider} circuit breaker is OPEN. Service unavailable.`);
+    // state is HALF_OPEN here, either already was or was just set above.
+    const trialKey = this.key(provider, 'halfOpenTrialCount');
+    const trialNumber = await this.cache.incr(trialKey);
+    if (trialNumber === 1) {
+      // Only the caller that actually claims trial #1 sets the TTL — an
+      // expire() from a later, over-budget caller would extend this
+      // window every time it's hit, letting a busy PSP's rejected traffic
+      // indefinitely postpone the trial counter's own expiry.
+      await this.cache.expire(trialKey, Math.ceil(RECOVERY_TIME_MS / 1000));
+    }
+    if (trialNumber > HALF_OPEN_TRIAL_CALLS) {
+      throw new Error(`${provider} circuit breaker is OPEN. Service unavailable.`);
+    }
   }
 
   async recordSuccess(provider: string, latencyMs: number): Promise<void> {
@@ -139,6 +173,11 @@ export class RedisCircuitBreakerService {
       await this.cache.set(this.key(provider, 'failureCount'), 0);
       await this.cache.set(this.key(provider, 'recentCallCount'), 0);
       await this.cache.set(this.key(provider, 'slowCallCount'), 0);
+      // Clear the trial budget explicitly rather than letting its TTL
+      // expire naturally — a leftover count from this episode must not
+      // bleed into the next OPEN -> HALF_OPEN cycle and immediately
+      // reject that cycle's own first trial call.
+      await this.cache.del(this.key(provider, 'halfOpenTrialCount'));
       return;
     }
 
@@ -178,6 +217,10 @@ export class RedisCircuitBreakerService {
   async recordFailure(provider: string): Promise<void> {
     const epoch = this.currentEpochMinute();
     const failureCountKey = this.key(provider, 'failureCount');
+    // Read before this failure is recorded — used below to tell "this was
+    // a HALF_OPEN trial call" apart from "this is one more failure toward
+    // the normal CLOSED-state threshold."
+    const stateBeforeThisFailure = await this.cache.get<CircuitState>(this.key(provider, 'state'));
     const [failureCount] = await Promise.all([
       this.cache.incr(failureCountKey),
       // Refreshed on every failure, not just the first — see
@@ -192,8 +235,16 @@ export class RedisCircuitBreakerService {
       this.cache.set(this.key(provider, 'lastFailureTime'), Date.now()),
     ]);
 
-    if (failureCount >= FAILURE_THRESHOLD) {
+    // A failed HALF_OPEN trial call re-opens the circuit immediately —
+    // waiting for failureCount to reach FAILURE_THRESHOLD again would let
+    // a PSP that's still down absorb up to FAILURE_THRESHOLD more real
+    // requests before the breaker reacts, exactly the burst HALF_OPEN's
+    // single-trial-call budget (assertAvailable()) exists to prevent.
+    if (stateBeforeThisFailure === 'HALF_OPEN' || failureCount >= FAILURE_THRESHOLD) {
       await this.cache.set(this.key(provider, 'state'), 'OPEN');
+      // See recordSuccess()'s matching comment — a stale trial count must
+      // not survive into the next recovery attempt.
+      await this.cache.del(this.key(provider, 'halfOpenTrialCount'));
     }
   }
 

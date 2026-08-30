@@ -51,9 +51,9 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return PaymentMapper.toDomain(entity);
   }
 
-  async findByIdempotencyKey(key: string): Promise<PaymentAggregate | null> {
+  async findByIdempotencyKey(merchantId: string, key: string): Promise<PaymentAggregate | null> {
     const entity = await this.paymentRepo.findOne({
-      where: { idempotencyKey: key },
+      where: { merchantId, idempotencyKey: key },
     });
     if (!entity) return null;
     return PaymentMapper.toDomain(entity);

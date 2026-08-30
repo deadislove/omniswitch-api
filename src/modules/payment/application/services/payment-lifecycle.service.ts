@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { randomUUID as uuidv4 } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
@@ -10,6 +10,7 @@ import { PaymentStatus, isValidTransition } from '../../domain/value-objects/pay
 import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggregate';
 import { Money } from '../../domain/value-objects/money.vo';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
+import { PaymentEntity } from '../../adapters/persistence/entities/payment.entity';
 import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
 
@@ -53,11 +54,31 @@ export class PaymentLifecycleService {
     idempotencyKey: string;
   }): Promise<PaymentAggregate> {
     const { payment } = params;
+    // Snapshot before any domain mutation below touches status/refunds —
+    // this is the DB row version this call is allowed to overwrite. See
+    // saveIfUnchanged()'s docblock.
+    const before = PaymentMapper.toPersistence(payment);
 
     if (!payment.pspProvider || !payment.pspTransactionId) {
       throw new ConflictException({
         statusCode: 409,
         error: 'Payment was never charged at a PSP, nothing to refund',
+        code: 'NOT_REFUNDABLE',
+      });
+    }
+
+    // Check status *before* calling the PSP, not just the amount below —
+    // PaymentAggregate.refund()'s own status guard (SUCCEEDED/
+    // PARTIALLY_REFUNDED only) previously only ran *after* the live PSP
+    // refund call, so a DISPUTED payment with no prior refunds passed the
+    // amount check (nothing exceeds the balance) and reached the PSP
+    // before ever being rejected — refunding real money at the PSP, then
+    // throwing on a payment already left inconsistent. Verified live via
+    // a spy on the PSP adapter's refund() method.
+    if (payment.status !== PaymentStatus.SUCCEEDED && payment.status !== PaymentStatus.PARTIALLY_REFUNDED) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payment is in status ${payment.status}, not refundable`,
         code: 'NOT_REFUNDABLE',
       });
     }
@@ -131,7 +152,7 @@ export class PaymentLifecycleService {
     });
 
     await this.dataSource.transaction(async (manager) => {
-      await manager.save(PaymentMapper.toPersistence(payment));
+      await this.saveIfUnchanged(manager, payment, before);
       await this.ledgerOutbox.saveWithPayment(payment.id, outboxEvent, manager);
     });
 
@@ -146,6 +167,9 @@ export class PaymentLifecycleService {
     idempotencyKey: string;
   }): Promise<PaymentAggregate> {
     const { payment } = params;
+    // See the matching comment in refund() — must be snapshotted before
+    // any domain mutation below.
+    const before = PaymentMapper.toPersistence(payment);
 
     if (payment.status !== PaymentStatus.REQUIRES_CAPTURE && payment.status !== PaymentStatus.PARTIALLY_CAPTURED) {
       throw new ConflictException({
@@ -225,7 +249,7 @@ export class PaymentLifecycleService {
     });
 
     await this.dataSource.transaction(async (manager) => {
-      await manager.save(PaymentMapper.toPersistence(payment));
+      await this.saveIfUnchanged(manager, payment, before);
       await this.ledgerOutbox.saveWithPayment(payment.id, outboxEvent, manager);
       if (reserveHold) {
         await this.reserveService.recordHold(
@@ -279,6 +303,51 @@ export class PaymentLifecycleService {
     this.publish(payment);
     this.logger.log(`Payment ${payment.id} cancelled`);
     return payment;
+  }
+
+  /**
+   * Conditional UPDATE ... WHERE, matching ReserveService's
+   * markReserveReleased()/markKycCleared() pattern — capture()/refund()
+   * both read-modify-write the same jsonb captures/refunds columns with a
+   * plain manager.save() (a blind overwrite), so two concurrent calls on
+   * the same payment (e.g. two partial captures with different
+   * idempotency keys) can silently lose one's array entry: both read the
+   * same row, both mutate their own in-memory copy, and whichever save()
+   * commits last wins, discarding the other's write with no error at all.
+   * Gating the UPDATE on `status`/`refunds`/`captures` still matching what
+   * this call originally read (`before`, snapshotted pre-mutation by the
+   * caller) turns that silent loss into a loud 409: if another commit
+   * already changed any of them, `affected` comes back 0. `refunds`/
+   * `captures` are compared as jsonb (not text) so key-order/whitespace
+   * differences between Postgres's own stored form and JS's
+   * JSON.stringify() can't cause a false mismatch — an `updated_at`-based
+   * check was tried first but a bare Date round-tripped through the pg
+   * driver rejected even non-concurrent, single-caller updates.
+   * This does not close the race window before the DB write — the PSP was
+   * already called with real money by this point, matching every other
+   * call site in this service — it only guarantees the loser's write
+   * never lands, rather than landing and clobbering the winner's.
+   */
+  private async saveIfUnchanged(manager: EntityManager, payment: PaymentAggregate, before: PaymentEntity): Promise<void> {
+    const entity = PaymentMapper.toPersistence(payment);
+    const { id, ...fields } = entity;
+    const result = await manager
+      .createQueryBuilder()
+      .update(PaymentEntity)
+      .set({ ...fields, updatedAt: new Date() } as Record<string, unknown>)
+      .where('id = :id', { id })
+      .andWhere('status = :expectedStatus', { expectedStatus: before.status })
+      .andWhere('refunds = :expectedRefunds::jsonb', { expectedRefunds: JSON.stringify(before.refunds) })
+      .andWhere('captures = :expectedCaptures::jsonb', { expectedCaptures: JSON.stringify(before.captures) })
+      .execute();
+
+    if ((result.affected ?? 0) === 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Payment was modified by a concurrent request, please retry',
+        code: 'CONCURRENT_MODIFICATION',
+      });
+    }
   }
 
   private publish(payment: PaymentAggregate): void {

@@ -97,6 +97,23 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
     return res.body;
   }
 
+  async function refundPayment(paymentId: string, amount: number) {
+    const bodyObj = { amount };
+    const bodyStr = JSON.stringify(bodyObj);
+    const { signature, timestamp } = signHmacRequest(merchant.hmacSecret, 'post', `/api/v1/payments/${paymentId}/refund`, bodyStr);
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/payments/${paymentId}/refund`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', randomUUID())
+      .set('X-Signature', signature)
+      .set('X-Timestamp', timestamp)
+      .set('X-Merchant-Id', merchant.merchantId)
+      .set('Content-Type', 'application/json')
+      .send(bodyObj)
+      .expect(200);
+    return res.body;
+  }
+
   describe('POST /webhooks/stripe', () => {
     it('rejects a request with no Stripe-Signature header', async () => {
       await request(app.getHttpServer())
@@ -274,6 +291,39 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
       return { payment, disputeId, disputeRecordId: matching[0].id };
     });
 
+    it('a dispute-created webhook for a PARTIALLY_REFUNDED payment still creates a Dispute record, not a silently dropped webhook', async () => {
+      const payment = await chargeImmediate(100);
+      const refundRes = await refundPayment(payment.paymentId, 40);
+      expect(refundRes.status).toBe('PARTIALLY_REFUNDED');
+
+      const disputeId = 'dp_' + uniqueId('test');
+      const body = JSON.stringify({
+        id: 'evt_' + uniqueId('test'),
+        type: 'charge.dispute.created',
+        data: { object: { id: disputeId, payment_intent: payment.pspTransactionId, reason: 'fraudulent' } },
+      });
+      await request(app.getHttpServer())
+        .post('/api/v1/webhooks/stripe')
+        .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, body))
+        .set('Content-Type', 'application/json')
+        .send(body)
+        .expect(200);
+
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${payment.paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(getRes.body.status).toBe('DISPUTED');
+
+      const listRes = await request(app.getHttpServer())
+        .get('/api/v1/admin/disputes')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .query({ merchantId: merchant.merchantId })
+        .expect(200);
+      const matching = listRes.body.filter((d: any) => d.paymentId === payment.paymentId);
+      expect(matching).toHaveLength(1);
+    });
+
     it('submitting evidence moves a dispute to UNDER_REVIEW, calling the PSP', async () => {
       const payment = await chargeImmediate(60);
       const disputeId = 'dp_' + uniqueId('test');
@@ -417,6 +467,106 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .query({ merchantId: merchant.merchantId })
         .expect(200);
       expect(listRes.body.find((d: any) => d.paymentId === payment.paymentId).status).toBe('LOST');
+    });
+
+    it('winning a dispute on a PARTIALLY_REFUNDED payment restores PARTIALLY_REFUNDED, not SUCCEEDED', async () => {
+      // Restoring to SUCCEEDED here would silently erase the $40 refund
+      // that already happened — remainingRefundable would read as the
+      // full $100 again, letting the merchant over-refund later.
+      const payment = await chargeImmediate(100);
+      await refundPayment(payment.paymentId, 40);
+
+      const disputeId = 'dp_' + uniqueId('test');
+      const createBody = JSON.stringify({
+        id: 'evt_' + uniqueId('test'),
+        type: 'charge.dispute.created',
+        data: { object: { id: disputeId, payment_intent: payment.pspTransactionId, reason: 'fraudulent' } },
+      });
+      await request(app.getHttpServer())
+        .post('/api/v1/webhooks/stripe')
+        .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, createBody))
+        .set('Content-Type', 'application/json')
+        .send(createBody)
+        .expect(200);
+
+      const closeBody = JSON.stringify({
+        id: 'evt_' + uniqueId('test'),
+        type: 'charge.dispute.closed',
+        data: { object: { id: disputeId, status: 'won' } },
+      });
+      await request(app.getHttpServer())
+        .post('/api/v1/webhooks/stripe')
+        .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, closeBody))
+        .set('Content-Type', 'application/json')
+        .send(closeBody)
+        .expect(200);
+
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${payment.paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(getRes.body.status).toBe('PARTIALLY_REFUNDED');
+      // Still exactly the one $40 refund from before the dispute — winning
+      // it didn't erase that history or add a second entry.
+      expect(getRes.body.refunds).toHaveLength(1);
+      expect(getRes.body.refunds[0].amount).toBe(40);
+    });
+
+    it('losing a dispute on a PARTIALLY_REFUNDED payment claws back only the remaining balance, not the full original amount', async () => {
+      // The real regression this guards against: recording the disputed
+      // amount as the full $100 (instead of the $60 actually still at
+      // risk) would double-count the $40 already refunded once this
+      // pushes its own refund record — totalRefunded would read $140
+      // against a $100 payment.
+      const payment = await chargeImmediate(100);
+      await refundPayment(payment.paymentId, 40);
+
+      const disputeId = 'dp_' + uniqueId('test');
+      const createBody = JSON.stringify({
+        id: 'evt_' + uniqueId('test'),
+        type: 'charge.dispute.created',
+        data: { object: { id: disputeId, payment_intent: payment.pspTransactionId, reason: 'fraudulent' } },
+      });
+      await request(app.getHttpServer())
+        .post('/api/v1/webhooks/stripe')
+        .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, createBody))
+        .set('Content-Type', 'application/json')
+        .send(createBody)
+        .expect(200);
+
+      const listAfterCreate = await request(app.getHttpServer())
+        .get('/api/v1/admin/disputes')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .query({ merchantId: merchant.merchantId })
+        .expect(200);
+      // The recorded dispute amount is what's actually still at risk ($60),
+      // not the full original charge ($100).
+      expect(listAfterCreate.body.find((d: any) => d.paymentId === payment.paymentId).amount).toBe(60);
+
+      const closeBody = JSON.stringify({
+        id: 'evt_' + uniqueId('test'),
+        type: 'charge.dispute.closed',
+        data: { object: { id: disputeId, status: 'lost' } },
+      });
+      await request(app.getHttpServer())
+        .post('/api/v1/webhooks/stripe')
+        .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, closeBody))
+        .set('Content-Type', 'application/json')
+        .send(closeBody)
+        .expect(200);
+
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${payment.paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(getRes.body.status).toBe('REFUNDED');
+      // Exactly two refund records ($40 original + $60 dispute-lost), not
+      // a third double-counting one, and they sum to the full $100 — not
+      // $140, which is what double-counting the already-refunded $40
+      // would have produced.
+      expect(getRes.body.refunds).toHaveLength(2);
+      const totalRefunded = getRes.body.refunds.reduce((sum: number, r: { amount: number }) => sum + r.amount, 0);
+      expect(totalRefunded).toBe(100);
     });
 
     it('Adyen NOTIFICATION_OF_CHARGEBACK creates a dispute, and CHARGEBACK_REVERSED resolves it WON', async () => {

@@ -219,6 +219,57 @@ describe('RedisCircuitBreakerService', () => {
     await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
   });
 
+  it('during HALF_OPEN, only a single trial call is let through — the rest are rejected like OPEN', async () => {
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordFailure('STRIPE');
+    }
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+
+    jest.advanceTimersByTime(31_000); // past RECOVERY_TIME_MS
+
+    // First call transitions OPEN -> HALF_OPEN and is admitted as the
+    // trial call.
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
+
+    // Every other call arriving while that trial is still outstanding
+    // must be rejected — this is the actual thundering-herd bug: without
+    // a trial budget, every call passes unconditionally the instant state
+    // flips to HALF_OPEN, regardless of how many are in flight.
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+  });
+
+  it('a failed HALF_OPEN trial call re-opens the circuit immediately, not after FAILURE_THRESHOLD failures again', async () => {
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordFailure('STRIPE');
+    }
+    jest.advanceTimersByTime(31_000);
+    await breaker.assertAvailable('STRIPE'); // admits the trial call, state -> HALF_OPEN
+
+    // The trial call itself fails — a single failure, not FAILURE_THRESHOLD
+    // (5) of them, must be enough to snap back to OPEN: the PSP is still
+    // down, and letting more real traffic through while re-accumulating
+    // the failure count is exactly the thundering-herd problem restated.
+    await breaker.recordFailure('STRIPE');
+    await expect(breaker.assertAvailable('STRIPE')).rejects.toThrow('OPEN');
+  });
+
+  it('a new OPEN -> HALF_OPEN cycle after a failed trial gets its own fresh trial budget', async () => {
+    for (let i = 0; i < 5; i++) {
+      await breaker.recordFailure('STRIPE');
+    }
+    jest.advanceTimersByTime(31_000);
+    await breaker.assertAvailable('STRIPE'); // trial 1, state -> HALF_OPEN
+    await breaker.recordFailure('STRIPE'); // trial fails, state -> OPEN again
+
+    jest.advanceTimersByTime(31_000); // past RECOVERY_TIME_MS again
+
+    // A stale trial-counter left over from the previous HALF_OPEN episode
+    // must not carry over and immediately reject this new recovery
+    // attempt's own trial call.
+    await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
+  });
+
   it('recovers the slow-call window on TTL expiry once the PSP stops being slow', async () => {
     for (let i = 0; i < 4; i++) {
       await breaker.recordSuccess('STRIPE', 6_000);

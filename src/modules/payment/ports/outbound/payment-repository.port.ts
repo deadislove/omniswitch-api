@@ -34,7 +34,14 @@ export abstract class PaymentRepositoryPort {
    */
   abstract findByIdOnMaster(id: string): Promise<PaymentAggregate | null>;
 
-  abstract findByIdempotencyKey(key: string): Promise<PaymentAggregate | null>;
+  /**
+   * Scoped by merchantId as well as the raw key — the DB-level uniqueness
+   * constraint is `(merchant_id, idempotency_key, created_at)`, not just
+   * `idempotency_key`, precisely so two different merchants can use the
+   * same idempotency key value without colliding. A single-argument
+   * lookup would silently return an arbitrary match once that's true.
+   */
+  abstract findByIdempotencyKey(merchantId: string, key: string): Promise<PaymentAggregate | null>;
   abstract findByPspTransactionId(pspTransactionId: string): Promise<PaymentAggregate | null>;
   abstract findByMerchantId(merchantId: string, filter?: FindPaymentsFilter): Promise<PaymentAggregate[]>;
   abstract update(payment: PaymentAggregate): Promise<void>;

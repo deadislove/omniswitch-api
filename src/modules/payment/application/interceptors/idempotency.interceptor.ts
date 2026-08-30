@@ -62,8 +62,19 @@ export class IdempotencyInterceptor implements NestInterceptor {
       );
     }
 
-    const cacheKey = `${IDEMPOTENCY_PREFIX}${idempotencyKey}`;
-    const lockKey = `${LOCK_PREFIX}${idempotencyKey}`;
+    // Scoped by merchant, not just the raw key — this interceptor runs
+    // after JwtAuthGuard (see PaymentController's class-level @UseGuards
+    // ordering), so req.user is already populated. Without this, a caller
+    // who submits another merchant's *known* Idempotency-Key (leaked via
+    // a logging bug, a shared support ticket) would get that merchant's
+    // cached response replayed back — including its payment ID, PSP
+    // transaction ID, and risk score — before the request ever reaches
+    // the controller's own assertOwnership() check. Verified live: two
+    // different merchants charging with the same Idempotency-Key, the
+    // second got the first's cached response back instead of its own charge.
+    const merchantId = request.user?.merchantId;
+    const cacheKey = `${IDEMPOTENCY_PREFIX}${merchantId}:${idempotencyKey}`;
+    const lockKey = `${LOCK_PREFIX}${merchantId}:${idempotencyKey}`;
 
     return from(this.processIdempotency(cacheKey, lockKey, idempotencyKey, context, next));
   }

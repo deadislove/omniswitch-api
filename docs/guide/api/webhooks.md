@@ -17,8 +17,8 @@ Handled event types:
 |---|---|
 | `payment_intent.succeeded` | Resolves a `PROCESSING` or `REQUIRES_ACTION` payment to `SUCCEEDED`, books the ledger entry now (this is the *only* ledger-booking point for a webhook-confirmed charge — covers both a resolved 3DS challenge and a delayed/async authorization that never needed one) |
 | `payment_intent.payment_failed` | Resolves a `PROCESSING` or `REQUIRES_ACTION` payment to `FAILED` |
-| `charge.dispute.created` | Creates a `Dispute` (`NEEDS_RESPONSE`), runs the auto-decision policy — see [`disputes.md`](./disputes.md) |
-| `charge.dispute.closed` | Resolves an existing dispute `WON` or `LOST` (by the PSP's own `status` field) — a `LOST` resolution books a ledger clawback |
+| `charge.dispute.created` | Creates a `Dispute` (`NEEDS_RESPONSE`), runs the auto-decision policy — see [`disputes.md`](./disputes.md). Accepted for a payment currently `SUCCEEDED` **or** `PARTIALLY_REFUNDED` (a chargeback on an already-partially-refunded payment is normal — a partial refund for a shipping issue, then the cardholder disputes the rest); any other status is logged and ignored |
+| `charge.dispute.closed` | Resolves an existing dispute `WON` or `LOST` (by the PSP's own `status` field) — `WON` restores whichever status the payment was in before the dispute (`SUCCEEDED` or `PARTIALLY_REFUNDED`), `LOST` moves it to `REFUNDED` and books a ledger clawback for the amount still outstanding at dispute time |
 
 Any other event type is logged and ignored (not an error). Both success
 and failure handlers are safe against PSP redelivery: a payment already

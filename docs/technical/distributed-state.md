@@ -162,8 +162,29 @@ throttler's "increment + conditionally set TTL" did. State *transitions*
 (`OPEN` → `HALF_OPEN`, `HALF_OPEN` → `CLOSED`) are a plain `GET` then `SET`,
 which is technically racy — two replicas could both observe `OPEN` past the
 recovery window and both write `HALF_OPEN` — but since both would be writing
-the same target value, the race is benign. There's no scenario where this
-produces an incorrect final state, only a harmless duplicate write.
+the same target value, the race is benign: there's no scenario where the
+state transition itself lands wrong, only a harmless duplicate write.
+
+**A separate, real bug this benign-race reasoning originally missed**:
+`assertAvailable()` used to admit *every* call once state was anything
+other than `OPEN` — so the instant the state flipped to `HALF_OPEN`,
+every replica's concurrent traffic passed through simultaneously, not
+just a single trial call, which is the opposite of what `HALF_OPEN`
+exists to do (send a struggling PSP a small probe, not a resumed full
+burst right as it may be starting to recover). Fixed with a second,
+independent Redis counter (`halfOpenTrialCount`, atomic `INCR`, TTL set
+only by whichever call claims slot 1) that gates `HALF_OPEN` admission
+to exactly one trial call per recovery episode; every other call arriving
+before that trial resolves is rejected the same as `OPEN`. A failed trial
+re-opens the circuit immediately (not after `FAILURE_THRESHOLD` failures
+accumulate again), and both the `HALF_OPEN → CLOSED` success path and the
+immediate-reopen failure path explicitly delete the trial counter so a
+leftover count from one recovery episode can't reject the next one's own
+first trial call. Verified with `redis-circuit-breaker.service.spec.ts`
+(a fake, real-TTL-semantics `CachePort`): confirmed live that, before this
+fix, a second `assertAvailable()` call issued right after the first one
+admitted the `HALF_OPEN` trial also resolved successfully instead of
+being rejected.
 
 ### Verification
 
