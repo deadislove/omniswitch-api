@@ -69,9 +69,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     // a logging bug, a shared support ticket) would get that merchant's
     // cached response replayed back — including its payment ID, PSP
     // transaction ID, and risk score — before the request ever reaches
-    // the controller's own assertOwnership() check. Verified live: two
-    // different merchants charging with the same Idempotency-Key, the
-    // second got the first's cached response back instead of its own charge.
+    // the controller's own assertOwnership() check.
     const merchantId = request.user?.merchantId;
     const cacheKey = `${IDEMPOTENCY_PREFIX}${merchantId}:${idempotencyKey}`;
     const lockKey = `${LOCK_PREFIX}${merchantId}:${idempotencyKey}`;
@@ -145,9 +143,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
     // and catchError treats a returned Promise as a value to emit rather than
     // something to flatten — so `return throwError(() => error)` inside an
     // async function shipped the Observable *object* as a 200 response body
-    // instead of propagating the error. Verified live: an over-refund request
-    // that should 409 came back 200 with body `{}`. switchMap here properly
-    // sequences the async cache work before resolving/rejecting.
+    // instead of propagating the error (e.g. an over-refund request that
+    // should 409 would come back 200 with body `{}`). switchMap here
+    // properly sequences the async cache work before resolving/rejecting.
     return new Promise((resolve, reject) => {
       next
         .handle()

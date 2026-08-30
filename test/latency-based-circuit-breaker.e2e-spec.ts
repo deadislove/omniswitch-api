@@ -44,9 +44,8 @@ describe('Latency-based circuit breaker (e2e)', () => {
     // whatever ran in the previous file within the last 60s is still in
     // this window. Without resetting it here, this test's 5 slow calls get
     // diluted by an unknown number of fast calls from prior files and the
-    // ratio never crosses SLOW_CALL_RATE_THRESHOLD — confirmed live: this
-    // test passes in isolation but failed intermittently as part of the
-    // full suite before this reset was added.
+    // ratio never crosses SLOW_CALL_RATE_THRESHOLD, making this test flaky
+    // as part of the full suite even though it's reliable in isolation.
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 

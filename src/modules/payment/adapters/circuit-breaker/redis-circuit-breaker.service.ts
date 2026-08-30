@@ -140,11 +140,7 @@ export class RedisCircuitBreakerService {
    * new-charge routing, indefinitely past its recovery window, unless
    * some unrelated call (a refund/capture against an *existing* payment,
    * which bypasses routing and targets a known PSP directly) happened to
-   * call assertAvailable() on it first. Confirmed live: forced STRIPE
-   * OPEN, waited well past RECOVERY_TIME_MS, and a fresh
-   * `preferredProvider: STRIPE` charge still routed straight to ADYEN
-   * with no fallback involved — ADYEN was the only candidate from the
-   * start, because STRIPE never re-entered the pool.
+   * call assertAvailable() on it first.
    */
   private async computeEffectiveState(provider: string): Promise<CircuitState> {
     const state = (await this.cache.get<CircuitState>(this.key(provider, 'state'))) ?? 'CLOSED';

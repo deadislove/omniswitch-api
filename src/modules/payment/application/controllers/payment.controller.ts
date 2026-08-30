@@ -109,11 +109,11 @@ export class PaymentController {
   /** Merchants may only act on their own payments; ADMIN/OPERATOR may act on any. */
   private assertOwnership(payment: PaymentAggregate, req: any): void {
     if (req.user?.roles?.includes(UserRole.MERCHANT) && payment.metadata.merchantId !== req.user.merchantId) {
-      // BadRequestException always sends HTTP 400 regardless of the
-      // statusCode field inside its body — a client checking the actual
-      // response status (not just the JSON payload) would never see this as
-      // a 403. Verified live: a cross-merchant cancel attempt came back as
-      // HTTP 400 with a body claiming "statusCode":403.
+      // ForbiddenException, not BadRequestException — the latter always
+      // sends HTTP 400 regardless of the statusCode field inside its body,
+      // so a client checking the actual response status (not just the
+      // JSON payload) would never see a cross-merchant access attempt as
+      // the 403 it actually is.
       throw new ForbiddenException({ statusCode: 403, error: 'Forbidden', code: 'ACCESS_DENIED' });
     }
   }

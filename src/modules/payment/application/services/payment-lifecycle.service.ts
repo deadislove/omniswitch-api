@@ -73,8 +73,7 @@ export class PaymentLifecycleService {
     // refund call, so a DISPUTED payment with no prior refunds passed the
     // amount check (nothing exceeds the balance) and reached the PSP
     // before ever being rejected — refunding real money at the PSP, then
-    // throwing on a payment already left inconsistent. Verified live via
-    // a spy on the PSP adapter's refund() method.
+    // throwing on a payment already left inconsistent.
     if (payment.status !== PaymentStatus.SUCCEEDED && payment.status !== PaymentStatus.PARTIALLY_REFUNDED) {
       throw new ConflictException({
         statusCode: 409,

@@ -273,11 +273,10 @@ describe('RedisCircuitBreakerService', () => {
   it('getMetrics()/isAvailable() report HALF_OPEN once the recovery window has elapsed, even if nothing has called assertAvailable() yet', async () => {
     // This is the routing-layer read path (SmartRoutingStrategy reads
     // circuit state via getHealthStatus() -> getMetrics(), never via
-    // assertAvailable()) — confirmed live: a PSP that tripped OPEN and
-    // was never independently refunded/captured against (the only other
-    // caller of assertAvailable()) stayed reported as OPEN forever, even
-    // well past RECOVERY_TIME_MS, because nothing ever read-through the
-    // recovery-window check for it. A brand-new charge can never route
+    // assertAvailable()). A PSP that trips OPEN and is never independently
+    // refunded/captured against (the only other caller of
+    // assertAvailable()) must not stay reported as OPEN forever once its
+    // recovery window has passed — a brand-new charge can never route
     // back to a PSP that only ever "recovers" in the eyes of a read path
     // that never actually performs the transition.
     for (let i = 0; i < 5; i++) {

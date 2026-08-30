@@ -427,8 +427,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
       // (app.module.ts's `replication` config) — this is a
       // before/after count straddling two writes, each exposed to the
       // replica's ~1s streaming lag (see reserve.service.ts's release()
-      // and test/ledger-and-outbox.e2e-spec.ts for the same issue
-      // confirmed live elsewhere).
+      // and test/ledger-and-outbox.e2e-spec.ts for the same issue).
       const countOnMaster = async (paymentId: string) => {
         const queryRunner = dataSource.createQueryRunner('master');
         try {
