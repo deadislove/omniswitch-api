@@ -55,7 +55,7 @@
     "class-validator": "^0.15.1",
     "compression": "^1.7.4",
     "csv-parser": "^3.0.0",
-    "helmet": "^7.1.0",
+    "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
     "multer": "^2.3.0",
     "nest-winston": "^1.9.4",
