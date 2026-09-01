@@ -1,9 +1,10 @@
 # Platform Operations API
 
 Source: `outbox-admin.controller.ts`, `reconciliation-admin.controller.ts`,
+`legal-hold-admin.controller.ts`, `ambiguous-payment-admin.controller.ts`,
 `health.controller.ts`, `metrics.controller.ts`. These endpoints exist
-for operators and infrastructure, not for merchants integrating with the
-API.
+for operators and infrastructure, not for merchants integrating with
+the API.
 
 ---
 
@@ -78,6 +79,112 @@ Triggers a run on demand.
 A mismatch is one of `MISSING_AT_PSP` (we have it, the PSP doesn't),
 `AMOUNT_MISMATCH` (both have it, amounts disagree), or `UNKNOWN_AT_PSP`
 (the PSP has a transaction we don't).
+
+---
+
+## Legal hold (`/admin/payments/:id/legal-hold`)
+
+Blocks a payment from the data-retention pipeline — see
+[`../../compliance/data-retention.md`](../../compliance/data-retention.md#legal-hold)
+for the full design (why it's a single boolean with no audit trail, and
+why placing a hold on an archived payment restores it to the live
+table). Both the archiving job and the deletion job exclude a
+`legal_hold = true` payment regardless of its age, status, or dispute
+state.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+
+### `POST /admin/payments/:id/legal-hold`
+
+Places a hold. If the payment is currently archived
+(`archive.payments`), this restores it to the live `payments` table as
+part of placing the hold — a record under active legal/regulatory
+scrutiny needs to be reachable through the normal payment query path,
+not left in cold storage.
+
+**Response `200`**: `{ id, legalHold: true, location: "live" | "restored-from-archive" }`
+
+- **Errors**: `404` payment not found in either `payments` or `archive.payments`.
+
+### `DELETE /admin/payments/:id/legal-hold`
+
+Releases a hold. Only ever operates on the live table — a held payment
+is always live (`POST` guarantees that). The payment simply becomes
+archive-eligible again the next time the archiving job runs, once its
+age/status/dispute conditions are otherwise met; there's no separate
+"re-archive" step.
+
+**Response `200`**: `{ id, legalHold: false, location: "live" }`
+
+- **Errors**: `404` payment not currently in the live `payments` table.
+
+---
+
+## Ambiguous payment resolution (`/admin/payments/ambiguous`, `/admin/payments/:id/resolve-ambiguous`)
+
+A payment reaches `AMBIGUOUS` when a PSP call gets no response at all
+(not a decline — a timeout/network failure) and a same-provider retry
+also gets no response — see
+[`../../business-domain/payment-lifecycle.md`](../../business-domain/payment-lifecycle.md)'s
+note on `AMBIGUOUS`. An automated sweep tries to resolve one first by
+asking the PSP directly what happened; these endpoints cover listing,
+triggering that sweep on demand, and the manual escape hatch for
+whatever it doesn't resolve within its own retry budget.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+
+### `GET /admin/payments/ambiguous`
+
+List `AMBIGUOUS` payments across every merchant. Optional
+`?olderThanMinutes=` — omit (or `0`) to list every currently
+`AMBIGUOUS` payment regardless of age.
+
+**Shape**: `{ paymentId, merchantId, amount, currency, pspProvider?, failureReason, createdAt, ageMinutes, ambiguousAutoRetryCount }`
+
+### `POST /admin/payments/ambiguous/run-auto-resolution`
+
+Triggers the automated PSP-query resolution sweep on demand — the same
+logic the periodic background job runs, without waiting for its
+schedule. For each eligible `AMBIGUOUS` payment (still `AMBIGUOUS`,
+under the auto-retry attempt cap, old enough that the PSP has plausibly
+had time to recover from whatever caused the original timeout), asks
+the PSP what actually happened via a read-only lookup keyed by
+idempotency key — not a resubmitted charge; this system never keeps the
+card reference past the original request, so there's nothing to
+resubmit with even if it wanted to. `SUCCEEDED` books the same ledger
+entries a webhook confirmation would; `FAILED` records that no charge
+occurred; if the PSP still has no record either, the attempt count
+increments and it's left for the next sweep (or escalated to a human
+via the stale alert below, once the attempt cap is reached).
+
+**Response `200`**: `{ succeeded: number, failed: number, stillUnknown: number, skipped: number }`
+
+### `POST /admin/payments/:id/resolve-ambiguous`
+
+Records what actually happened at the PSP — the manual path, for
+whatever the automated sweep above hasn't resolved (or when an operator
+needs to close one out immediately rather than wait for the sweep).
+`SUCCEEDED` books the same ledger entries a webhook confirmation would
+(fee/reserve/split resolution, a real ledger outbox entry) — this is
+recording a real charge as collected, not just flipping a status flag.
+`FAILED` records that no charge occurred; nothing is booked.
+
+**Body**: `{ outcome: 'SUCCEEDED'|'FAILED', pspTransactionId?: string, reason: string }`
+— `pspTransactionId` is required when `outcome` is `SUCCEEDED` (an
+ambiguous outcome never received one automatically; that's what made
+it ambiguous). `reason` is always required — this is a manual override
+of financial state, so it always needs a stated justification.
+
+**Response `200`**: the payment detail shape (same as `GET /payments/:id`),
+plus a permanent audit trail for this action: `ambiguousResolvedBy`
+(the resolving ADMIN/OPERATOR's `merchantId`), `ambiguousResolvedReason`
+(the `reason` supplied), `ambiguousResolvedAt`. These three fields stay
+unset for a payment the automated sweep resolved — the audit trail only
+ever records an actual human decision.
+
+- **Errors**: `404` payment not found; `409` payment is not currently
+  `AMBIGUOUS`; `422` `outcome: 'SUCCEEDED'` without `pspTransactionId`,
+  or `reason` missing/empty.
 
 ---
 

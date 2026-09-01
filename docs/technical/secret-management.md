@@ -136,8 +136,11 @@ storage is Vault's own recommended default now, Consul is the older
 common choice) so a restart doesn't wipe the Transit engine and
 permanently orphan every existing ciphertext; (2) replace the static
 root token with AppRole or Kubernetes auth, and a policy scoped to
-exactly `encrypt`/`decrypt` on the `hmac-secrets`/`totp-secrets` Transit
-keys — `VaultTransitService` itself wouldn't need to change, since it
+exactly `encrypt`/`decrypt` on the `hmac-secrets` Transit key — there's
+only one Transit key today (`VaultTransitService`'s hardcoded
+`TRANSIT_KEY_NAME`), reused for both HMAC secrets and TOTP secrets, not
+a separate `totp-secrets` key. `VaultTransitService` itself wouldn't
+need to change, since it
 already just holds a token and calls the Transit API, not caring how
 that token was obtained. Neither of these is a code change in this
 application; both are Vault/cluster configuration this repo's

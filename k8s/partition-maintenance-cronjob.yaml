@@ -1,0 +1,104 @@
+# Partition-maintenance CronJob — Phase 3 follow-up #1 (see
+# src/jobs/create-partitions-job.ts's docblock and docs/technical/jobs.md
+# for the full reasoning:
+# Stage 1's migration only pre-creates partitions for a fixed window
+# relative to when *it* ran; without something extending that window as
+# real time moves forward, new rows eventually start silently landing
+# in the DEFAULT partition instead of a real monthly one).
+#
+# Same "why a CronJob, not @Cron()" reasoning as archiving-cronjob.yaml/
+# deletion-cronjob.yaml — and specifically not something an operator
+# should run via `kubectl exec` into a running `omniswitch-api`
+# Deployment pod either: that pod exists to serve traffic, can be
+# rescaled or recycled by the HPA/a rolling update at any time, and
+# isn't a stable place to run a maintenance script. A CronJob spins up
+# its own dedicated, disposable pod per scheduled run instead.
+#
+# Schedule: weekly, well ahead of the default 2-month forward buffer
+# (PARTITION_MAINTENANCE_MONTHS_AHEAD) — a missed run or two still
+# leaves real headroom before anything could fall into DEFAULT.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: omniswitch-partition-maintenance
+  namespace: payments
+  labels:
+    app: omniswitch-partition-maintenance
+    component: partition-maintenance
+    workload-type: batch-job
+spec:
+  schedule: "0 5 * * 0"  # weekly, Sunday 05:00 — after archiving (03:00) and deletion (04:00)
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600  # this is a handful of lightweight DDL statements, not a data-volume operation
+      template:
+        metadata:
+          labels:
+            app: omniswitch-partition-maintenance
+            workload-type: batch-job
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+          containers:
+            - name: partition-maintenance-job
+              image: omniswitch/payment-gateway:1.0.0
+              imagePullPolicy: Always
+              command: ["node", "dist/jobs/create-partitions-job.js"]
+              env:
+                - name: NODE_ENV
+                  value: "production"
+                - name: DB_MASTER_HOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_MASTER_HOST
+                - name: DB_MASTER_PORT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_MASTER_PORT
+                - name: DB_NAME
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_NAME
+                - name: DB_SSL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_SSL
+                - name: PARTITION_MAINTENANCE_MONTHS_AHEAD
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: PARTITION_MAINTENANCE_MONTHS_AHEAD
+                - name: DB_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: omniswitch-secrets
+                      key: DB_USERNAME
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: omniswitch-secrets
+                      key: DB_PASSWORD
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop:
+                    - ALL

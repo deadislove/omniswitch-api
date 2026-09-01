@@ -33,7 +33,23 @@ export class HmacSignatureGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly merchantService: MerchantService,
     private readonly vaultTransit: VaultTransitService,
-  ) {}
+  ) {
+    // Same fail-fast bar as JWT_SECRET (jwt.strategy.ts) — HMAC_SECRET is
+    // only ever *reached* as a fallback for merchants with no DB-backed
+    // hmacSecretCiphertext (see getMerchantHmacSecret() below), but a
+    // deployment that never trips that fallback would otherwise never
+    // notice a missing or copy-pasted-placeholder value sitting there
+    // unguarded until the day it actually got used. Guards are singletons
+    // by default in Nest, so this constructor runs once at DI-container
+    // build time — refusing to start here is the same "fail loud at boot,
+    // not silently at request time" posture as JwtStrategy's check.
+    const hmacSecret = configService.get<string>('HMAC_SECRET');
+    if (!hmacSecret || hmacSecret.length < 32) {
+      throw new Error(
+        'HMAC_SECRET must be set to a random value of at least 32 characters. Refusing to start with a missing/weak secret.',
+      );
+    }
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // Check if HMAC verification is skipped for this route
@@ -110,11 +126,18 @@ export class HmacSignatureGuard implements CanActivate {
         code: 'UNKNOWN_MERCHANT',
       });
     }
-    if (hmacSecret.length < 16) {
-      // A short/placeholder secret (e.g. a "CHANGE_ME" value left over from a
-      // template) is brute-forceable; treat it as misconfiguration and fail
-      // closed rather than verifying signatures against a weak key.
-      this.logger.error(`HMAC secret for merchant ${merchantId} is shorter than 16 chars — treating as misconfigured`);
+    if (hmacSecret.length < 32) {
+      // Matches the constructor's HMAC_SECRET boot check — this is the
+      // only enforcement point for the *per-merchant* env fallback
+      // (HMAC_SECRET_<merchantId>), which can't be validated at boot the
+      // way the single global HMAC_SECRET can (merchant IDs aren't known
+      // ahead of time). A short/placeholder secret (e.g. a "CHANGE_ME"
+      // value left over from a template) is brute-forceable; treat it as
+      // misconfiguration and fail closed rather than verifying signatures
+      // against a weak key. Real per-merchant secrets are always
+      // randomBytes(32).toString('hex') (64 chars, see
+      // MerchantService.rotateHmacSecret()) and never hit this bar.
+      this.logger.error(`HMAC secret for merchant ${merchantId} is shorter than 32 chars — treating as misconfigured`);
       throw new UnauthorizedException({
         statusCode: 401,
         error: 'Merchant HMAC key is misconfigured',

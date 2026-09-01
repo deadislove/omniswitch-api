@@ -1,0 +1,142 @@
+# Real `redis` backing configmap.yaml's REDIS_HOST
+# (`redis.payments.svc.cluster.local`) and the `app: redis` pod label
+# network-policy.yaml's allow-api-to-redis/allow-ingress-to-redis rules
+# already assumed before this file existed.
+#
+# Single instance, `Deployment` + one `ReadWriteOnce` PVC — same reasoning
+# as postgres.yaml: this app's own `CacheService`/idempotency-key/rate-limit
+# usage has no client-side sharding or cluster-mode awareness, so a Redis
+# Cluster/Sentinel setup would add operational complexity this app can't
+# actually take advantage of. `strategy: Recreate`, not the default
+# RollingUpdate, for the same RWO-PVC reason as postgres.yaml (a
+# RollingUpdate would try to schedule the new pod before the old one
+# releases the volume).
+#
+# Mirrors docker-compose.yml's redis service: same image (redis:7-alpine),
+# same maxmemory/eviction/persistence flags. One difference: the password
+# is read from an env var (REDIS_PASSWORD, sourced from omniswitch-secrets)
+# rather than hardcoded in the command line the way docker-compose.yml's
+# --requirepass redis_secret is — so overriding REDIS_PASSWORD in a real
+# deployment's Secret actually takes effect.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: payments
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # maxmemory below caps the in-memory dataset at 256Mi; this only
+      # needs to hold the AOF/RDB persistence files, not a full second
+      # copy of anything larger — resize if maxmemory is ever raised.
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: payments
+  labels:
+    app: redis
+    component: cache
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          # Backslash line-continuations are load-bearing here, not just
+          # style: without them, each line is its own complete shell
+          # statement — `exec redis-server` alone is valid, and `exec`
+          # replaces the process immediately, silently dropping every
+          # flag after it (including --requirepass) rather than erroring.
+          # Verified live: a first version without the backslashes booted
+          # redis-server with zero arguments and no password at all.
+          command:
+            - sh
+            - -c
+            - |
+              exec redis-server \
+                --requirepass "$REDIS_PASSWORD" \
+                --maxmemory 256mb \
+                --maxmemory-policy allkeys-lru \
+                --save 900 1 \
+                --save 300 10 \
+                --save 60 10000 \
+                --appendonly yes \
+                --appendfsync everysec \
+                --loglevel notice
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              # Above maxmemory (256mb) to leave headroom for
+              # Redis's own overhead (connection buffers, AOF rewrite
+              # buffer) on top of the dataset ceiling itself.
+              memory: "384Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -a "$REDIS_PASSWORD" ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -a "$REDIS_PASSWORD" ping
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: payments
+  labels:
+    app: redis
+    component: cache
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP

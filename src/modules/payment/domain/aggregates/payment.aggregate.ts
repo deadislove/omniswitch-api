@@ -6,6 +6,7 @@ import {
   PaymentIntentCreatedEvent,
   PaymentChargedEvent,
   PaymentFailedEvent,
+  PaymentAmbiguousEvent,
   PaymentRequiresActionEvent,
   PaymentRefundedEvent,
   PaymentDisputedEvent,
@@ -86,6 +87,10 @@ export class PaymentAggregate {
     private _updatedAt: Date = new Date(),
     private _settlementConversion?: SettlementConversion,
     private _splits?: PaymentSplit[],
+    private _ambiguousResolvedBy?: string,
+    private _ambiguousResolvedReason?: string,
+    private _ambiguousResolvedAt?: Date,
+    private _ambiguousAutoRetryCount: number = 0,
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -139,6 +144,10 @@ export class PaymentAggregate {
     updatedAt?: Date;
     settlementConversion?: SettlementConversion;
     splits?: PaymentSplit[];
+    ambiguousResolvedBy?: string;
+    ambiguousResolvedReason?: string;
+    ambiguousResolvedAt?: Date;
+    ambiguousAutoRetryCount?: number;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -160,6 +169,10 @@ export class PaymentAggregate {
       params.updatedAt ?? new Date(),
       params.settlementConversion,
       params.splits,
+      params.ambiguousResolvedBy,
+      params.ambiguousResolvedReason,
+      params.ambiguousResolvedAt,
+      params.ambiguousAutoRetryCount ?? 0,
     );
   }
 
@@ -286,6 +299,45 @@ export class PaymentAggregate {
     );
   }
 
+  markAmbiguous(reason: string, errorCode?: string): void {
+    assertValidTransition(this._status, PaymentStatus.AMBIGUOUS);
+    this._failureReason = reason;
+    this._failureCode = errorCode;
+    this.transitionTo(PaymentStatus.AMBIGUOUS);
+    this.addDomainEvent(
+      new PaymentAmbiguousEvent(this._id, reason, this._pspProvider),
+    );
+  }
+
+  /**
+   * Records who resolved an AMBIGUOUS payment and why — a manual admin
+   * override of financial state (see AmbiguousPaymentService), not a
+   * status transition itself, so this is called alongside
+   * markSucceeded()/markFailed() rather than instead of them. Deliberately
+   * separate fields from failureReason/failureCode above: those are
+   * written by real PSP declines too, and conflating an operator's audit
+   * note into a field also used for that would make it ambiguous later
+   * which kind of event actually produced a given FAILED payment's
+   * reason.
+   */
+  recordManualAmbiguousResolution(resolvedBy: string, reason: string): void {
+    this._ambiguousResolvedBy = resolvedBy;
+    this._ambiguousResolvedReason = reason;
+    this._ambiguousResolvedAt = new Date();
+  }
+
+  /**
+   * One attempt of the automated sweep (AmbiguousPaymentService.
+   * runAutoResolutionSweep()) asked the PSP about this payment via
+   * queryOutcome() and got STILL_UNKNOWN back — not a status transition,
+   * just a counter so the sweep can stop retrying once
+   * AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS is reached and leave the
+   * payment for a human via the existing stale-alert path instead.
+   */
+  incrementAmbiguousAutoRetryCount(): void {
+    this._ambiguousAutoRetryCount++;
+  }
+
   cancel(): void {
     assertValidTransition(this._status, PaymentStatus.CANCELLED);
     this.transitionTo(PaymentStatus.CANCELLED);
@@ -338,7 +390,9 @@ export class PaymentAggregate {
 
   /**
    * Records a chargeback/dispute reported by the PSP via webhook.
-   * Only valid from SUCCEEDED (a payment can't be disputed before it charged).
+   * Valid from SUCCEEDED or PARTIALLY_REFUNDED (a payment can't be disputed
+   * before it charged, but a partial refund doesn't prevent a chargeback on
+   * what's left — a normal real-world sequence, not an edge case).
    */
   markDisputed(reason?: string): void {
     assertValidTransition(this._status, PaymentStatus.DISPUTED);
@@ -353,8 +407,16 @@ export class PaymentAggregate {
    */
   resolveDispute(outcome: 'WON' | 'LOST'): void {
     if (outcome === 'WON') {
-      assertValidTransition(this._status, PaymentStatus.SUCCEEDED);
-      this.transitionTo(PaymentStatus.SUCCEEDED);
+      // Restore whichever pre-dispute state this came from — SUCCEEDED if
+      // nothing had been refunded yet, PARTIALLY_REFUNDED if it had.
+      // Hardcoding SUCCEEDED here would silently erase real refund history
+      // for a payment that was PARTIALLY_REFUNDED before the dispute
+      // started. totalRefunded is derived from `_refunds` and unaffected by
+      // the dispute itself, so it's a safe way to tell the two cases apart
+      // without needing a separate "status before dispute" field.
+      const restoreTo = this.totalRefunded.isZero() ? PaymentStatus.SUCCEEDED : PaymentStatus.PARTIALLY_REFUNDED;
+      assertValidTransition(this._status, restoreTo);
+      this.transitionTo(restoreTo);
       return;
     }
     // LOST: economically identical to a full, merchant-uninitiated refund —
@@ -362,10 +424,18 @@ export class PaymentAggregate {
     // wants. Recorded via the same RefundRecord/refunds[] mechanism a normal
     // refund uses (not a separate code path) so totalRefunded/
     // remainingRefundable stay accurate no matter why the money left.
+    //
+    // Amount is `remainingRefundable`, not the full `_amount` — a dispute
+    // that started from a PARTIALLY_REFUNDED payment already has some of
+    // `_amount` accounted for in `_refunds`; pushing the full amount again
+    // here would double-count the already-refunded portion. For a dispute
+    // that started from SUCCEEDED (nothing refunded yet), remainingRefundable
+    // equals the full amount anyway, so this is a strict generalization, not
+    // a behavior change for that case.
     assertValidTransition(this._status, PaymentStatus.REFUNDED);
     this._refunds.push({
       refundId: `dispute-lost-${this._id}`,
-      amount: this._amount,
+      amount: this.remainingRefundable,
       reason: 'dispute_lost',
       createdAt: new Date(),
     });
@@ -468,6 +538,10 @@ export class PaymentAggregate {
   get updatedAt(): Date { return this._updatedAt; }
   get settlementConversion(): SettlementConversion | undefined { return this._settlementConversion; }
   get splits(): PaymentSplit[] | undefined { return this._splits; }
+  get ambiguousResolvedBy(): string | undefined { return this._ambiguousResolvedBy; }
+  get ambiguousResolvedReason(): string | undefined { return this._ambiguousResolvedReason; }
+  get ambiguousResolvedAt(): Date | undefined { return this._ambiguousResolvedAt; }
+  get ambiguousAutoRetryCount(): number { return this._ambiguousAutoRetryCount; }
 
   get totalRefunded(): Money {
     return this._refunds.reduce(

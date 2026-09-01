@@ -14,8 +14,9 @@ internally — see [`system-design.md`](../system-design.md#3-a-charge-end-to-en
 for the full internal flow.
 
 - **Roles**: `MERCHANT`, `ADMIN`, `AGENT`
-- **Guards**: HMAC + Idempotency-Key (both **skipped** for an `AGENT`
-  caller — see [`agentic-payments.md`](./agentic-payments.md))
+- **Guards**: HMAC + Idempotency-Key — HMAC is **skipped** for an
+  `AGENT` caller (see [`agentic-payments.md`](./agentic-payments.md));
+  `Idempotency-Key` is required unconditionally, for every role
 - **Rate limit**: 100/min
 
 **Request body**
@@ -31,7 +32,7 @@ for the full internal flow.
 | `description` | string | no | |
 | `statementDescriptor` | string | no | Max 22 chars |
 | `binInfo` | object | no | `{ bin, country, cardBrand, cardType, issuingBank? }` — feeds smart routing (3DS/EU heuristics) |
-| `preferredProvider` | `'STRIPE'\|'ADYEN'\|'PAYPAL'\|'CHASE'` | no | Overrides smart routing (only Stripe/Adyen have adapters implemented) |
+| `preferredProvider` | `'STRIPE'\|'ADYEN'\|'PAYPAL'\|'CHASE'` | no | Overrides smart routing (only Stripe/Adyen have adapters implemented). Rejected with `422` if outside the merchant's PSP entitlement — see [`merchants-and-auth.md`](./merchants-and-auth.md#patch-adminmerchantsidpsp-entitlement) |
 | `metadata` | object | no | Free-form key-value pairs |
 | `category` | string | no | Only enforced for an `AGENT` caller against its delegation's `allowedCategories` — ignored otherwise |
 | `captureMethod` | `'automatic'\|'manual'` | no | `'manual'` authorizes without capturing; default `'automatic'` |
@@ -68,7 +69,10 @@ for the full internal flow.
 delegation has been revoked; `409` `splits` combined with
 `captureMethod: 'manual'`, or a split's settlement-currency conflict;
 `422` a raw-card-number-shaped reference, request validation failure,
-an invalid split recipient, or (`AGENT` only) a spend-policy violation
+an invalid split recipient, `preferredProvider` names a PSP outside
+the merchant's PSP entitlement (`PREFERRED_PROVIDER_NOT_ENTITLED` —
+see [`merchants-and-auth.md`](./merchants-and-auth.md#patch-adminmerchantsidpsp-entitlement)),
+or (`AGENT` only) a spend-policy violation
 (`DELEGATION_PER_TRANSACTION_LIMIT_EXCEEDED`,
 `DELEGATION_MONTHLY_LIMIT_EXCEEDED`, `DELEGATION_CATEGORY_NOT_ALLOWED`,
 `DELEGATION_CURRENCY_MISMATCH`).
@@ -104,8 +108,10 @@ for a full refund of the remaining refundable balance.
 **Response `200`**: `{ paymentId, status, totalRefunded, remainingRefundable, currency, refunds: [...] }`
 
 **Errors**: `400` missing Idempotency-Key; `403` wrong merchant; `404`
-not found; `409` amount exceeds remaining refundable balance, or payment
-isn't in a refundable status; `422` PSP declined the refund.
+not found; `409` amount exceeds remaining refundable balance, payment
+isn't in a refundable status, or `CONCURRENT_MODIFICATION` (another
+refund/capture on this same payment committed first — retry the read
+and decide again); `422` PSP declined the refund.
 
 ## `POST /payments/:id/capture`
 
@@ -122,8 +128,10 @@ remaining authorized amount.
 **Response `200`**: `{ paymentId, status, pspTransactionId, amount, totalCaptured, remainingCapturable, currency, captures: [...] }`
 
 **Errors**: `400` missing Idempotency-Key; `403` wrong merchant; `404`
-not found; `409` not `REQUIRES_CAPTURE`/`PARTIALLY_CAPTURED`, or amount
-exceeds the remaining authorized amount; `422` PSP declined the capture.
+not found; `409` not `REQUIRES_CAPTURE`/`PARTIALLY_CAPTURED`, amount
+exceeds the remaining authorized amount, or `CONCURRENT_MODIFICATION`
+(another capture/refund on this same payment committed first — retry
+the read and decide again); `422` PSP declined the capture.
 
 ## `POST /payments/:id/cancel`
 

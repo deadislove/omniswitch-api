@@ -57,6 +57,25 @@ export class PaymentFailedEvent extends DomainEvent {
 }
 
 /**
+ * Emitted when a PSP outcome can't be resolved after a retry (timeout/
+ * network failure both times) — genuinely unknown whether the charge went
+ * through at the PSP.
+ */
+export class PaymentAmbiguousEvent extends DomainEvent {
+  constructor(
+    public readonly paymentId: string,
+    public readonly reason: string,
+    public readonly pspProvider?: string,
+  ) {
+    super({ aggregateId: paymentId, aggregateType: 'Payment' });
+  }
+
+  get eventName(): string {
+    return 'payment.ambiguous';
+  }
+}
+
+/**
  * Emitted when a payment requires 3DS action
  */
 export class PaymentRequiresActionEvent extends DomainEvent {

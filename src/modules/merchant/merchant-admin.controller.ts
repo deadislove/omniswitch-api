@@ -10,6 +10,7 @@ import {
   UpdateReservePolicyDto,
   UpdatePayoutReservePolicyDto,
   UpdateRiskTierAutoDto,
+  UpdatePspEntitlementDto,
   SubmitKycDto,
   MerchantSummaryDto,
   MerchantCreatedResponseDto,
@@ -22,7 +23,15 @@ import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles, UserRole } from '../../shared/decorators/roles.decorator';
 import { MerchantEntity } from './merchant.entity';
 
-function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
+// Exported (not just used locally) so AmbiguousRiskAdminController — in
+// PaymentModule, not this one, since it depends on
+// AmbiguousRiskMonitoringService (PaymentRepositoryPort) and
+// MerchantModule must never depend on PaymentModule (the reverse already
+// holds; see architecture.md's module graph) — can reuse this exact
+// mapping instead of carrying its own drift-prone copy. A plain function
+// import across module boundaries doesn't create a NestJS DI cycle; only
+// service injection via a module's `imports` array does.
+export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
   // Never include apiKeySecretHash or hmacSecretCiphertext in list/read
   // responses — the plaintext HMAC secret only ever goes out once, at
   // creation/rotation time, and the ciphertext itself is never useful to a
@@ -44,6 +53,12 @@ function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     payoutReserveBps: merchant.payoutReserveBps,
     payoutReserveHoldDays: merchant.payoutReserveHoldDays,
     kycStatus: merchant.kycStatus,
+    enabledPspProviders: merchant.enabledPspProviders,
+    ambiguousRiskFlagged: merchant.ambiguousRiskFlagged,
+    ambiguousRiskFlaggedAt: merchant.ambiguousRiskFlaggedAt?.toISOString() ?? null,
+    ambiguousRiskFlagReason: merchant.ambiguousRiskFlagReason ?? null,
+    ambiguousRiskFlaggedBy: merchant.ambiguousRiskFlaggedBy ?? null,
+    ambiguousRiskAutoManaged: merchant.ambiguousRiskAutoManaged,
     createdAt: merchant.createdAt.toISOString(),
     updatedAt: merchant.updatedAt.toISOString(),
   };
@@ -168,6 +183,16 @@ export class MerchantAdminController {
   @ApiResponse({ status: 404, description: 'Merchant not found' })
   async updateRiskTierAuto(@Param('merchantId') merchantId: string, @Body() dto: UpdateRiskTierAutoDto): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.setRiskTierAutoManaged(merchantId, dto.enabled);
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/psp-entitlement')
+  @ApiOperation({ summary: 'Set which PSPs this merchant\'s charges may route through — takes effect on the next charge. A charge that explicitly requests a preferredProvider outside this list is rejected (422), not silently routed elsewhere.' })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  @ApiResponse({ status: 422, description: 'enabledPspProviders is empty' })
+  async updatePspEntitlement(@Param('merchantId') merchantId: string, @Body() dto: UpdatePspEntitlementDto): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updatePspEntitlement(merchantId, dto.enabledPspProviders);
     return toSummary(merchant);
   }
 

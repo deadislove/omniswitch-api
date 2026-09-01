@@ -140,4 +140,4 @@ limit (credential-guessing target). Exceeding either returns 429.
 | [`agentic-payments.md`](./agentic-payments.md) | Delegations and spend policy for autonomous agents |
 | [`merchants-and-auth.md`](./merchants-and-auth.md) | Login, MFA, merchant onboarding and policy configuration |
 | [`webhooks.md`](./webhooks.md) | Inbound PSP callbacks (Stripe, Adyen) |
-| [`platform-ops.md`](./platform-ops.md) | Outbox recovery, reconciliation, health, metrics |
+| [`platform-ops.md`](./platform-ops.md) | Outbox recovery, reconciliation, legal hold, health, metrics |

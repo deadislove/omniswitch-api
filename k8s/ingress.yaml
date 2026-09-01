@@ -1,3 +1,27 @@
+# Security headers (X-Frame-Options, CSP, HSTS, etc.) are NOT set via a
+# per-Ingress `nginx.ingress.kubernetes.io/configuration-snippet`
+# annotation here — verified live against a real ingress-nginx install
+# (chart default, no custom values) that this annotation is rejected
+# outright by the controller's own admission webhook on a fresh
+# `kubectl apply`, before this Ingress is created at all
+# (`allowSnippetAnnotations: false` has been the chart default since
+# ingress-nginx ~v1.9, a CVE-driven hardening default). Confirmed this
+# isn't a simple opt-back-in either: even with that flag temporarily set
+# to `true`, this exact snippet content (using the `more_set_headers`
+# directive) is separately rejected as a "risky annotation" by a second,
+# independent webhook check. There is no supported way to keep this
+# annotation and have this Ingress actually deploy against a
+# default-configured modern ingress-nginx.
+#
+# These same 5 headers are instead set via ingress-nginx's
+# controller-level `add-headers` global config — see
+# `k8s/ingress-nginx-security-headers-configmap.yaml`'s own comment for
+# the ConfigMap this assumes exists and the Helm value that wires it in.
+# This is coarser-grained (applies to every route this ingress-nginx
+# install serves, not just this one Ingress) but is the only mechanism
+# that still works, and this repo's own ingress-nginx install is assumed
+# dedicated to this one application rather than shared multi-tenant, so
+# that broader scope is the correct scope here, not a compromise.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -21,14 +45,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     # Body size for bulk upload
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-    # Security headers
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
-      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
-      more_set_headers "Content-Security-Policy: default-src 'none'";
 spec:
   tls:
     - hosts:

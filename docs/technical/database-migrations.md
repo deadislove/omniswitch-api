@@ -20,7 +20,11 @@ npm run migration:revert                                               # roll ba
 These read connection settings from real environment variables (or
 `.env`/`.env.local`, same as the app) — `DB_MASTER_HOST`, `DB_MASTER_PORT`,
 `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`. They always target the **master**
-only; migrations must never run against a replica.
+only; migrations must never run against a replica. In local/dev these
+point straight at `postgres-master`'s own port, not at `pgbouncer-master`
+— DDL and transaction-mode pooling don't mix well, and migrations aren't
+the connection-count concern PgBouncer exists for (see
+[`load-testing.md`](./load-testing.md), Finding #3).
 
 `src/database/data-source.ts` is a plain TypeORM `DataSource`, deliberately
 separate from `app.module.ts`'s `TypeOrmModule.forRootAsync()` — the CLI

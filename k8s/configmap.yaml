@@ -12,13 +12,31 @@ data:
   APP_VERSION: "1.0.0"
   LOG_LEVEL: "info"
 
-  # Database
-  DB_MASTER_HOST: "postgres-master.payments.svc.cluster.local"
+  # Database — routed through PgBouncer (pgbouncer.yaml), not directly at
+  # postgres-master/postgres-replica. At maxReplicas: 20 (hpa.yaml) with
+  # extra.max: 20 per pod (app.module.ts), direct connections could reach
+  # 400 against a single Postgres instance — see
+  # docs/technical/k8s/data-layer.md's PgBouncer section.
+  DB_MASTER_HOST: "pgbouncer-master.payments.svc.cluster.local"
   DB_MASTER_PORT: "5432"
-  DB_REPLICA_HOST: "postgres-replica.payments.svc.cluster.local"
+  DB_REPLICA_HOST: "pgbouncer-replica.payments.svc.cluster.local"
   DB_REPLICA_PORT: "5432"
   DB_NAME: "omniswitch_payments"
   DB_SSL: "true"
+
+  # Streaming-replication role postgres.yaml's postgres-master creates and
+  # postgres-replica authenticates as (scripts/postgres/init-master.sql's
+  # local docker-compose equivalent hardcodes this same role name). Only
+  # the role name is here — DB_REPLICATION_PASSWORD lives in
+  # omniswitch-secrets since it's a credential.
+  DB_REPLICATION_USER: "replicator"
+
+  # Real Postgres backends pgbouncer.yaml's two Deployments pool for —
+  # see postgres.yaml's postgres-master/postgres-replica Services. Kept
+  # separate from DB_MASTER_HOST/DB_REPLICA_HOST above, which is what the
+  # app itself connects to (the pooler), not the real database.
+  PGBOUNCER_MASTER_BACKEND_HOST: "postgres-master.payments.svc.cluster.local"
+  PGBOUNCER_REPLICA_BACKEND_HOST: "postgres-replica.payments.svc.cluster.local"
 
   # Redis
   REDIS_HOST: "redis.payments.svc.cluster.local"
@@ -29,9 +47,65 @@ data:
   RATE_LIMIT_MAX: "100"
   RATE_LIMIT_TTL: "60000"
 
+  # Data retention (archiving-cronjob.yaml / deletion-cronjob.yaml) — see
+  # docs/compliance/data-retention.md. Deliberately configurable, not
+  # hardcoded in the job scripts themselves — AML record-keeping minimums
+  # vary by jurisdiction, and this POC needs to be adjustable per
+  # deployment without a code change. These two values are the ones a
+  # real deployment's compliance/legal review is most likely to change.
+  ARCHIVE_THRESHOLD_DAYS: "180"
+  DELETION_THRESHOLD_YEARS: "8"
+  DELETION_BACKUP_REQUIRED: "true"
+  # Which BackupStorage adapter run-deletion-job.ts writes to (see
+  # src/jobs/backup-storage/get-backup-storage.ts) — "local" (default,
+  # a PVC-mounted path, see deletion-cronjob.yaml) needs no other config
+  # below. Switching to "s3"/"gcs"/"azure" for a real deployment means
+  # setting that provider's own vars (DELETION_BACKUP_S3_BUCKET/REGION,
+  # DELETION_BACKUP_GCS_BUCKET, or DELETION_BACKUP_AZURE_CONNECTION_STRING/
+  # CONTAINER — the last one belongs in omniswitch-secrets, not here,
+  # since it carries an access credential) and removing the PVC mount
+  # from deletion-cronjob.yaml, not just changing this value alone.
+  DELETION_BACKUP_STORAGE: "local"
+  DELETION_BACKUP_PATH: "/app/backups"
+  # Separate from the AML thresholds above — how long payments_old/
+  # ledger_outbox_old (the partitioning-cutover safety net) are kept
+  # before drop-cutover-tables-job.yaml (a one-time k8s Job, not a
+  # CronJob — see that manifest's own comment) will drop them.
+  CUTOVER_OLD_TABLE_RETENTION_DAYS: "60"
+
+  # Partition-maintenance (partition-maintenance-cronjob.yaml) — see
+  # src/jobs/create-partitions-job.ts. How many months ahead of "now"
+  # this job ensures a partition already exists for, on payments/
+  # ledger_outbox — matches Stage 1's original forward buffer.
+  PARTITION_MAINTENANCE_MONTHS_AHEAD: "2"
+
   # CORS
   CORS_ORIGINS: "https://dashboard.omniswitch.io,https://app.omniswitch.io"
 
   # PSP Configuration
   ADYEN_MERCHANT_ACCOUNT: "OmniSwitchProd"
   ADYEN_BASE_URL: "https://checkout-live.adyen.com/v71"
+  # STRIPE_BASE_URL is deliberately absent — stripe-psp.adapter.ts
+  # defaults it to the real `https://api.stripe.com/v1` when unset,
+  # which is the correct production target; setting it here would only
+  # be needed to point at a non-default endpoint (e.g. mock-psp, which
+  # docker-compose.yml does for local dev).
+  #
+  # FX_RATE_PROVIDER_URL / KYC_PROVIDER_URL / BANK_TRANSFER_PROVIDER_URL
+  # are also absent, but for a different reason than STRIPE_BASE_URL
+  # above: their adapters are literally named `FXRateProviderAdapter`
+  # (mock-only, per its own docblock — "not a real market-data
+  # provider"), `MockKycProviderAdapter`, and
+  # `MockBankTransferAdapter` — there is no real third-party integration
+  # behind any of these three yet, only `scripts/mock-psp/server.js`.
+  # Setting these to a real-looking URL here would misrepresent that as
+  # solved; leaving them unset (falling back to each adapter's
+  # `http://localhost:4000/...` default, which resolves to nothing in a
+  # real cluster) is the honest state until a real FX/KYC/bank-transfer
+  # provider is actually integrated.
+
+  # Vault — Transit-engine envelope encryption for `hmac_secret`
+  # (see VaultTransitService and vault.yaml's Deployment/Service).
+  # VAULT_TOKEN (a credential, not just a URL) lives in omniswitch-secrets
+  # instead of here.
+  VAULT_ADDR: "http://vault.payments.svc.cluster.local:8200"

@@ -1,0 +1,440 @@
+# Defense-in-depth network segmentation for the `payments` namespace.
+# This is NOT full PCI-DSS Requirement 1 CDE segmentation (this system's
+# whole design intent is to never hold a raw PAN in the first place, so
+# there is no CDE to isolate today — see
+# docs/technical/security-and-compliance.md's "Network segmentation"
+# section). This is ordinary least-privilege pod-to-pod traffic control:
+# without it, any pod in this namespace can reach any other pod on any
+# port, including the database/cache/secrets-store pods holding merchant
+# credentials and HMAC/TOTP secrets. That's the gap this closes.
+#
+# Requires a NetworkPolicy-enforcing CNI (Calico, Cilium, etc.) to have
+# any effect at all — kind's/most clouds' default CNI does not enforce
+# this resource; it would silently no-op. Verify these rules with
+# `scripts/network-policy-verify.sh` against a real
+# NetworkPolicy-enforcing CNI before trusting them — that script checks
+# both directions (an unauthorized pod is refused, and the app's own
+# intended traffic still works), which a manifest reviewed by eye alone
+# cannot prove either half of.
+#
+# ASSUMPTIONS flagged individually below: the ingress controller has no
+# manifest anywhere in this repo's k8s/ folder. Its labels/namespace below
+# are therefore this policy's best guess at k8s convention, not read from
+# an existing manifest the way the pgbouncer-master/pgbouncer-replica,
+# postgres-master/postgres-replica, redis, and vault rules are.
+# (postgres-master/postgres-replica, redis, and vault were in this same
+# "no manifest, best guess" category until postgres.yaml/redis.yaml/
+# vault.yaml were added — their rules below are now confirmed against
+# those real manifests.)
+#
+# NOT covered by this file (open questions, deliberately not guessed at):
+# - Outbound egress from omniswitch-api to Stripe/Adyen over the public
+#   internet (443) — configmap.yaml's ADYEN_BASE_URL points at the real
+#   checkout-live.adyen.com, unlike docker-compose's mock-psp. A
+#   default-deny egress policy with no rule for this will break every
+#   real charge, refund, capture, and dispute-evidence call the moment
+#   this policy is applied to a cluster actually processing payments.
+#   Harder than the rules below to express as a static NetworkPolicy —
+#   Stripe/Adyen don't publish fixed IP ranges a plain `ipBlock` could
+#   pin, so this needs either a DNS-aware egress mechanism (e.g. Cilium)
+#   or an explicit egress proxy, not something vanilla Kubernetes
+#   `NetworkPolicy` can express on its own. Left for a separate decision.
+# - Egress from the archiving/deletion/partition-maintenance/
+#   drop-cutover-tables batch-job pods to a cloud `BackupStorage`
+#   endpoint (S3/GCS/Azure), when `DELETION_BACKUP_STORAGE` isn't
+#   "local" (the default, which needs no network egress at all — see
+#   rule 12 below for what these pods *do* need unconditionally).
+---
+# 1. Default-deny everything in the namespace, ingress and egress alike.
+#    Every rule below is an explicit exception carved out of this.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: payments
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2. Every pod in the namespace still needs to resolve cluster DNS names
+#    (pgbouncer-master.payments.svc.cluster.local, etc.) — without this,
+#    default-deny egress above breaks name resolution for every other
+#    rule below before it even gets a chance to matter.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: payments
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3. Ingress controller -> omniswitch-api only. Matches ingress.yaml's
+#    `kubernetes.io/ingress.class: "nginx"` — ASSUMES the controller runs
+#    in a namespace labeled app.kubernetes.io/name: ingress-nginx (the
+#    standard ingress-nginx Helm chart's own label), since no ingress
+#    controller manifest lives in this repo to confirm it against.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-api
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: omniswitch-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# 4. omniswitch-api -> pgbouncer-master / pgbouncer-replica. Labels match
+#    pgbouncer.yaml's own `app: pgbouncer-master` / `app: pgbouncer-replica`
+#    exactly — not a guess.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-pgbouncer
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: omniswitch-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: pgbouncer-master
+        - podSelector:
+            matchLabels:
+              app: pgbouncer-replica
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# 5. pgbouncer-master / pgbouncer-replica -> their real postgres backends.
+#    Without this, rule 1's default-deny egress strangles pgbouncer itself
+#    even though rule 4 lets omniswitch-api reach pgbouncer — pgbouncer is
+#    a pod in this same namespace and therefore also subject to the
+#    default-deny above, regardless of which rule names it. ASSUMES the
+#    real postgres-master/
+#    postgres-replica also run as pods inside this same `payments`
+#    namespace with these labels; if they're actually an external managed
+#    service (e.g. RDS) reachable only outside the cluster, this rule
+#    needs an `ipBlock` instead of a `podSelector`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pgbouncer-to-postgres
+  namespace: payments
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - pgbouncer-master
+          - pgbouncer-replica
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-master
+        - podSelector:
+            matchLabels:
+              app: postgres-replica
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# 6. omniswitch-api -> redis. ASSUMES a Service/pods labeled `app: redis`
+#    back `redis.payments.svc.cluster.local` (configmap.yaml's REDIS_HOST)
+#    — no redis manifest exists in this repo to confirm the label against.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-redis
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: omniswitch-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+# 7. omniswitch-api -> vault. Pods labeled `app: vault` in this same
+#    namespace — see vault.yaml's Deployment/Service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-vault
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: omniswitch-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+---
+# 8-11. Ingress-side counterparts to rules 4-7 above.
+#
+# A Kubernetes NetworkPolicy's Egress rule only controls what the
+# *source* pod is allowed to send — it does not implicitly permit the
+# matching traffic on the *destination* pod's side. Because
+# default-deny-all (rule 1) sets Ingress: deny for every pod in this
+# namespace, pgbouncer/postgres/redis/vault each also need an explicit
+# Ingress-allow rule naming which pod is allowed to reach them, or they
+# refuse the connection even though the source's Egress rule permits
+# sending it. Confirmed live: applying only rules 1-7 to a real
+# NetworkPolicy-enforcing CNI (kind + Calico) left every one of these
+# four connections timing out from a pod labeled `app: omniswitch-api`,
+# despite rules 4/6/7 explicitly allowing that egress — the traffic
+# left the source pod and was dropped on arrival at the destination.
+#
+# allow-ingress-to-pgbouncer accepts two independent sources (each
+# `from` list entry is its own OR'd condition, not ANDed together):
+# omniswitch-api (the request path) and any workload-type: batch-job
+# pod (rule 12 below — the archiving/deletion/partition-maintenance/
+# drop-cutover-tables jobs, which also read/write via pgbouncer, not
+# directly against postgres).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-pgbouncer
+  namespace: payments
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - pgbouncer-master
+          - pgbouncer-replica
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: omniswitch-api
+      ports:
+        - protocol: TCP
+          port: 5432
+    - from:
+        - podSelector:
+            matchLabels:
+              workload-type: batch-job
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-postgres
+  namespace: payments
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - postgres-master
+          - postgres-replica
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - pgbouncer-master
+                  - pgbouncer-replica
+      ports:
+        - protocol: TCP
+          port: 5432
+    # postgres-replica's own streaming-replication connection to
+    # postgres-master (pg_basebackup + the standby's ongoing WAL stream) —
+    # distinct from pgbouncer's connections above, and easy to miss since
+    # this rule's podSelector already covers both postgres-master and
+    # postgres-replica, but this ingress source is only ever relevant to
+    # postgres-master. A default-deny cluster would otherwise let
+    # pgbouncer through while silently blocking replication itself, which
+    # postgres.yaml's postgres-replica Deployment depends on to boot at
+    # all (see that file's own comment on this bootstrap sequence).
+    - from:
+        - podSelector:
+            matchLabels:
+              app: postgres-replica
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-replica-to-master
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-replica
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-master
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-redis
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: omniswitch-api
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-vault
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: vault
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: omniswitch-api
+      ports:
+        - protocol: TCP
+          port: 8200
+---
+# 12. Batch-job pods -> pgbouncer-master / pgbouncer-replica. Every
+#     scheduled job (archiving, deletion, partition maintenance,
+#     drop-cutover-tables) reads/writes `payments`/`ledger_outbox`
+#     through the same pooler the API uses, never directly against
+#     postgres — same reasoning as rule 5. Selected by the shared
+#     `workload-type: batch-job` label every job's pod template carries
+#     (see archiving-cronjob.yaml/deletion-cronjob.yaml/
+#     partition-maintenance-cronjob.yaml/drop-cutover-tables-job.yaml —
+#     read directly from those manifests, not a guess), rather than each
+#     job's own distinct `app:` label, so a future fifth job only needs
+#     this one label to be covered automatically. Does not cover the
+#     deletion job's egress to a cloud `BackupStorage` endpoint when
+#     `DELETION_BACKUP_STORAGE` isn't "local" — see the NOT-covered note
+#     at the top of this file.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-batch-jobs-to-pgbouncer
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      workload-type: batch-job
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: pgbouncer-master
+        - podSelector:
+            matchLabels:
+              app: pgbouncer-replica
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# 13. Prometheus -> omniswitch-api's :3000/metrics. ASSUMES Prometheus
+#     runs in a namespace literally named `monitoring` — matched via
+#     `kubernetes.io/metadata.name`, the label every namespace gets
+#     automatically from Kubernetes itself (same mechanism rule 2's
+#     `allow-dns-egress` already uses for `kube-system`), rather than a
+#     Helm-chart-specific label like rule 3's `app.kubernetes.io/name:
+#     ingress-nginx`, since deployment.yaml's plain `prometheus.io/scrape`
+#     annotation (not a Prometheus Operator `ServiceMonitor`) suggests a
+#     simpler, not-necessarily-Helm-installed Prometheus here — no
+#     Prometheus manifest exists in this repo to confirm either the
+#     namespace name or the label against.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-to-api
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      app: omniswitch-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000

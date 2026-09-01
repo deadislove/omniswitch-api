@@ -134,6 +134,14 @@ rather than a broader schema migration).
   (`GET /v1/balance_transactions`, `GET /adyen/settlement-report`),
   smoke-tested directly with `curl` (immediate charge, manual capture +
   capture, listing) before wiring the real adapters to it.
+- `ReconciliationService` now has permanent automated coverage at both
+  levels: `reconciliation.service.spec.ts` (unit, mocked ports — all
+  three mismatch shapes, the partial-capture settlement-summing behavior,
+  `runScheduled()`'s per-provider error isolation) and
+  `test/reconciliation.e2e-spec.ts` (e2e, against real seeded data with
+  all three mismatch shapes deliberately introduced in one run). Neither
+  existed when this document was first written — the timezone bug above
+  was found and fixed with only manual/`curl` verification at the time.
 
 ## What this doesn't cover
 

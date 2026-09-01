@@ -1,0 +1,146 @@
+# Real `vault` backing configmap.yaml's VAULT_ADDR
+# (`http://vault.payments.svc.cluster.local:8200`) and deployment.yaml's
+# VAULT_TOKEN — VaultTransitService.onModuleInit() idempotently mounts the
+# transit engine and creates its key on every app boot, so this manifest
+# only needs to provide a reachable, unsealed Vault with a token matching
+# omniswitch-secrets' VAULT_TOKEN; no manifest-side bootstrap logic needed.
+#
+# Dev-mode Vault (`-dev`), same as docker-compose.yml's vault service —
+# NOT a production posture: dev mode auto-unseals on start, stores
+# everything in memory with no persistence at all (a pod restart loses
+# every secret and the transit key itself — the app's own idempotent
+# bootstrap re-creates the key, but any ciphertext encrypted under the
+# previous key instance becomes permanently undecryptable), and its root
+# token is a single long-lived credential rather than a real auth method.
+# Acceptable here for the same reason docker-compose.yml's local-dev setup
+# is: this is a starting point for exercising the rest of the manifest set
+# (NetworkPolicy scoping, the app's own transit bootstrap/encrypt/decrypt
+# calls), not a hardened secrets-management deployment — see
+# docs/technical/secret-management.md's "Migration path" section for what
+# a real deployment needs instead (a real Vault cluster with Shamir/auto-
+# unseal, persistent storage, and AppRole/Kubernetes auth issuing
+# short-lived tokens instead of this static one).
+#
+# VAULT_DEV_ROOT_TOKEN_ID is sourced from omniswitch-secrets' VAULT_TOKEN
+# (the same key deployment.yaml already wires into the app) rather than a
+# separate hardcoded value — so overriding that Secret changes Vault's own
+# root token and the app's token together, keeping them in sync.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+  namespace: payments
+  labels:
+    app: vault
+    component: secrets-management
+spec:
+  replicas: 1
+  strategy:
+    # Dev-mode Vault has no persistent state to protect (see above), but
+    # RollingUpdate briefly running two dev-mode Vaults with independently
+    # generated in-memory transit keys would be actively wrong, not just
+    # unnecessary — whichever one crypto operations land on would only
+    # decrypt what was encrypted under its own instance's key.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      # The official image's own entrypoint (docker-entrypoint.sh) starts
+      # as root, runs `setcap cap_ipc_lock=+ep <vault binary>` (needs
+      # CAP_SETFCAP), then `su-exec vault` drops to this same non-root
+      # uid/gid before finally starting the server — granting IPC_LOCK to
+      # the *file* so the process still has it after the uid drop.
+      # Starting the pod directly as that uid/gid instead (below) skips
+      # that whole dance: `id -u` is already non-zero, so the entrypoint's
+      # own `if [ "$(id -u)" = '0' ]` check skips the su-exec step, and
+      # SKIP_SETCAP=true (env, below) skips the setcap call itself, which
+      # would otherwise fail here the same way it did with only IPC_LOCK
+      # granted (setcap itself needs CAP_SETFCAP, not just IPC_LOCK) —
+      # verified live against a real cluster. This container then only
+      # ever needs the one capability it actually uses at runtime
+      # (IPC_LOCK for mlock), not the broader CAP_SETFCAP a root-started
+      # container would transiently need to grant it to itself.
+      # uid/gid 100/1000 are `vault`'s own ids baked into the image
+      # (confirmed via `docker run ... id vault`) — /vault/config,
+      # /vault/logs, /vault/file are already owned by them at image build
+      # time, so skipping the entrypoint's own chown-if-needed step here
+      # loses nothing.
+      securityContext:
+        runAsUser: 100
+        runAsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.15
+          ports:
+            - name: vault
+              containerPort: 8200
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: VAULT_TOKEN
+            - name: VAULT_DEV_LISTEN_ADDRESS
+              value: "0.0.0.0:8200"
+            - name: SKIP_SETCAP
+              value: "true"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              # Vault's own mlock() call (prevents secrets from being
+              # swapped to disk) needs this — without it, dev mode falls
+              # back to disabling mlock with a startup warning rather than
+              # failing, but that defeats the purpose of granting it.
+              # Effective here via the pod already starting as `vault`
+              # (see securityContext above) rather than needing an
+              # internal root-to-non-root transition to carry it across.
+              add:
+                - IPC_LOCK
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true
+              port: 8200
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true
+              port: 8200
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: payments
+  labels:
+    app: vault
+    component: secrets-management
+spec:
+  type: ClusterIP
+  selector:
+    app: vault
+  ports:
+    - name: vault
+      port: 8200
+      targetPort: 8200
+      protocol: TCP

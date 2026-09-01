@@ -1,0 +1,39 @@
+# The 5 security headers formerly set via k8s/ingress.yaml's own
+# `nginx.ingress.kubernetes.io/configuration-snippet` annotation — moved
+# here after confirming live that annotation is unconditionally rejected
+# by a default-configured modern ingress-nginx (see ingress.yaml's own
+# comment for the full verification trail). This ConfigMap lives in the
+# `ingress-nginx` namespace (not `payments`, unlike this app's other
+# manifests) because it wires into the ingress-nginx *controller's own*
+# global config, not into anything this app's own Deployment/Service
+# reads.
+#
+# ASSUMES whoever installs ingress-nginx via Helm for this app sets the
+# controller's `add-headers` config to point at this ConfigMap — this
+# repo has no tracked Helm values file for that install (ingress-nginx
+# itself, like cert-manager, is cluster infrastructure this app's own
+# k8s/ingress.yaml assumes already exists, not something this repo
+# deploys). The install must include:
+#
+#   --set controller.config.add-headers=ingress-nginx/omniswitch-security-headers
+#
+# (or the equivalent `controller.config.add-headers` key in a values
+# file). Verified live: with that value set and this ConfigMap applied,
+# every response through the real ingress path carries all 5 headers;
+# without it, this ConfigMap alone has no effect (nothing reads it
+# automatically). Global to every Ingress this ingress-nginx install
+# serves, not scoped to just omniswitch-api-ingress — the correct scope
+# here since this repo assumes a dedicated ingress-nginx install for
+# this one application, not a shared multi-tenant one.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omniswitch-security-headers
+  namespace: ingress-nginx
+data:
+  X-Frame-Options: "DENY"
+  X-Content-Type-Options: "nosniff"
+  X-XSS-Protection: "1; mode=block"
+  Referrer-Policy: "strict-origin-when-cross-origin"
+  Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+  Content-Security-Policy: "default-src 'none'"

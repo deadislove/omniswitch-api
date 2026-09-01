@@ -51,9 +51,9 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return PaymentMapper.toDomain(entity);
   }
 
-  async findByIdempotencyKey(key: string): Promise<PaymentAggregate | null> {
+  async findByIdempotencyKey(merchantId: string, key: string): Promise<PaymentAggregate | null> {
     const entity = await this.paymentRepo.findOne({
-      where: { idempotencyKey: key },
+      where: { merchantId, idempotencyKey: key },
     });
     if (!entity) return null;
     return PaymentMapper.toDomain(entity);
@@ -182,6 +182,35 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return entities.map(PaymentMapper.toDomain);
   }
 
+  async findAmbiguousOlderThan(olderThanMinutes: number): Promise<PaymentAggregate[]> {
+    // Forced onto master, not the ambient replica-routed connection — same
+    // reasoning as findByIdOnMaster()'s docblock. Unlike
+    // findByProviderAndDateRange() (a passive hourly reconciliation sweep,
+    // fine with the replica's ~1s staleness), this backs an interactive
+    // admin tool an operator plausibly calls right after resolving or
+    // otherwise acting on a payment — and AMBIGUOUS payments should be
+    // rare enough that the extra master read is trivial.
+    const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: PaymentEntity[];
+    try {
+      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // gotcha findByProviderAndDateRange()/sumSucceededVolumeSince() below
+      // document: node-postgres serializes a bound Date parameter for a
+      // `timestamp without time zone` column using this process's local
+      // timezone offset, not UTC.
+      entities = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.status = :status', { status: 'AMBIGUOUS' })
+        .andWhere('p.createdAt <= :cutoff', { cutoff: cutoff.toISOString() })
+        .orderBy('p.createdAt', 'ASC')
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return entities.map(PaymentMapper.toDomain);
+  }
+
   async sumSucceededVolumeSince(merchantId: string, since: Date, currencyCode: string): Promise<bigint> {
     // .toISOString(), not the raw Date object — same createdAt-column
     // timezone gotcha findByProviderAndDateRange() above documents.
@@ -194,6 +223,69 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
       .andWhere('p.createdAt >= :since', { since: since.toISOString() })
       .getRawOne();
     return BigInt(total ?? 0);
+  }
+
+  async countAmbiguousIncidentsSince(merchantId: string, since: Date): Promise<number> {
+    // Forced onto master — same reasoning as findAmbiguousOlderThan():
+    // this runs synchronously right after the merchant's own payment just
+    // transitioned to AMBIGUOUS in the same request, and needs to see
+    // that write immediately, not after the replica's ~1s streaming lag.
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // gotcha findByProviderAndDateRange() documents.
+      return await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.merchantId = :merchantId', { merchantId })
+        .andWhere('(p.status = :status OR p.ambiguousResolvedAt IS NOT NULL)', { status: 'AMBIGUOUS' })
+        .andWhere('p.createdAt >= :since', { since: since.toISOString() })
+        .getCount();
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async findRecentAmbiguousFlags(merchantId: string, limit: number): Promise<boolean[]> {
+    // Forced onto master — same reasoning as countAmbiguousIncidentsSince()
+    // above.
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: PaymentEntity[];
+    try {
+      entities = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.merchantId = :merchantId', { merchantId })
+        .orderBy('p.createdAt', 'DESC')
+        .take(limit)
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return entities.map((e) => e.status === 'AMBIGUOUS' || e.ambiguousResolvedAt != null);
+  }
+
+  async findAmbiguousEligibleForAutoResolution(maxAttempts: number, minAgeMinutes: number): Promise<PaymentAggregate[]> {
+    // Forced onto master — same reasoning as findAmbiguousOlderThan(): this
+    // backs an automated sweep that can also be triggered on demand right
+    // after another write in the same request (the admin run-now endpoint),
+    // and AMBIGUOUS payments are rare enough that the extra master read is
+    // trivial.
+    const cutoff = new Date(Date.now() - minAgeMinutes * 60 * 1000);
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: PaymentEntity[];
+    try {
+      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // gotcha findAmbiguousOlderThan() above documents.
+      entities = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .where('p.status = :status', { status: 'AMBIGUOUS' })
+        .andWhere('p.ambiguousAutoRetryCount < :maxAttempts', { maxAttempts })
+        .andWhere('p.createdAt <= :cutoff', { cutoff: cutoff.toISOString() })
+        .orderBy('p.createdAt', 'ASC')
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return entities.map(PaymentMapper.toDomain);
   }
 }
 
@@ -249,9 +341,9 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
     // event a write just committed to master (e.g. the outbox admin retry
     // endpoint resetting a FAILED event back to PENDING) can be invisible
     // here for up to one lag window, silently delaying pickup by a full
-    // relay tick. Confirmed live via test/ledger-and-outbox.e2e-spec.ts's
-    // dead-letter recovery test, which calls this synchronously right
-    // after that reset and expects it picked up in the same tick.
+    // relay tick — see test/ledger-and-outbox.e2e-spec.ts's dead-letter
+    // recovery test, which calls this synchronously right after that
+    // reset and expects it picked up in the same tick.
     const queryRunner = this.dataSource.createQueryRunner('master');
     let entities: LedgerOutboxEntity[];
     try {
@@ -291,10 +383,9 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
       .where('o.status = :status', { status: 'PENDING' })
       // .toISOString() — see findByProviderAndDateRange's comment in this
       // file for why a raw Date object silently breaks this comparison on
-      // a non-UTC machine (found while building reconciliation). This
-      // means `detectStaleEvents()`'s alerting was very likely a silent
-      // no-op for anyone running this stack outside UTC — worth specifically
-      // re-checking if it's ever been relied on before this fix.
+      // a non-UTC machine. This means `detectStaleEvents()`'s alerting is a
+      // silent no-op for anyone running this stack outside UTC unless this
+      // conversion is applied.
       .andWhere('o.createdAt < :cutoff', { cutoff: cutoff.toISOString() })
       .getMany();
     return entities.map(this.toDomain);
