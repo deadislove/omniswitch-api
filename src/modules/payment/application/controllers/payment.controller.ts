@@ -47,8 +47,10 @@ import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { AcquirerRoutingService } from '../services/acquirer-routing.service';
+import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
+import { RedisCircuitBreakerService } from '../../adapters/circuit-breaker/redis-circuit-breaker.service';
 import { PaymentLifecycleService } from '../services/payment-lifecycle.service';
-import { PaymentAggregate } from '../../domain/aggregates/payment.aggregate';
+import { PaymentAggregate, PSPProvider } from '../../domain/aggregates/payment.aggregate';
 import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { FXRateProviderPort } from '../../ports/outbound/fx-rate-provider.port';
 import { DelegationService } from '../services/delegation.service';
@@ -100,16 +102,18 @@ export class PaymentController {
     private readonly paymentLifecycle: PaymentLifecycleService,
     private readonly fxRateProvider: FXRateProviderPort,
     private readonly delegationService: DelegationService,
+    private readonly processorFactory: PaymentProcessorFactory,
+    private readonly circuitBreaker: RedisCircuitBreakerService,
   ) {}
 
   /** Merchants may only act on their own payments; ADMIN/OPERATOR may act on any. */
   private assertOwnership(payment: PaymentAggregate, req: any): void {
     if (req.user?.roles?.includes(UserRole.MERCHANT) && payment.metadata.merchantId !== req.user.merchantId) {
-      // BadRequestException always sends HTTP 400 regardless of the
-      // statusCode field inside its body — a client checking the actual
-      // response status (not just the JSON payload) would never see this as
-      // a 403. Verified live: a cross-merchant cancel attempt came back as
-      // HTTP 400 with a body claiming "statusCode":403.
+      // ForbiddenException, not BadRequestException — the latter always
+      // sends HTTP 400 regardless of the statusCode field inside its body,
+      // so a client checking the actual response status (not just the
+      // JSON payload) would never see a cross-merchant access attempt as
+      // the 403 it actually is.
       throw new ForbiddenException({ statusCode: 403, error: 'Forbidden', code: 'ACCESS_DENIED' });
     }
   }
@@ -651,5 +655,34 @@ export class PaymentController {
   })
   async getRoutingHealth(): Promise<Record<string, unknown>> {
     return this.acquirerRouting.getPSPHealthSummary();
+  }
+
+  /**
+   * POST /api/v1/payments/routing/circuit-breaker/:provider/reset
+   * Operator escape hatch — see RedisCircuitBreakerService.resetCircuit()'s
+   * docblock for why this exists (no other way to intervene short of
+   * reaching into Redis directly if automated recovery isn't behaving as
+   * expected).
+   */
+  @Post('routing/circuit-breaker/:provider/reset')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.ADMIN, UserRole.OPERATOR)
+  @ApiOperation({ summary: "Force a PSP's circuit breaker back to CLOSED, bypassing the normal recovery flow" })
+  @ApiResponse({ status: 200, description: 'Circuit reset; current health snapshot for this provider' })
+  @ApiResponse({ status: 400, description: 'Unknown provider' })
+  async resetCircuitBreaker(@Param('provider') provider: string): Promise<Record<string, unknown>> {
+    const upper = provider.toUpperCase();
+    if (!this.processorFactory.getRegisteredProviders().includes(upper as PSPProvider)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: `Unknown PSP provider '${provider}'`,
+        code: 'UNKNOWN_PSP_PROVIDER',
+        allowed: this.processorFactory.getRegisteredProviders(),
+      });
+    }
+    await this.circuitBreaker.resetCircuit(upper);
+    this.logger.warn(`Circuit breaker for ${upper} manually reset to CLOSED via admin action`);
+    const summary = await this.acquirerRouting.getPSPHealthSummary();
+    return summary[upper] as Record<string, unknown>;
   }
 }

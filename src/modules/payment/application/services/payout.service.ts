@@ -49,12 +49,11 @@ export class PayoutService {
    * Returns `null` if another sweep is already in progress (a concurrent
    * `@Cron` tick on a different replica, or an operator's on-demand trigger
    * overlapping one), rather than racing it — see the `SWEEP_LOCK_KEY`
-   * acquire below. Verified live: two concurrent calls sharing the same
-   * `now` (simulating two pods' `@Cron` handlers firing at the same
-   * instant) previously both read `findLatestSweepRun()` before either
-   * wrote its own `PayoutSweepRun`, and both created a `Payout` for the
-   * same underlying ledger credit — a real double payout, not a
-   * hypothetical one.
+   * acquire below. Without this lock, two concurrent calls sharing the
+   * same `now` (two pods' `@Cron` handlers firing at the same instant)
+   * can both read `findLatestSweepRun()` before either writes its own
+   * `PayoutSweepRun`, and both create a `Payout` for the same underlying
+   * ledger credit — a real double payout, not a hypothetical one.
    */
   @Cron(CronExpression.EVERY_DAY_AT_NOON, { name: 'marketplace-payout-sweep' })
   async runSweep(now: Date = new Date()): Promise<PayoutSweepRun | null> {

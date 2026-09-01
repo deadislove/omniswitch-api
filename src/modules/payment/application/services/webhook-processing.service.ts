@@ -239,13 +239,29 @@ export class WebhookProcessingService {
       this.logger.debug(`Duplicate ${provider} webhook: payment ${payment.id} already DISPUTED`);
       return;
     }
-    if (payment.status !== PaymentStatus.SUCCEEDED) {
+    // A chargeback on a payment that's already been partially refunded is a
+    // normal real-world sequence (a partial refund for a shipping issue,
+    // the cardholder disputes the rest anyway) — SUCCEEDED and
+    // PARTIALLY_REFUNDED are both valid dispute origins. See
+    // PaymentAggregate.resolveDispute() for how WON/LOST both account for
+    // the refund history already present when the dispute started.
+    if (payment.status !== PaymentStatus.SUCCEEDED && payment.status !== PaymentStatus.PARTIALLY_REFUNDED) {
       this.logger.warn(
         `Ignoring ${provider} dispute webhook for payment ${payment.id} in unexpected status ${payment.status}`,
       );
       return;
     }
 
+    // remainingRefundable, not the full payment.amount — economically,
+    // what's actually still at risk in this dispute is whatever hasn't
+    // already been refunded. This also matters for consistency: a LOST
+    // resolution books a ledger refund entry for this exact amount
+    // (DisputeService.resolveByPspDisputeId()) and
+    // PaymentAggregate.resolveDispute() adds the same amount to the
+    // payment's own refund history — using the full original amount here
+    // for a payment that's already been partially refunded would double-
+    // count the portion already refunded in both places.
+    const disputedAmount = payment.remainingRefundable;
     payment.markDisputed(reason);
     await this.paymentRepository.update(payment);
     await this.disputeService.recordDispute({
@@ -253,7 +269,7 @@ export class WebhookProcessingService {
       merchantId: payment.metadata.merchantId,
       pspProvider: provider,
       pspDisputeId,
-      amount: payment.amount,
+      amount: disputedAmount,
       reason,
     });
     this.publish(payment);

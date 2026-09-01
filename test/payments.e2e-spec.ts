@@ -3,7 +3,11 @@ import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
-import { signHmacRequest } from './utils/signing';
+import { signHmacRequest, signStripeWebhook } from './utils/signing';
+import { StripePSPAdapter } from '../src/modules/payment/adapters/psp/stripe/stripe-psp.adapter';
+import { PaymentLifecycleService } from '../src/modules/payment/application/services/payment-lifecycle.service';
+
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET!;
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 const EU_BIN = { bin: '491761', country: 'DE', cardBrand: 'VISA', cardType: 'CREDIT' };
@@ -124,6 +128,49 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       expect(res.body.status).toBe('REQUIRES_CAPTURE');
     });
 
+    it('two different merchants using the identical Idempotency-Key must not collide', async () => {
+      const otherMerchant = await seedMerchant(app, { merchantId: uniqueId('other') });
+      const otherToken = await login(app, otherMerchant.apiKeyId, otherMerchant.apiKeySecret);
+      const sharedIdempotencyKey = randomUUID();
+
+      const bodyA = { amount: 10, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN };
+      const { signature: sigA, timestamp: tsA } = signHmacRequest(merchant.hmacSecret, 'post', '/api/v1/payments/charge', JSON.stringify(bodyA));
+      const resA = await request(app.getHttpServer())
+        .post('/api/v1/payments/charge')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', sharedIdempotencyKey)
+        .set('X-Signature', sigA)
+        .set('X-Timestamp', tsA)
+        .set('X-Merchant-Id', merchant.merchantId)
+        .set('Content-Type', 'application/json')
+        .send(bodyA)
+        .expect(201);
+
+      const bodyB = { amount: 77, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN };
+      const { signature: sigB, timestamp: tsB } = signHmacRequest(otherMerchant.hmacSecret, 'post', '/api/v1/payments/charge', JSON.stringify(bodyB));
+      const resB = await request(app.getHttpServer())
+        .post('/api/v1/payments/charge')
+        .set('Authorization', `Bearer ${otherToken}`)
+        .set('Idempotency-Key', sharedIdempotencyKey)
+        .set('X-Signature', sigB)
+        .set('X-Timestamp', tsB)
+        .set('X-Merchant-Id', otherMerchant.merchantId)
+        .set('Content-Type', 'application/json')
+        .send(bodyB)
+        .expect(201);
+
+      // Merchant B must get its own independent charge — not merchant A's
+      // cached response replayed back to it because the Idempotency-Key
+      // happened to collide across tenants.
+      expect(resB.body.paymentId).not.toBe(resA.body.paymentId);
+
+      const fetchedB = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${resB.body.paymentId}`)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(200);
+      expect(fetchedB.body.amount).toBe(77);
+    });
+
     it('a different merchant cannot read this merchant\'s payment', async () => {
       const chargeRes = await signedRequest('post', '/api/v1/payments/charge', {
         amount: 12,
@@ -213,6 +260,48 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       expect(fetched.body.captures).toHaveLength(3);
     });
 
+    it('two concurrent partial captures on the same authorization: the loser gets rejected, not a silently dropped captures[] entry', async () => {
+      // A real HTTP-level Promise.all([...]) isn't a reliable way to
+      // reproduce this race: in practice the two requests' DB writes don't
+      // land close enough together to overlap (the second one's read
+      // already observes the first's commit), so this drives the
+      // interleaving directly instead — two independent in-memory copies
+      // of the *same* pre-capture row, exactly what two truly concurrent
+      // requests would each hold right after their own read.
+      const payment = await charge({ amount: 100, captureMethod: 'manual' });
+      expect(payment.status).toBe('REQUIRES_CAPTURE');
+
+      const lifecycleService: PaymentLifecycleService = app.get(PaymentLifecycleService);
+      const [copy1, copy2] = await Promise.all([
+        lifecycleService.getOwnedPayment(payment.paymentId),
+        lifecycleService.getOwnedPayment(payment.paymentId),
+      ]);
+
+      const results = await Promise.allSettled([
+        lifecycleService.capture({ payment: copy1, amount: 30, idempotencyKey: randomUUID() }),
+        lifecycleService.capture({ payment: copy2, amount: 25, idempotencyKey: randomUUID() }),
+      ]);
+
+      // Exactly one of the two concurrent calls must lose the race — both
+      // succeeding would mean the second write silently overwrote the
+      // first's captures[] entry instead of being rejected.
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.response.code).toBe('CONCURRENT_MODIFICATION');
+
+      const winner = (fulfilled[0] as PromiseFulfilledResult<any>).value;
+      expect(winner.captures).toHaveLength(1);
+      expect(winner.status).toBe('PARTIALLY_CAPTURED');
+
+      const fetched = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${payment.paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(fetched.body.captures).toHaveLength(1);
+    });
+
     it('a capture request exceeding the remaining capturable amount is rejected with 409, not silently over-captured', async () => {
       const payment = await charge({ amount: 50, captureMethod: 'manual' });
 
@@ -259,6 +348,40 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       expect(full.body.remainingRefundable).toBe(0);
     });
 
+    it('two concurrent partial refunds on the same payment: the loser gets rejected, not a silently dropped refunds[] entry', async () => {
+      // See the matching capture test above for why this drives the
+      // interleaving directly via two pre-fetched in-memory copies rather
+      // than a real HTTP-level Promise.all([...]).
+      const payment = await charge({ amount: 100 });
+
+      const lifecycleService: PaymentLifecycleService = app.get(PaymentLifecycleService);
+      const [copy1, copy2] = await Promise.all([
+        lifecycleService.getOwnedPayment(payment.paymentId),
+        lifecycleService.getOwnedPayment(payment.paymentId),
+      ]);
+
+      const results = await Promise.allSettled([
+        lifecycleService.refund({ payment: copy1, amount: 40, idempotencyKey: randomUUID() }),
+        lifecycleService.refund({ payment: copy2, amount: 25, idempotencyKey: randomUUID() }),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.response.code).toBe('CONCURRENT_MODIFICATION');
+
+      const winner = (fulfilled[0] as PromiseFulfilledResult<any>).value;
+      expect(winner.refunds).toHaveLength(1);
+      expect(winner.status).toBe('PARTIALLY_REFUNDED');
+
+      const fetched = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${payment.paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(fetched.body.refunds).toHaveLength(1);
+    });
+
     it('refunding more than the remaining balance is rejected with 409, not sent to the PSP', async () => {
       const payment = await charge({ amount: 50 });
 
@@ -267,6 +390,45 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       })
         .expect(409)
         .expect((res) => expect(res.body.code).toBe('REFUND_EXCEEDS_BALANCE'));
+    });
+
+    it('refunding a DISPUTED payment is rejected with 409, not sent to the PSP', async () => {
+      const payment = await charge({ amount: 75, preferredProvider: 'STRIPE' });
+
+      const disputeBody = JSON.stringify({
+        id: 'evt_' + uniqueId('test'),
+        type: 'charge.dispute.created',
+        data: { object: { id: 'dp_' + uniqueId('test'), payment_intent: payment.pspTransactionId, reason: 'fraudulent' } },
+      });
+      await request(app.getHttpServer())
+        .post('/api/v1/webhooks/stripe')
+        .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, disputeBody))
+        .set('Content-Type', 'application/json')
+        .send(disputeBody)
+        .expect(200);
+
+      const disputed = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${payment.paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(disputed.body.status).toBe('DISPUTED');
+
+      // The actual regression this guards against: a status check that
+      // only fires *after* the PSP has already been called would make
+      // this spy record a call even though the HTTP response is (or
+      // should be) a 409 — asserting on the response status alone isn't
+      // enough to catch that ordering bug.
+      const refundSpy = jest.spyOn(app.get(StripePSPAdapter), 'refund');
+      try {
+        await signedRequest('post', `/api/v1/payments/${payment.paymentId}/refund`, {
+          amount: 75,
+        })
+          .expect(409)
+          .expect((res) => expect(res.body.code).toBe('NOT_REFUNDABLE'));
+        expect(refundSpy).not.toHaveBeenCalled();
+      } finally {
+        refundSpy.mockRestore();
+      }
     });
 
     it('a different merchant cannot refund/capture/cancel this payment', async () => {

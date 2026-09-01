@@ -51,9 +51,9 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return PaymentMapper.toDomain(entity);
   }
 
-  async findByIdempotencyKey(key: string): Promise<PaymentAggregate | null> {
+  async findByIdempotencyKey(merchantId: string, key: string): Promise<PaymentAggregate | null> {
     const entity = await this.paymentRepo.findOne({
-      where: { idempotencyKey: key },
+      where: { merchantId, idempotencyKey: key },
     });
     if (!entity) return null;
     return PaymentMapper.toDomain(entity);
@@ -341,9 +341,9 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
     // event a write just committed to master (e.g. the outbox admin retry
     // endpoint resetting a FAILED event back to PENDING) can be invisible
     // here for up to one lag window, silently delaying pickup by a full
-    // relay tick. Confirmed live via test/ledger-and-outbox.e2e-spec.ts's
-    // dead-letter recovery test, which calls this synchronously right
-    // after that reset and expects it picked up in the same tick.
+    // relay tick — see test/ledger-and-outbox.e2e-spec.ts's dead-letter
+    // recovery test, which calls this synchronously right after that
+    // reset and expects it picked up in the same tick.
     const queryRunner = this.dataSource.createQueryRunner('master');
     let entities: LedgerOutboxEntity[];
     try {
@@ -383,10 +383,9 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
       .where('o.status = :status', { status: 'PENDING' })
       // .toISOString() — see findByProviderAndDateRange's comment in this
       // file for why a raw Date object silently breaks this comparison on
-      // a non-UTC machine (found while building reconciliation). This
-      // means `detectStaleEvents()`'s alerting was very likely a silent
-      // no-op for anyone running this stack outside UTC — worth specifically
-      // re-checking if it's ever been relied on before this fix.
+      // a non-UTC machine. This means `detectStaleEvents()`'s alerting is a
+      // silent no-op for anyone running this stack outside UTC unless this
+      // conversion is applied.
       .andWhere('o.createdAt < :cutoff', { cutoff: cutoff.toISOString() })
       .getMany();
     return entities.map(this.toDomain);

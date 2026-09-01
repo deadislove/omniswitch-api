@@ -108,8 +108,10 @@ for a full refund of the remaining refundable balance.
 **Response `200`**: `{ paymentId, status, totalRefunded, remainingRefundable, currency, refunds: [...] }`
 
 **Errors**: `400` missing Idempotency-Key; `403` wrong merchant; `404`
-not found; `409` amount exceeds remaining refundable balance, or payment
-isn't in a refundable status; `422` PSP declined the refund.
+not found; `409` amount exceeds remaining refundable balance, payment
+isn't in a refundable status, or `CONCURRENT_MODIFICATION` (another
+refund/capture on this same payment committed first — retry the read
+and decide again); `422` PSP declined the refund.
 
 ## `POST /payments/:id/capture`
 
@@ -126,8 +128,10 @@ remaining authorized amount.
 **Response `200`**: `{ paymentId, status, pspTransactionId, amount, totalCaptured, remainingCapturable, currency, captures: [...] }`
 
 **Errors**: `400` missing Idempotency-Key; `403` wrong merchant; `404`
-not found; `409` not `REQUIRES_CAPTURE`/`PARTIALLY_CAPTURED`, or amount
-exceeds the remaining authorized amount; `422` PSP declined the capture.
+not found; `409` not `REQUIRES_CAPTURE`/`PARTIALLY_CAPTURED`, amount
+exceeds the remaining authorized amount, or `CONCURRENT_MODIFICATION`
+(another capture/refund on this same payment committed first — retry
+the read and decide again); `422` PSP declined the capture.
 
 ## `POST /payments/:id/cancel`
 

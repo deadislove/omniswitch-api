@@ -154,12 +154,20 @@ succeeds or the list is exhausted (`usedFallback: true` in the response
 tells the caller this happened).
 
 **Circuit breaker**: 5 failures **within a 60-second window** opens the
-circuit for 30 seconds, after which it moves to `HALF_OPEN` and a single
-success closes it again — not 5 *consecutive* failures: the failure count
-is a Redis counter with a 60-second TTL refreshed on every failure, and a
-success while the circuit is still `CLOSED` does not reset it (only a
-`HALF_OPEN → CLOSED` recovery does), so 5 failures scattered across that
-window with successes interspersed still trips it. State lives in Redis
+circuit for 30 seconds, after which it moves to `HALF_OPEN` — not 5
+*consecutive* failures: the failure count is a Redis counter with a
+60-second TTL refreshed on every failure, and a success while the
+circuit is still `CLOSED` does not reset it (only a `HALF_OPEN →
+CLOSED` recovery does), so 5 failures scattered across that window with
+successes interspersed still trips it. `HALF_OPEN` admits exactly **one**
+trial call (a shared Redis counter, atomically incremented, gates it) —
+a success on that trial closes the circuit; a failure re-opens it
+immediately, without needing to re-accumulate 5 failures. Every other
+call arriving while that single trial is still outstanding is rejected
+the same as `OPEN`, rather than the whole replica fleet's traffic
+resuming at once the instant the state flips — the entire point of a
+recovery probe is to send the PSP a trickle, not a burst, right as it
+may be starting to recover. State lives in Redis
 (`RedisCircuitBreakerService`, via the same `CachePort` idempotency
 already uses — no new connection), shared across every replica — this
 used to be per-process instance fields on

@@ -18,6 +18,7 @@ export async function resetCircuitBreakerState(app: INestApplication, providers:
       cache.del(`circuit:${provider}:failureCount`),
       cache.del(`circuit:${provider}:state`),
       cache.del(`circuit:${provider}:lastFailureTime`),
+      cache.del(`circuit:${provider}:halfOpenTrialCount`),
     ]),
   );
 }
