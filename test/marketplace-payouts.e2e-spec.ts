@@ -155,6 +155,30 @@ describe('Marketplace payout scheduling (e2e)', () => {
     expect(afterThird.every((p) => p.grossAmount.amount === 10)).toBe(true);
   });
 
+  it('two replicas racing the same noon tick do not both pay out the same credit', async () => {
+    // Distinct from the sequential "running the sweep twice" test above:
+    // both calls here share the same `now`, simulating two pods' @Cron
+    // handlers firing at the same wall-clock instant and both reading
+    // findLatestSweepRun() before either has written its own
+    // PayoutSweepRun — the actual race window this test targets, which a
+    // sequential await await never exercises.
+    const { platform, platformToken, connected } = await platformWithConnected(0, 0);
+    await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 10);
+
+    const now = new Date();
+    const [first, second] = await Promise.all([payoutService.runSweep(now), payoutService.runSweep(now)]);
+
+    // Exactly one of the two concurrent calls actually ran the sweep — the
+    // other found the SWEEP_LOCK_KEY lock already held and returned null
+    // rather than racing it.
+    const results = [first, second];
+    expect(results.filter((r) => r !== null)).toHaveLength(1);
+    expect(results.filter((r) => r === null)).toHaveLength(1);
+
+    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    expect(payouts).toHaveLength(1);
+  });
+
   it('a PLATFORM merchant\'s own charge proceeds are never turned into a Payout', async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('platformonly') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);

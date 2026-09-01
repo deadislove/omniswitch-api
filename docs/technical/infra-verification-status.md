@@ -134,6 +134,7 @@ was proven or assumed.
 | The `api` service's own Docker image: builds, runs migrations on startup, boots, and serves a real authenticated request | ✅ Verified (closed gap) | `docker compose build api` (real multi-stage build, not just `tsc`) against the fresh stack above, then `docker compose up -d api`. Container logs showed the exact intended sequence: migration SQL runs first (creating all three tables from empty), then Nest boots and maps every route. `/health/ready` reported the DB as up. A merchant was seeded directly via SQL (the only way in — merchant creation itself requires an existing ADMIN JWT, so there's no bootstrap path from zero), then a real login (`POST /auth/token`) and a real HMAC-signed charge (`POST /payments/charge`) were sent from the host to the running container. The charge reached mock-psp *over the Docker network* (`STRIPE_BASE_URL` — see below), returned `SUCCEEDED` with a real `pi_mock_...` id, and the ledger outbox relay `@Cron` job (running inside that same container) picked it up and marked it `PUBLISHED` within seconds — verified by querying Postgres directly, not by trusting the HTTP response alone. |
 | `vault`'s healthcheck accurately reflects whether Vault is actually up | ✅ Verified (closed gap) | Originally reported `(unhealthy)` for a Vault that was genuinely serving requests — `wget http://localhost:8200/...` inside the container resolved `localhost` to `::1` first, and Vault's dev-mode listener doesn't answer on IPv6. Fixed by using `127.0.0.1` explicitly; confirmed healthy on the next `docker compose up -d vault`. |
 | The production image actually contains compiled JavaScript, not just `.d.ts` files | ✅ Verified (closed gap) | This repo had **no `.dockerignore`** — every `docker build` copied the entire host working directory into the build context, including a stale `dist/`/`tsconfig.tsbuildinfo` from a host-side build moments earlier. That stale `.tsbuildinfo` made the builder stage's `nest build` treat the project as already compiled and emit zero `.js` files; `node dist/main.js` failed with `Cannot find module`. Fixed by adding `.dockerignore`; verified by rebuilding with `--no-cache` and directly inspecting the image (`docker run --rm --entrypoint sh ... ls /app/dist/`) for real `.js` files before trusting the container to boot. Full story in [`secret-management.md`](./secret-management.md#a-real-infra-bug-this-surfaced-no-dockerignore) (found while verifying that work, unrelated to Vault itself). |
+| The `api` service's own Docker healthcheck accurately reflects whether the app is actually up | ✅ Verified (closed gap) | Same class of bug as the `vault` healthcheck above, just never fixed for `api` itself: the container reported `unhealthy` for an app that was serving requests correctly. `wget http://localhost:3000/health/live` inside the container resolved `localhost` to `::1` first, and `main.ts`'s `app.listen(port, '0.0.0.0')` only binds IPv4, so the healthcheck's own request never reached anything. Confirmed via `docker exec omniswitch-api wget ... http://127.0.0.1:3000/health/live`, which succeeded immediately against the same running app. Fixed by pointing the healthcheck at `127.0.0.1` instead; confirmed healthy on the next `docker compose up -d api`. See [`load-testing.md`](./load-testing.md)'s 2026-08-30 re-run entry for the full trace. |
 
 This also caught one more real bug: the `api` service's environment block
 only set `ADYEN_BASE_URL`, not `STRIPE_BASE_URL` — without it, the Stripe
@@ -147,11 +148,14 @@ alongside this verification pass.
 Every gap this document originally flagged is now closed. What's left is
 lower-value, not "did this ever actually run":
 
-- No load test or chaos-style test (killing a container mid-request, e.g.
-  restarting `postgres-master` while a payment is in flight) has been done —
-  everything so far has verified *startup* and one *happy-path* request, not
-  resilience under load or mid-operation failure. See Tier 2 item #11 in
-  `DEV_README.md`.
+- Load testing is now done — see
+  [`load-testing.md`](./load-testing.md) for the real, reproducible
+  charge-path/read-path capacity numbers against the production Docker
+  image. What's still not done is a **chaos-style** test (killing a
+  container mid-request, e.g. restarting `postgres-master` while a
+  payment is in flight) — resilience under *mid-operation failure*,
+  as opposed to sustained load, remains unverified. See Tier 2 item #11
+  in `DEV_README.md`.
 
 The seeded-merchant-via-raw-SQL step used to verify the Docker image above
 was itself a real gap — there was no way to create the *first* merchant on a

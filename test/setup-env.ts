@@ -57,6 +57,20 @@ setDefault('RATE_LIMIT_MAX', '2000');
 // rather than depending on this exact number, so raising it here doesn't
 // weaken that test.
 setDefault('RATE_LIMIT_BURST_MAX', '50');
+// POST /payments/charge carries its own hardcoded, route-level
+// @Throttle override (see payment.controller.ts) — RATE_LIMIT_MAX above
+// does NOT touch it, because both the global IP-scoped guard and
+// MerchantThrottlerGuard check the same 'default' throttler name and pick
+// up this route-level override instead. Raising RATE_LIMIT_MAX alone
+// (the change described in the comment above) does not actually fix the
+// charge()-specific 429s a full suite run produces — confirmed by hitting
+// this exact 429 on a clean run after RATE_LIMIT_MAX was already raised.
+// Same reasoning as RATE_LIMIT_MAX: covered by its own isolated behavior,
+// not by this ambient ceiling, so raising it doesn't weaken any coverage.
+// See docs/technical/load-testing.md, Finding #1, where this same
+// hardcoded cap was first found to be the real ceiling for a single-IP
+// load generator.
+setDefault('CHARGE_RATE_LIMIT_MAX', '2000');
 // The production default (10/min) is a deliberately aggressive brute-force
 // guard on POST /auth/token — a full e2e run legitimately logs in more than
 // 10 times. Rate-limiting behavior itself is covered by a dedicated,

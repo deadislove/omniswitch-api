@@ -1,7 +1,8 @@
 import { Injectable, Logger, NotFoundException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
+import { uuidv5 } from '../../../../shared/utils/uuid';
 import { SubscriptionPort, FindSubscriptionsFilter } from '../../ports/outbound/subscription.port';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { Subscription, BillingInterval } from '../../domain/aggregates/subscription.aggregate';

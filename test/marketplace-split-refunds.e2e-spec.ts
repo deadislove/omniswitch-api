@@ -202,6 +202,9 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     // recorded on the Payment when the saga's SUCCEEDED branch ran
     // immediately — a charge that instead came back REQUIRES_ACTION and
     // was only confirmed later via webhook would silently lose its split.
+    // The marker is Stripe-only in the mock, so preferredProvider pins
+    // routing to STRIPE — now a true override, not a scoring nudge that
+    // could still lose and silently send this to ADYEN instead.
     const bodyObj = {
       amount: 40,
       currency: 'USD',
@@ -209,6 +212,7 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
       orderId: uniqueId('order'),
       description: 'FORCE_3DS e2e test',
       binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
       splits: [{ merchantId: connected.merchantId, amount: 15 }],
     };
     const chargeRes = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', bodyObj).expect(201);

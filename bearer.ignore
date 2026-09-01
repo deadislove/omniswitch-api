@@ -1,0 +1,8 @@
+{
+  "45a52a96e12851d017de39603815170c_0": {
+    "author": "OmniSwitch Engineering",
+    "comment": "backupPath only ever comes from DELETION_BACKUP_PATH, a deployment-time env var (k8s ConfigMap or local .env), never from request/webhook input; filename is a job-generated ISO timestamp with no external input. Same trust-chain reasoning already applied to this file's eslint-plugin-security detect-non-literal-fs-filename suppressions.",
+    "false_positive": true,
+    "ignored_at": "2026-08-22T05:44:05Z"
+  }
+}

@@ -45,6 +45,7 @@ import { StripePSPAdapter } from './adapters/psp/stripe/stripe-psp.adapter';
 import { AdyenPSPAdapter } from './adapters/psp/adyen/adyen-psp.adapter';
 import { PaymentProcessorFactory } from './adapters/psp/payment-processor.factory';
 import { RedisCircuitBreakerService } from './adapters/circuit-breaker/redis-circuit-breaker.service';
+import { MerchantPspExposureService } from './adapters/circuit-breaker/merchant-psp-exposure.service';
 import { FXRateProviderAdapter } from './adapters/fx/fx-rate-provider.adapter';
 
 // Application Services
@@ -64,6 +65,9 @@ import { RiskTieringService } from './application/services/risk-tiering.service'
 import { PlanService } from './application/services/plan.service';
 import { PayoutService } from './application/services/payout.service';
 import { DelegationService } from './application/services/delegation.service';
+import { LegalHoldService } from './application/services/legal-hold.service';
+import { AmbiguousPaymentService } from './application/services/ambiguous-payment.service';
+import { AmbiguousRiskMonitoringService } from './application/services/ambiguous-risk-monitoring.service';
 
 // Controller
 import { PaymentController } from './application/controllers/payment.controller';
@@ -78,6 +82,9 @@ import { RiskTieringAdminController } from './application/controllers/risk-tieri
 import { PlanController } from './application/controllers/plan.controller';
 import { MarketplacePayoutAdminController } from './application/controllers/marketplace-payout-admin.controller';
 import { DelegationController } from './application/controllers/delegation.controller';
+import { LegalHoldAdminController } from './application/controllers/legal-hold-admin.controller';
+import { AmbiguousPaymentAdminController } from './application/controllers/ambiguous-payment-admin.controller';
+import { AmbiguousRiskAdminController } from './application/controllers/ambiguous-risk-admin.controller';
 
 // Webhook Guards
 import { StripeWebhookGuard } from './adapters/psp/stripe/stripe-webhook.guard';
@@ -89,6 +96,7 @@ import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { HmacSignatureGuard } from '../../shared/guards/hmac-signature.guard';
 import { MerchantThrottlerGuard } from '../../shared/guards/merchant-throttler.guard';
+import { DegradedPspAwareThrottlerGuard } from '../../shared/guards/degraded-psp-aware-throttler.guard';
 
 // Merchant (per-merchant HMAC secret lookup)
 import { MerchantModule } from '../merchant/merchant.module';
@@ -126,13 +134,14 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // already covers the whole app via @Global(); this one was pure
     // duplication that happened to be actively harmful, not just redundant.
   ],
-  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController],
+  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController, LegalHoldAdminController, AmbiguousPaymentAdminController, AmbiguousRiskAdminController],
   providers: [
     // PSP Adapters
     StripePSPAdapter,
     AdyenPSPAdapter,
     PaymentProcessorFactory,
     RedisCircuitBreakerService,
+    MerchantPspExposureService,
 
     // Cache Adapter
     RedisCacheAdapter,
@@ -204,12 +213,16 @@ import { VaultModule } from '../../shared/vault/vault.module';
     PlanService,
     PayoutService,
     DelegationService,
+    LegalHoldService,
+    AmbiguousPaymentService,
+    AmbiguousRiskMonitoringService,
 
     // Auth
     JwtAuthGuard,
     RolesGuard,
     HmacSignatureGuard,
     MerchantThrottlerGuard,
+    DegradedPspAwareThrottlerGuard,
 
     // Webhook signature guards
     StripeWebhookGuard,

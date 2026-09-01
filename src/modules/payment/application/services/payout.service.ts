@@ -1,13 +1,21 @@
 import { Injectable, Logger, NotFoundException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { PayoutPort, FindPayoutsFilter } from '../../ports/outbound/payout.port';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { BankTransferPort } from '../../ports/outbound/bank-transfer.port';
+import { CachePort } from '../../ports/outbound/cache.port';
 import { Payout } from '../../domain/aggregates/payout.aggregate';
 import { PayoutSweepRun } from '../../domain/aggregates/payout-sweep-run.aggregate';
 import { Money } from '../../domain/value-objects/money.vo';
 import { MerchantService } from '../../../merchant/merchant.service';
+
+const SWEEP_LOCK_KEY = 'payout-sweep-lock';
+// Generous relative to how long a sweep actually takes (one DB write per
+// eligible merchant) — this only needs to survive a legitimately slow run,
+// not be tight. Same SETNX-lock primitive IdempotencyInterceptor already
+// uses, just a longer TTL for a batch job instead of a single HTTP request.
+const SWEEP_LOCK_TTL_SECONDS = 300;
 
 /**
  * Payout Service
@@ -34,10 +42,35 @@ export class PayoutService {
     private readonly ledgerOutbox: LedgerOutboxPort,
     private readonly merchantService: MerchantService,
     private readonly bankTransfer: BankTransferPort,
+    private readonly cache: CachePort,
   ) {}
 
+  /**
+   * Returns `null` if another sweep is already in progress (a concurrent
+   * `@Cron` tick on a different replica, or an operator's on-demand trigger
+   * overlapping one), rather than racing it — see the `SWEEP_LOCK_KEY`
+   * acquire below. Without this lock, two concurrent calls sharing the
+   * same `now` (two pods' `@Cron` handlers firing at the same instant)
+   * can both read `findLatestSweepRun()` before either writes its own
+   * `PayoutSweepRun`, and both create a `Payout` for the same underlying
+   * ledger credit — a real double payout, not a hypothetical one.
+   */
   @Cron(CronExpression.EVERY_DAY_AT_NOON, { name: 'marketplace-payout-sweep' })
-  async runSweep(now: Date = new Date()): Promise<PayoutSweepRun> {
+  async runSweep(now: Date = new Date()): Promise<PayoutSweepRun | null> {
+    const lockAcquired = await this.cache.setNX(SWEEP_LOCK_KEY, new Date().toISOString(), SWEEP_LOCK_TTL_SECONDS);
+    if (!lockAcquired) {
+      this.logger.warn('Payout sweep skipped: another sweep is already in progress');
+      return null;
+    }
+
+    try {
+      return await this.runSweepLocked(now);
+    } finally {
+      await this.cache.del(SWEEP_LOCK_KEY);
+    }
+  }
+
+  private async runSweepLocked(now: Date): Promise<PayoutSweepRun> {
     const lastRun = await this.payoutPort.findLatestSweepRun();
     const windowStart = lastRun?.windowEnd ?? new Date(0);
     const windowEnd = now;

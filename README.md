@@ -137,7 +137,7 @@ omniswitch-api/
 npm install
 
 # 2. Start infrastructure (PostgreSQL + Redis + Mock PSP + Vault)
-docker-compose up -d postgres-master postgres-replica redis mock-psp vault
+docker-compose up -d postgres-master postgres-replica pgbouncer-master pgbouncer-replica redis mock-psp vault
 
 # 3. Copy and configure environment
 cp .env.example .env.local
@@ -245,7 +245,7 @@ npm run test:cov
 npm test -- payment.saga.spec.ts
 
 # End-to-end tests (real app + real Postgres/Redis + mock-psp, no mocks)
-docker-compose up -d postgres-master postgres-replica redis mock-psp vault
+docker-compose up -d postgres-master postgres-replica pgbouncer-master pgbouncer-replica redis mock-psp vault
 npm run test:e2e
 ```
 
@@ -276,10 +276,18 @@ kubectl create namespace payments
 # Apply all manifests
 kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/secret.yaml      # Replace with real secrets first!
+kubectl apply -f k8s/pgbouncer.yaml   # Must exist before `api` starts — configmap.yaml points DB_MASTER_HOST/DB_REPLICA_HOST at these Services
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/hpa.yaml
 kubectl apply -f k8s/ingress.yaml
+kubectl apply -f k8s/archiving-cronjob.yaml             # Data retention — see docs/compliance/data-retention.md
+kubectl apply -f k8s/deletion-cronjob.yaml              # (also creates its own PVC for the pre-deletion backup file)
+kubectl apply -f k8s/partition-maintenance-cronjob.yaml # Keeps upcoming-month partitions pre-created
+
+# One-time, not part of the steady-state rollout above — apply once the
+# cutover verification window has elapsed (see data-retention.md):
+#   kubectl apply -f k8s/drop-cutover-tables-job.yaml
 
 # Check rollout
 kubectl rollout status deployment/omniswitch-api -n payments
@@ -303,19 +311,50 @@ benchmark), resource-capped to match `k8s/deployment.yaml`'s limits
 the charge path's own ceiling can't be measured from a single machine):
 [`docs/technical/load-testing.md`](docs/technical/load-testing.md).
 
-**Read path** (`GET /payments/:id`) — 90s sustained at 150 req/s:
+**Read path** (`GET /payments/:id`) — 90s sustained at 150 req/s, `api`
+connecting through PgBouncer (transaction-mode pooling, itself capped to
+`k8s/pgbouncer.yaml`'s 0.5 CPU/128Mi limits):
 
 | Metric | Value |
 |---|---|
 | Success rate | 16,900 / 16,900 (100%, zero failures) |
-| p50 latency | 3ms |
-| p95 latency | 7–9ms |
-| p99 latency | 15–24ms |
-| CPU (steady-state / peak) | ~33% / ~47% of 1 core |
-| Memory (steady-state / peak) | ~110–120MiB / ~121MiB (of 512Mi limit) |
+| p50 latency | 2ms |
+| p95 latency | 6ms |
+| p99 latency | 10.1ms |
+| max latency | 46ms |
+| CPU (peak) | ~36% of 1 core |
+| Memory (peak) | ~113MiB (of 512Mi limit) |
 
-Last verified 2026-08-10 against the NestJS v11 / Express 5 upgrade —
-matches or beats the pre-upgrade baseline on every metric, no regression.
+Last verified 2026-08-21 with PgBouncer (`pgbouncer-master`/
+`pgbouncer-replica`) added in front of Postgres — connection-count
+headroom under `k8s/hpa.yaml`'s scale-out, see
+[`docs/technical/k8s/data-layer.md`](docs/technical/k8s/data-layer.md)
+for the full reasoning. Matches or beats the pre-PgBouncer
+baseline on every metric once
+the poolers are resource-isolated the way a real cluster would enforce
+them; an earlier uncapped test run showed elevated CPU/tail-latency that
+turned out to be host-level container contention on the test machine,
+not a PgBouncer-inherent cost — see
+[`docs/technical/load-testing.md`](docs/technical/load-testing.md)
+(Finding #3) for the full story, including that confound.
+
+<details>
+<summary>Prior baseline (before PgBouncer, 2026-08-21)</summary>
+
+| Metric | Value |
+|---|---|
+| Success rate | 16,900 / 16,900 (100%, zero failures) |
+| p50 latency | 2–3ms |
+| p95 latency | 6–7.9ms |
+| p99 latency | 10.9–13.9ms |
+| CPU (steady-state / peak) | ~1% / ~23% of 1 core |
+| Memory (steady-state / peak) | ~61–63MiB / ~104MiB (of 512Mi limit) |
+
+Measured after the `uuid` → native `crypto.randomUUID()`/`crypto`-based
+`uuidv5` swap and the accumulated dependency bumps since 2026-08-10
+(TypeORM 1.1, jest 30, pg 8.23, stripe 22, `@typescript-eslint` 8.67).
+
+</details>
 
 ---
 
@@ -430,7 +469,11 @@ split into:
   full business-framing version of the "Known Limitations" section above
   — as opposed to [`DEV_README.md`](DEV_README.md)'s Tier 1–3, which is
   the technical, implementation-level version of the same gaps.
-
+- **[`docs/compliance/`](docs/compliance/)** — AML data-retention policy:
+  what gets archived/deleted, on what schedule, and how to reconfigure
+  the retention periods (`ARCHIVE_THRESHOLD_DAYS`,
+  `DELETION_THRESHOLD_YEARS`, and related env vars) for a specific
+  jurisdiction without a code change
 Start at [`docs/README.md`](docs/README.md).
 
 ---

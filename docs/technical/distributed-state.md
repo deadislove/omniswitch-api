@@ -162,8 +162,29 @@ throttler's "increment + conditionally set TTL" did. State *transitions*
 (`OPEN` → `HALF_OPEN`, `HALF_OPEN` → `CLOSED`) are a plain `GET` then `SET`,
 which is technically racy — two replicas could both observe `OPEN` past the
 recovery window and both write `HALF_OPEN` — but since both would be writing
-the same target value, the race is benign. There's no scenario where this
-produces an incorrect final state, only a harmless duplicate write.
+the same target value, the race is benign: there's no scenario where the
+state transition itself lands wrong, only a harmless duplicate write.
+
+**A separate, real bug this benign-race reasoning originally missed**:
+`assertAvailable()` used to admit *every* call once state was anything
+other than `OPEN` — so the instant the state flipped to `HALF_OPEN`,
+every replica's concurrent traffic passed through simultaneously, not
+just a single trial call, which is the opposite of what `HALF_OPEN`
+exists to do (send a struggling PSP a small probe, not a resumed full
+burst right as it may be starting to recover). Fixed with a second,
+independent Redis counter (`halfOpenTrialCount`, atomic `INCR`, TTL set
+only by whichever call claims slot 1) that gates `HALF_OPEN` admission
+to exactly one trial call per recovery episode; every other call arriving
+before that trial resolves is rejected the same as `OPEN`. A failed trial
+re-opens the circuit immediately (not after `FAILURE_THRESHOLD` failures
+accumulate again), and both the `HALF_OPEN → CLOSED` success path and the
+immediate-reopen failure path explicitly delete the trial counter so a
+leftover count from one recovery episode can't reject the next one's own
+first trial call. Verified with `redis-circuit-breaker.service.spec.ts`
+(a fake, real-TTL-semantics `CachePort`): confirmed live that, before this
+fix, a second `assertAvailable()` call issued right after the first one
+admitted the `HALF_OPEN` trial also resolved successfully instead of
+being rejected.
 
 ### Verification
 
@@ -206,11 +227,20 @@ state where cluster-wide state was actually needed) — but unlike those
 two, **it has not been fixed here**, only worked around, unevenly, on a
 service-by-service basis.
 
-There are five of these today: `LedgerOutboxRelayService` (every 10s),
-`ReconciliationService`, `ReserveService`, `SubscriptionService`, and
-`RiskTieringService` (all daily). At 20 replicas, the daily sweeps don't
-run once a day — they run up to 20 times, all within roughly the same
-moment.
+There are thirteen of these today (fifteen counting the two purely
+read-only ones): `LedgerOutboxRelayService.relay()` (every 10s) and its
+`detectStaleEvents()` (every 5min, log/alert-only — no state mutation,
+so not a duplication concern the way the others below are);
+`ReconciliationService` (hourly, not daily); `ReserveService`,
+`SubscriptionService`, and `RiskTieringService` (all daily);
+`PayoutService`'s four separate sweeps — `runSweep()` (noon),
+`releaseEligibleReserves()` (midnight), `recheckKycBlocks()` (1am),
+and `initiateEligibleTransfers()` (2am); `AmbiguousPaymentService`'s
+`runAutoResolutionSweep()` (every 10min) and `alertOnStale()` (every
+5min, log/alert-only, same posture as `detectStaleEvents()` above); and
+`AmbiguousRiskMonitoringService.runAutoClearSweep()` (3am). At 20
+replicas, the daily/hourly sweeps don't run once a day/hour — they run
+up to 20 times, all within roughly the same moment.
 
 ### What actually happens per service (not a uniform story)
 
@@ -227,6 +257,45 @@ moment.
   saga or finds the charge already done and just advances the period.
   Both were built to survive a *process crash* mid-sweep, not multi-replica
   duplication specifically — but the same mechanism happens to cover both.
+- **`PayoutService` — mixed mechanisms, all verified race-safe.**
+  `releaseEligibleReserves()`/`recheckKycBlocks()`/
+  `initiateEligibleTransfers()` each go through an atomically-conditional
+  `UPDATE ... WHERE` (`PayoutPort.markReserveReleased()`/
+  `markKycCleared()`/`markTransferInitiated()`) — the same
+  race-safe-by-construction pattern `ReserveService` uses. `runSweep()`
+  (the noon job that creates `Payout` rows from a windowStart/windowEnd
+  derived from `findLatestSweepRun()`) used a different mechanism: two
+  replicas racing noon previously both read the same "last sweep" window
+  and both created a `Payout` for the same ledger credit — confirmed
+  live via a real concurrent-call reproduction, not just theorized from
+  reading the code. Fixed with a `CachePort.setNX()` distributed lock
+  around the whole method (the same primitive `IdempotencyInterceptor`
+  already uses for per-request locking, applied here to a batch job
+  instead) — a losing caller returns `null` rather than racing the
+  winner. Verified live: the same reproduction now produces exactly one
+  `Payout`, with a permanent regression test in
+  `test/marketplace-payouts.e2e-spec.ts`.
+
+  **Deliberate trade-off, not an oversight**: the lock is the only
+  safeguard — there is no DB-level uniqueness constraint backstopping
+  it. Adding one properly would need a new `window_start` column on
+  `payouts` (today's `sweep_run_id` doesn't work as a uniqueness key
+  here, since two racing calls each mint their own fresh
+  `sweepRunId`), a backfill migration, and application code to treat a
+  unique-violation as an expected, safely-skippable outcome — real
+  schema work, not a small addition. Skipped because the lock already
+  closes the reproduced race, and Redis being unreachable fails
+  `setNX()` loudly (the sweep errors out) rather than silently granting
+  every caller the lock — there's no silent-failure mode a backstop
+  would specifically catch at today's scale. The lock's own failure
+  mode that a DB constraint *would* catch — a legitimately slow sweep
+  outliving its lock's TTL and genuinely racing the next scheduled tick
+  — is a scale problem (this method sweeps every eligible merchant in
+  one sequential pass under one global lock), not a correctness gap in
+  the lock itself. If/when that scale is reached, the DB constraint is
+  worth building alongside whichever sharding/batching/queue redesign
+  actually addresses the sweep's own throughput, not in isolation
+  before then.
 - **`ReconciliationService` is not self-healing** — a second replica
   running the same window's reconciliation produces a second, duplicate
   `ReconciliationRun` row recording the same (hopefully clean) result.
@@ -248,6 +317,19 @@ moment.
   this relay currently does — see `ledger-and-settlement.md` — would fire
   in each replica that read the same event) is a real open question, not
   verified either way.
+- **`AmbiguousPaymentService.runAutoResolutionSweep()` reduces but
+  doesn't eliminate the race**: each item re-reads the payment on the
+  master and skips it if its status is no longer `AMBIGUOUS`
+  immediately before acting, which closes the most obvious window, but
+  two replicas could still both pass that re-read check for the same
+  payment before either one's write lands — not verified either way,
+  same open-question posture as `LedgerOutboxRelayService` above.
+  `alertOnStale()` is read-only/alert-only, same non-concern as
+  `detectStaleEvents()`.
+- **`AmbiguousRiskMonitoringService.runAutoClearSweep()` is idempotent**
+  — it unconditionally sets a merchant's ambiguous-risk flag to cleared;
+  two replicas racing the same merchant both write the same end state,
+  not a double-effect the way creating a new row would be.
 
 ### Why this hasn't been fixed properly
 
@@ -267,6 +349,8 @@ loose end.
 **If you add a new `@Cron` job**: assume it will run concurrently across
 every replica, and design for that from the start — either make the work
 naturally idempotent/conflict-safe under concurrent execution (the
-pattern `ReserveService`/`SubscriptionService` happen to follow), or
-explicitly flag in its docblock that it isn't yet, the way this section
-flags `ReconciliationService` and `LedgerOutboxRelayService`.
+pattern `ReserveService`/`SubscriptionService` happen to follow), guard
+it with a distributed lock the way `PayoutService.runSweep()` now does,
+or explicitly flag in its docblock that it isn't yet safe either way,
+the way this section flags `ReconciliationService` and
+`LedgerOutboxRelayService`.

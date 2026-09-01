@@ -96,15 +96,47 @@ update against production.
 
 ## Smart PSP routing
 
-`SmartRoutingStrategy` (pure domain logic, no I/O) scores every available
-PSP for a given transaction and picks the highest score. It's re-run for
-every charge — there's no caching or sticky routing.
+`SmartRoutingStrategy` (pure domain logic, no I/O) picks a PSP for
+every charge — there's no caching or sticky routing, every charge
+re-decides.
 
-**Filtering** (before scoring): a PSP is only a candidate if it's available,
-its circuit breaker isn't `OPEN`, it supports the transaction's currency,
-and — if BIN country info is present — it supports that country.
+**Per-merchant PSP entitlement**: `MerchantEntity.enabledPspProviders` (`jsonb`, defaults to
+every PSP this system has an adapter for — currently `STRIPE` and
+`ADYEN` — so every existing merchant is unaffected until narrowed via
+`PATCH /admin/merchants/:id/psp-entitlement`) restricts which PSPs a
+merchant's charges may ever route through. If the charge request set
+`preferredProvider` and it's outside this merchant's entitlement, the
+charge is **rejected** with `422 PREFERRED_PROVIDER_NOT_ENTITLED` —
+checked explicitly, before candidate filtering even runs — not
+silently routed to a different, entitled PSP. This is a deliberate
+asymmetry from the availability/currency/country filter below:
+entitlement reflects a merchant's real contractual relationship with a
+PSP (a merchant onboarded to Stripe hasn't necessarily agreed to have
+Adyen ever touch its transactions), a permission boundary an operator
+configured on purpose — silently rerouting around it would hide a real
+integration bug (a client still requesting a PSP that was deliberately
+revoked) rather than surfacing it.
 
-**Scoring** (0–~120 points, roughly):
+**Filtering** (applied to build the general candidate pool — used both
+for scoring when there's no preference, and to validate a preferred
+provider that passed the entitlement check above): a single pass over
+the entitled PSPs, checked in this order — available and circuit
+breaker not `OPEN`, entitled (redundant with the explicit check above
+for a `preferredProvider`, but this is also where a non-preferred PSP
+gets dropped from the pool for lacking entitlement), supports the
+transaction's currency, and — if BIN country info is present —
+supports that country.
+
+**Preference override** (checked before scoring): if the charge
+request set `preferredProvider` and that PSP survived entitlement and
+the filter above, it's selected directly — a true override, not a
+scoring input, matching the charge API's own documented contract
+("overrides smart routing"). Scoring below is only reached when
+there's no preference, or the preferred provider didn't survive the
+availability/currency/country filter (not the entitlement check above,
+which rejects outright rather than falling through).
+
+**Scoring** (0–~100 points, roughly, when no preference decided it):
 
 | Factor | Points | Reasoning |
 |---|---|---|
@@ -112,7 +144,6 @@ and — if BIN country info is present — it supports that country.
 | Success rate | 0–30 | Recent reliability |
 | Latency | 0–15 (lower latency = more points) | Faster PSPs preferred when otherwise equal |
 | Fee | 0–15 (lower fee = more points) | Cost optimization |
-| Preferred provider | +20 | Caller can force a preference via `preferredProvider` on the charge request; still subject to availability filtering |
 | EU card × Adyen | +10 | PSD2/SCA — Adyen is the stronger EU acquirer for this reference setup |
 | Non-EU card × Stripe | +5 | Lower fees for US-centric traffic in this reference setup |
 
@@ -122,11 +153,24 @@ next-highest-scored PSP that's currently available, in order, until one
 succeeds or the list is exhausted (`usedFallback: true` in the response
 tells the caller this happened).
 
-**Circuit breaker**: 5 consecutive failures opens the circuit for 30
-seconds, after which it moves to `HALF_OPEN` and a single success closes it
-again. State lives in Redis (`RedisCircuitBreakerService`, via the same
-`CachePort` idempotency already uses — no new connection), shared across
-every replica — this used to be per-process instance fields on
+**Circuit breaker**: 5 failures **within a 60-second window** opens the
+circuit for 30 seconds, after which it moves to `HALF_OPEN` — not 5
+*consecutive* failures: the failure count is a Redis counter with a
+60-second TTL refreshed on every failure, and a success while the
+circuit is still `CLOSED` does not reset it (only a `HALF_OPEN →
+CLOSED` recovery does), so 5 failures scattered across that window with
+successes interspersed still trips it. `HALF_OPEN` admits exactly **one**
+trial call (a shared Redis counter, atomically incremented, gates it) —
+a success on that trial closes the circuit; a failure re-opens it
+immediately, without needing to re-accumulate 5 failures. Every other
+call arriving while that single trial is still outstanding is rejected
+the same as `OPEN`, rather than the whole replica fleet's traffic
+resuming at once the instant the state flips — the entire point of a
+recovery probe is to send the PSP a trickle, not a burst, right as it
+may be starting to recover. State lives in Redis
+(`RedisCircuitBreakerService`, via the same `CachePort` idempotency
+already uses — no new connection), shared across every replica — this
+used to be per-process instance fields on
 `StripePSPAdapter`/`AdyenPSPAdapter`, which meant each pod made its own
 independent availability judgment about each PSP with zero coordination
 between them. Verified live: forcing 5 failures against one replica trips
@@ -136,6 +180,14 @@ bucketed into a 15-minute sliding window (per-minute Redis keys, summed at
 read time) rather than accumulating for as long as the Redis keys live —
 see [`distributed-state.md`](../technical/distributed-state.md) for the
 bucketing design.
+
+A second trigger also opens the circuit independently of the above: a
+call that never throws but takes longer than 5 seconds counts as
+"slow," and once at least 5 of the most recent calls are in the window
+and half or more were slow, the circuit opens anyway — otherwise a PSP
+that's silently hanging (not erroring, just never responding) wouldn't
+trip the breaker until it actually started throwing, which could take
+up to 2.5 minutes at 5 required failures.
 
 ## Reconciliation
 
@@ -155,6 +207,31 @@ Matching sums settlement records sharing a `pspTransactionId` rather than
 assuming exactly one per id — required once partial-capture accounting
 (below) made it possible for one authorization to produce several
 settlement records at the PSP.
+
+**Does not cover `AMBIGUOUS` payments** — a payment whose PSP call got
+no response at all never received a `pspTransactionId`, so it has
+nothing to match against a PSP settlement record; `ReconciliationService`
+skips any payment without one. See
+[`payment-lifecycle.md`](./payment-lifecycle.md)'s note on `AMBIGUOUS`
+for the full picture — a separate automated sweep asks the PSP directly
+what happened (a read-only lookup by idempotency key, not something
+this reconciliation job itself does), and books the same ledger entries
+as a webhook confirmation once it gets a definitive answer; a manual
+admin action (`POST /admin/payments/:id/resolve-ambiguous`) remains
+available for whatever that sweep's retry budget doesn't resolve.
+
+**A merchant whose `AMBIGUOUS` incidents pile up gets flagged for
+observation, separately from reconciliation.**
+`AmbiguousRiskMonitoringService` watches for two independent signals
+per merchant — more than a configurable threshold of incidents in a
+rolling 24h window, or a run of consecutive charges that were *all*
+ambiguous — and sets `MerchantEntity.ambiguousRiskFlagged` when either
+trips. Purely observational: it does not throttle, hold, or otherwise
+change how that merchant's charges are processed, and a flag auto-clears
+once no new incident has occurred for a configurable number of days
+(default 60). See
+[`../guide/api/merchants-and-auth.md`](../guide/api/merchants-and-auth.md#ambiguous-risk-observation)
+for the admin-facing endpoints.
 
 ## Fee model
 

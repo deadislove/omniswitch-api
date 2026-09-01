@@ -24,12 +24,12 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiHeader, ApiRespon
 import { Observable, Subject, fromEvent } from 'rxjs';
 import { map, filter } from 'rxjs/operators';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../shared/guards/roles.guard';
 import { HmacSignatureGuard } from '../../../../shared/guards/hmac-signature.guard';
-import { MerchantThrottlerGuard } from '../../../../shared/guards/merchant-throttler.guard';
+import { DegradedPspAwareThrottlerGuard } from '../../../../shared/guards/degraded-psp-aware-throttler.guard';
 import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
 import { IdempotencyInterceptor } from '../interceptors/idempotency.interceptor';
 import { PaymentCheckoutSaga } from '../sagas/payment-checkout.saga';
@@ -47,13 +47,30 @@ import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { AcquirerRoutingService } from '../services/acquirer-routing.service';
+import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
+import { RedisCircuitBreakerService } from '../../adapters/circuit-breaker/redis-circuit-breaker.service';
 import { PaymentLifecycleService } from '../services/payment-lifecycle.service';
-import { PaymentAggregate } from '../../domain/aggregates/payment.aggregate';
+import { PaymentAggregate, PSPProvider } from '../../domain/aggregates/payment.aggregate';
 import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { FXRateProviderPort } from '../../ports/outbound/fx-rate-provider.port';
 import { DelegationService } from '../services/delegation.service';
 import * as csv from 'csv-parser';
 import { Readable } from 'stream';
+
+// @Throttle's arguments are evaluated once, at class-definition time (a
+// plain decorator, not DI-resolved) — this can't go through ConfigService,
+// which only exists once Nest's runtime container is up. Reading directly
+// from process.env keeps the production default (100/min) unchanged while
+// letting e2e (test/setup-env.ts) and load-test (docker-compose.yml) runs
+// raise it: this route's cap is IP-scoped as well as merchant-scoped (see
+// MerchantThrottlerGuard's docblock — DegradedPspAwareThrottlerGuard
+// extends it, same IP/merchant-scoping behavior applies), so every
+// request in a single-machine e2e/load-test run — regardless of which
+// merchant it authenticates as — competes for the same 100/min budget.
+// See docs/technical/load-testing.md, Finding #1, for how this was first
+// found to be the actual ceiling.
+const CHARGE_RATE_LIMIT_MAX = Number(process.env.CHARGE_RATE_LIMIT_MAX) || 100;
+const CHARGE_RATE_LIMIT_TTL = Number(process.env.CHARGE_RATE_LIMIT_TTL) || 60000;
 
 /**
  * Payment Controller (v1)
@@ -69,10 +86,11 @@ import { Readable } from 'stream';
 @ApiTags('Payments v1')
 @ApiBearerAuth()
 @Controller('payments')
-// MerchantThrottlerGuard must come after JwtAuthGuard — Nest runs guards in
-// array order, and it needs req.user (set by JwtAuthGuard) to key the quota
-// by merchant instead of falling back to IP.
-@UseGuards(JwtAuthGuard, RolesGuard, MerchantThrottlerGuard)
+// DegradedPspAwareThrottlerGuard (a MerchantThrottlerGuard subclass) must
+// come after JwtAuthGuard — Nest runs guards in array order, and it needs
+// req.user (set by JwtAuthGuard) to key the quota by merchant instead of
+// falling back to IP.
+@UseGuards(JwtAuthGuard, RolesGuard, DegradedPspAwareThrottlerGuard)
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
 
@@ -84,16 +102,18 @@ export class PaymentController {
     private readonly paymentLifecycle: PaymentLifecycleService,
     private readonly fxRateProvider: FXRateProviderPort,
     private readonly delegationService: DelegationService,
+    private readonly processorFactory: PaymentProcessorFactory,
+    private readonly circuitBreaker: RedisCircuitBreakerService,
   ) {}
 
   /** Merchants may only act on their own payments; ADMIN/OPERATOR may act on any. */
   private assertOwnership(payment: PaymentAggregate, req: any): void {
     if (req.user?.roles?.includes(UserRole.MERCHANT) && payment.metadata.merchantId !== req.user.merchantId) {
-      // BadRequestException always sends HTTP 400 regardless of the
-      // statusCode field inside its body — a client checking the actual
-      // response status (not just the JSON payload) would never see this as
-      // a 403. Verified live: a cross-merchant cancel attempt came back as
-      // HTTP 400 with a body claiming "statusCode":403.
+      // ForbiddenException, not BadRequestException — the latter always
+      // sends HTTP 400 regardless of the statusCode field inside its body,
+      // so a client checking the actual response status (not just the
+      // JSON payload) would never see a cross-merchant access attempt as
+      // the 403 it actually is.
       throw new ForbiddenException({ statusCode: 403, error: 'Forbidden', code: 'ACCESS_DENIED' });
     }
   }
@@ -113,13 +133,13 @@ export class PaymentController {
   @Roles(UserRole.MERCHANT, UserRole.ADMIN, UserRole.AGENT)
   @UseGuards(HmacSignatureGuard)
   @UseInterceptors(IdempotencyInterceptor)
-  @Throttle({ default: { limit: 100, ttl: 60000 } })
+  @Throttle({ default: { limit: CHARGE_RATE_LIMIT_MAX, ttl: CHARGE_RATE_LIMIT_TTL } })
   @ApiOperation({ summary: 'Charge a payment with smart PSP routing — also usable by an AGENT token (see POST /delegations), whose charge is checked against its delegation\'s spend policy instead of requiring HMAC signature headers' })
   @ApiResponse({ status: 201, type: ChargePaymentResponseDto })
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
   @ApiResponse({ status: 403, description: 'The caller\'s Delegation has been revoked' })
   @ApiResponse({ status: 409, description: 'splits requested with captureMethod "manual", or a split recipient has an incompatible settlement-currency conversion' })
-  @ApiResponse({ status: 422, description: 'Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, or (AGENT callers only) the charge violates the delegation\'s spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)' })
+  @ApiResponse({ status: 422, description: 'Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, preferredProvider is outside the merchant\'s PSP entitlement, or (AGENT callers only) the charge violates the delegation\'s spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)' })
   @ApiHeader({ name: 'Idempotency-Key', description: 'UUID v4 for idempotent requests', required: true })
   @ApiHeader({ name: 'X-Signature', description: 'HMAC-SHA256 signature (not required for an AGENT-authenticated call)', required: false })
   @ApiHeader({ name: 'X-Timestamp', description: 'Unix timestamp (not required for an AGENT-authenticated call)', required: false })
@@ -238,6 +258,11 @@ export class PaymentController {
       throw err;
     }
 
+    // AMBIGUOUS deliberately excluded: we don't know whether the PSP
+    // actually charged the card, so releasing the reservation here could
+    // let the same delegated spend be authorized again elsewhere while the
+    // original charge is still unresolved. Left held until reconciliation
+    // resolves the payment to SUCCEEDED or FAILED.
     if (reservedDelegationId && result.status === PaymentStatus.FAILED) {
       await this.delegationService.releaseReservation(reservedDelegationId, amount);
     }
@@ -630,5 +655,34 @@ export class PaymentController {
   })
   async getRoutingHealth(): Promise<Record<string, unknown>> {
     return this.acquirerRouting.getPSPHealthSummary();
+  }
+
+  /**
+   * POST /api/v1/payments/routing/circuit-breaker/:provider/reset
+   * Operator escape hatch — see RedisCircuitBreakerService.resetCircuit()'s
+   * docblock for why this exists (no other way to intervene short of
+   * reaching into Redis directly if automated recovery isn't behaving as
+   * expected).
+   */
+  @Post('routing/circuit-breaker/:provider/reset')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.ADMIN, UserRole.OPERATOR)
+  @ApiOperation({ summary: "Force a PSP's circuit breaker back to CLOSED, bypassing the normal recovery flow" })
+  @ApiResponse({ status: 200, description: 'Circuit reset; current health snapshot for this provider' })
+  @ApiResponse({ status: 400, description: 'Unknown provider' })
+  async resetCircuitBreaker(@Param('provider') provider: string): Promise<Record<string, unknown>> {
+    const upper = provider.toUpperCase();
+    if (!this.processorFactory.getRegisteredProviders().includes(upper as PSPProvider)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: `Unknown PSP provider '${provider}'`,
+        code: 'UNKNOWN_PSP_PROVIDER',
+        allowed: this.processorFactory.getRegisteredProviders(),
+      });
+    }
+    await this.circuitBreaker.resetCircuit(upper);
+    this.logger.warn(`Circuit breaker for ${upper} manually reset to CLOSED via admin action`);
+    const summary = await this.acquirerRouting.getPSPHealthSummary();
+    return summary[upper] as Record<string, unknown>;
   }
 }

@@ -1,6 +1,6 @@
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 
 const { combine, timestamp, json, errors, colorize, printf } = winston.format;
 

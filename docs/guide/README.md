@@ -26,6 +26,18 @@ reference you'll come back to once you're working on a specific area.
    needed. The API is also live and interactive at `/api/docs` (Swagger
    UI) once the app is running.
 
+## Operating the background jobs
+
+Not part of the onboarding reading order above, but worth knowing this
+exists once you're actually deploying or operating this system:
+[`jobs/`](./jobs/) is a runbook for the archiving, deletion, partition
+maintenance, and cutover-cleanup jobs — how to run each one manually,
+read its logs, and troubleshoot a failure. The policy/design behind
+what these jobs do lives in
+[`../compliance/data-retention.md`](../compliance/data-retention.md)
+and [`../technical/jobs.md`](../technical/jobs.md); this folder is
+specifically the "how do I run this" reference.
+
 ## Getting the app running
 
 The top-level [`README.md`](../../README.md)'s "Quick Start" section is

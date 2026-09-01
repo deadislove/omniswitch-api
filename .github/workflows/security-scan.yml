@@ -97,10 +97,10 @@ jobs:
 
       # Separate from ci.yml's general (report-only) lint step — this one
       # only loads eslint-plugin-security's rules (see
-      # .eslintrc.security.cjs for why detect-object-injection is off),
+      # eslint.security.config.cjs for why detect-object-injection is off),
       # is blocking, and doesn't hit the general config's
       # tsconfig/test-file parsing gap since it skips type-aware parsing.
-      - run: npx eslint --no-eslintrc -c .eslintrc.security.cjs "src/**/*.ts" --max-warnings=0
+      - run: npx eslint -c eslint.security.config.cjs "src/**/*.ts" --max-warnings=0
 
   # ─── npm audit: known vulnerabilities in npm dependencies ──────────────────
   npm-audit:

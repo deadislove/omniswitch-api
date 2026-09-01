@@ -6,6 +6,7 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "transformIgnorePatterns": ["node_modules/(?!.*(@scure/base|@noble/hashes))"],
   "setupFiles": ["<rootDir>/test/setup-env.ts"],
   "testTimeout": 30000,
   "maxWorkers": 1

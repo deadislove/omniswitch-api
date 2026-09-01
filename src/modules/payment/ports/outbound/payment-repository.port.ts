@@ -34,7 +34,14 @@ export abstract class PaymentRepositoryPort {
    */
   abstract findByIdOnMaster(id: string): Promise<PaymentAggregate | null>;
 
-  abstract findByIdempotencyKey(key: string): Promise<PaymentAggregate | null>;
+  /**
+   * Scoped by merchantId as well as the raw key — the DB-level uniqueness
+   * constraint is `(merchant_id, idempotency_key, created_at)`, not just
+   * `idempotency_key`, precisely so two different merchants can use the
+   * same idempotency key value without colliding. A single-argument
+   * lookup would silently return an arbitrary match once that's true.
+   */
+  abstract findByIdempotencyKey(merchantId: string, key: string): Promise<PaymentAggregate | null>;
   abstract findByPspTransactionId(pspTransactionId: string): Promise<PaymentAggregate | null>;
   abstract findByMerchantId(merchantId: string, filter?: FindPaymentsFilter): Promise<PaymentAggregate[]>;
   abstract update(payment: PaymentAggregate): Promise<void>;
@@ -79,4 +86,58 @@ export abstract class PaymentRepositoryPort {
    * tier is decided per-currency rather than off a blended total.
    */
   abstract sumSucceededVolumeSince(merchantId: string, since: Date, currencyCode: string): Promise<bigint>;
+
+  /**
+   * `AMBIGUOUS` payments (a PSP call that got no response at all, and a
+   * same-provider retry also got no response — see
+   * PaymentCheckoutSaga.compensate_markAmbiguous()) created more than
+   * `olderThanMinutes` ago. Across every merchant, like
+   * findByProviderAndDateRange() — an operator resolving these works at
+   * the platform level, not scoped to one merchant. Used by
+   * AmbiguousPaymentService for both the admin-facing list endpoint and
+   * the stale-alert sweep; `olderThanMinutes: 0` returns every currently
+   * `AMBIGUOUS` payment regardless of age.
+   */
+  abstract findAmbiguousOlderThan(olderThanMinutes: number): Promise<PaymentAggregate[]>;
+
+  /**
+   * Count of this merchant's payments that were *ever* `AMBIGUOUS` since a
+   * point in time — `status = 'AMBIGUOUS' OR ambiguousResolvedAt IS NOT NULL`,
+   * not just currently-`AMBIGUOUS`, since AmbiguousPaymentService's manual
+   * resolution moves a payment out of `AMBIGUOUS` into `SUCCEEDED`/`FAILED`
+   * without erasing the fact that it was, at some point, a real ambiguous
+   * incident for this merchant. Used by AmbiguousRiskMonitoringService's
+   * rolling-window threshold check.
+   */
+  abstract countAmbiguousIncidentsSince(merchantId: string, since: Date): Promise<number>;
+
+  /**
+   * Whether this merchant was *ever* `AMBIGUOUS` (same definition as
+   * countAmbiguousIncidentsSince above), for each of its most recent
+   * `limit` payments, newest first. Used by
+   * AmbiguousRiskMonitoringService's consecutive-incidents check — a
+   * merchant whose last N payments were *all* ambiguous is a stronger,
+   * more specific signal than raw volume within a window (a high-volume
+   * merchant could rack up many ambiguous incidents during a PSP's bad
+   * stretch without every single one of its charges being affected).
+   * Shorter than `limit` if the merchant has fewer than `limit` payments
+   * total — callers should treat that as "not enough history to trigger
+   * this check yet", not as a false streak.
+   */
+  abstract findRecentAmbiguousFlags(merchantId: string, limit: number): Promise<boolean[]>;
+
+  /**
+   * Still-`AMBIGUOUS` payments eligible for
+   * AmbiguousPaymentService.runAutoResolutionSweep() to ask the PSP about
+   * via queryOutcome(): `ambiguousAutoRetryCount < maxAttempts` (once a
+   * payment hits the cap the sweep stops touching it and leaves it for a
+   * human via the existing stale-alert path) and old enough
+   * (`createdAt <= now - minAgeMinutes`, so the sweep doesn't immediately
+   * re-query a PSP that only just failed to respond — the same PSP may
+   * still be in the middle of whatever caused the original timeout).
+   * Across every merchant, like findAmbiguousOlderThan(). A payment a
+   * human already resolved manually is naturally excluded: its status is
+   * no longer `AMBIGUOUS` once AmbiguousPaymentService.resolve() runs.
+   */
+  abstract findAmbiguousEligibleForAutoResolution(maxAttempts: number, minAgeMinutes: number): Promise<PaymentAggregate[]>;
 }

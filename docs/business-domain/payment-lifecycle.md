@@ -9,10 +9,14 @@ saga/service code line by line.
 
 ```
 PENDING ──────► PROCESSING ──────► SUCCEEDED ──┬──► REFUNDED
-   │                │  │               │        └──► PARTIALLY_REFUNDED ──► REFUNDED
-   │                │  │               │
-   │                │  │               └──► DISPUTED ──┬──► SUCCEEDED (dispute won)
-   │                │  │                                └──► REFUNDED (dispute lost)
+   │                │  │  │            │        ├──► PARTIALLY_REFUNDED ──┬──► REFUNDED
+   │                │  │  │            │                                   └──► DISPUTED (see below — same two outcomes)
+   │                │  │  │            └──► DISPUTED ──┬──► SUCCEEDED (won, nothing refunded yet)
+   │                │  │  │                             ├──► PARTIALLY_REFUNDED (won, a partial refund predates it)
+   │                │  │  │                             └──► REFUNDED (lost)
+   │                │  │  │
+   │                │  │  └──► AMBIGUOUS ──┬──► SUCCEEDED (automated PSP query, or manual admin action — see note below)
+   │                │  │                    └──► FAILED    (automated PSP query, or manual admin action — see note below)
    │                │  │
    │                │  └──► REQUIRES_CAPTURE ──┬──► SUCCEEDED
    │                │                            ├──► PARTIALLY_CAPTURED ──► SUCCEEDED
@@ -22,7 +26,7 @@ PENDING ──────► PROCESSING ──────► SUCCEEDED ──�
    │                                        ├──► FAILED
    │                                        └──► CANCELLED
    │
-   ├──► FAILED (no PSP was ever contacted — e.g. no PSP available for the currency)
+   ├──► FAILED (no PSP was ever contacted — e.g. no PSP available for the currency, or an invalid marketplace split)
    └──► CANCELLED
 ```
 
@@ -31,6 +35,41 @@ enforces every transition explicitly (`assertValidTransition`), and
 `FAILED`/`CANCELLED`/`REFUNDED` are terminal. There is no path back from
 `FAILED` to `PENDING`; a failed charge attempt means creating a *new*
 payment (new `paymentId`), not retrying the old one in place.
+
+**`AMBIGUOUS` resolves two ways: automated first, manual as a
+fallback.** `PaymentStatus.vo.ts`'s transition table allows
+`AMBIGUOUS → SUCCEEDED`/`FAILED`. Nothing resolves it through the
+normal charge-confirmation paths: `WebhookProcessingService` looks
+payments up by `pspTransactionId` (an ambiguous outcome never received
+one — that's the definition of ambiguous, see below), and even where a
+webhook did somehow match, its status guard only accepts `PROCESSING`/
+`REQUIRES_ACTION`, not `AMBIGUOUS`; `ReconciliationService` skips any
+payment without a `pspTransactionId` for the same reason. Instead:
+
+- **Automated PSP-query resolution** —
+  `AmbiguousPaymentService.runAutoResolutionSweep()` (`@Cron` every 10
+  minutes, plus on-demand via
+  `POST /admin/payments/ambiguous/run-auto-resolution`) asks the PSP
+  itself what happened, via `PSPAdapterPort.queryOutcome(idempotencyKey)`
+  — a read-only lookup, not a resubmitted charge (this system never
+  persists the card reference past the original request, so there's
+  nothing to resubmit with even if it wanted to). `SUCCEEDED` books the
+  same ledger entries a webhook confirmation would; `FAILED` records
+  that no charge occurred; if the PSP still has no record either, the
+  payment's `ambiguousAutoRetryCount` increments and it's tried again
+  next sweep, up to `AMBIGUOUS_AUTO_RESOLUTION_MAX_ATTEMPTS` (default
+  5) attempts.
+- **Manual escape hatch** — for whatever the automated sweep's retry
+  budget doesn't resolve, an operator who has checked the PSP's own
+  dashboard/API directly can close it out via
+  `AmbiguousPaymentService`/`AmbiguousPaymentAdminController`
+  (`GET /admin/payments/ambiguous`, `POST /admin/payments/:id/resolve-ambiguous`
+  — see [`../guide/api/platform-ops.md`](../guide/api/platform-ops.md#ambiguous-payment-resolution-adminpaymentsambiguous-adminpaymentsidresolve-ambiguous)).
+- **Stale alert** — `AmbiguousPaymentService.alertOnStale()`, every 5
+  minutes, logs an error for anything still `AMBIGUOUS` after 15
+  minutes (deliberately well before the automated sweep exhausts its
+  own retry budget, so a human finds out early rather than only once
+  automation has already given up).
 
 ## What triggers each transition
 
@@ -45,11 +84,14 @@ payment (new `paymentId`), not retrying the old one in place.
 | `REQUIRES_CAPTURE`/`PARTIALLY_CAPTURED` → `PARTIALLY_CAPTURED` | `POST /payments/:id/capture`, amount < everything remaining | A separate ledger entry is booked for *this* capture's amount only, same as any other capture — see Capture accounting below |
 | `PARTIALLY_CAPTURED` → `SUCCEEDED` | A further `POST /payments/:id/capture` whose amount completes the authorization | The only transition out of `PARTIALLY_CAPTURED` — cancelling the remainder isn't implemented (see Capture accounting) |
 | `REQUIRES_CAPTURE` → `CANCELLED` | `POST /payments/:id/cancel` | Releases the hold; calls the PSP's cancel endpoint if it already knows about the payment. Not available once any capture has happened — see Capture accounting |
-| `PROCESSING`/`REQUIRES_ACTION` → `FAILED` | PSP declines, all PSPs in the fallback chain fail, or the risk/routing step fails before any PSP is contacted | Compensating transaction (`compensate_markFailed`) |
+| `PENDING` → `FAILED` | Charge-ledger-params validation fails (`INVALID_CHARGE_PARAMS` — e.g. an invalid marketplace split), or smart routing finds no available/entitled PSP for this charge | Fails before any PSP is ever contacted — `payment.startProcessing()` hasn't run yet, so the payment is still `PENDING` when `compensate_markFailed` marks it `FAILED` |
+| `PROCESSING`/`REQUIRES_ACTION` → `FAILED` | PSP declines, or all PSPs in the fallback chain fail | Compensating transaction (`compensate_markFailed`) |
+| `PROCESSING` → `AMBIGUOUS` | The PSP call got no response at all (not a decline — a timeout/network failure), and the same-provider idempotency-key retry also got no response | `compensate_markAmbiguous`, `errorCode: 'PSP_TIMEOUT_AMBIGUOUS'` — the saga returns normally (200) instead of throwing, specifically so `IdempotencyInterceptor` doesn't wipe its cache and cause a client retry to re-run the whole saga as a brand-new charge. Never falls back to a different PSP after an ambiguous primary failure — that PSP has never seen this idempotency key and would risk a genuine double charge |
+| `AMBIGUOUS` → `SUCCEEDED`/`FAILED` | `AmbiguousPaymentService.runAutoResolutionSweep()` (automated, PSP query) or `POST /admin/payments/:id/resolve-ambiguous` (manual) | See the note above the state diagram |
 | `SUCCEEDED` → `PARTIALLY_REFUNDED` / `REFUNDED` | `POST /payments/:id/refund` | Amount defaults to the full remaining refundable balance if omitted |
-| `SUCCEEDED` → `DISPUTED` | `charge.dispute.created` (Stripe) / `NOTIFICATION_OF_CHARGEBACK` (Adyen) webhook | No corresponding "create a dispute" API — disputes only ever originate from the PSP. Also creates a `Dispute` record — see Dispute accounting below |
-| `DISPUTED` → `SUCCEEDED` | `charge.dispute.closed` with `status: 'won'` (Stripe) / `CHARGEBACK_REVERSED` (Adyen) webhook | The PSP/card network's decision, not an operator action — see Dispute accounting |
-| `DISPUTED` → `REFUNDED` | `charge.dispute.closed` with `status: 'lost'` (Stripe) / `CHARGEBACK` (Adyen) webhook | Books a ledger entry identical in shape to a normal refund — see Dispute accounting |
+| `SUCCEEDED`/`PARTIALLY_REFUNDED` → `DISPUTED` | `charge.dispute.created` (Stripe) / `NOTIFICATION_OF_CHARGEBACK` (Adyen) webhook | No corresponding "create a dispute" API — disputes only ever originate from the PSP. Also creates a `Dispute` record — see Dispute accounting below. A chargeback on an already-partially-refunded payment is a normal real-world sequence (e.g. a partial refund for a shipping issue, the cardholder disputes the rest anyway), not an edge case left unmodeled |
+| `DISPUTED` → `SUCCEEDED` / `PARTIALLY_REFUNDED` | `charge.dispute.closed` with `status: 'won'` (Stripe) / `CHARGEBACK_REVERSED` (Adyen) webhook | The PSP/card network's decision, not an operator action. Restores whichever status the payment was in *before* the dispute — `SUCCEEDED` if nothing had been refunded yet, `PARTIALLY_REFUNDED` if a partial refund predates the dispute — rather than always resetting to `SUCCEEDED` and silently erasing that refund history. See Dispute accounting |
+| `DISPUTED` → `REFUNDED` | `charge.dispute.closed` with `status: 'lost'` (Stripe) / `CHARGEBACK` (Adyen) webhook | Books a ledger entry identical in shape to a normal refund, for whatever the *remaining* refundable balance was at dispute time (not the full original charge, so a payment already partially refunded before the dispute isn't double-counted) — see Dispute accounting |
 
 ### Fixed bug: pre-emptive 3DS used to have no PSP transaction id
 
@@ -79,7 +121,22 @@ A payment can be refunded multiple times, partially, as long as the running
 total doesn't exceed the original charge (`PaymentAggregate.refund()`
 enforces this, and `PaymentLifecycleService.refund()` checks it again before
 ever calling the PSP, so a doomed refund never reaches Stripe/Adyen).
-`remainingRefundable` is always `amount - sum(refunds)`.
+`remainingRefundable` is always `amount - sum(refunds)`. The payment's
+*status* is checked before the PSP is ever called too, not only the
+amount — a payment outside `SUCCEEDED`/`PARTIALLY_REFUNDED` (e.g.
+`DISPUTED`) is rejected with `409 NOT_REFUNDABLE` up front, rather than
+only being caught by `PaymentAggregate.refund()`'s own status guard after
+a real refund has already been sent to the PSP.
+
+Two concurrent refund calls against the same payment (e.g. two different
+partial refunds racing each other) are resolved with a conditional
+`UPDATE ... WHERE` at save time: whichever commits first wins, and the
+loser gets `409 CONCURRENT_MODIFICATION` instead of silently overwriting
+the winner's `refunds[]` entry. The PSP has typically already been called
+by the time this is detected — the guard prevents a lost *write*, not a
+duplicate PSP call — so a losing request's caller should treat a
+`409 CONCURRENT_MODIFICATION` as "retry the read and decide again," not
+as proof nothing happened at the PSP.
 
 ## Capture accounting
 
@@ -103,6 +160,15 @@ is still accepted — this used to be impossible: any capture at all, even
 for $1 of a $100 authorization, used to jump straight to `SUCCEEDED` and
 permanently close off capturing the other $99.
 
+Two concurrent capture calls against the same authorization (e.g. two
+different partial captures racing each other) are resolved the same way
+concurrent refunds are — a conditional `UPDATE ... WHERE` at save time,
+with the loser rejected `409 CONCURRENT_MODIFICATION` instead of
+silently losing its `captures[]` entry. Same caveat as refunds: the PSP
+capture call has typically already succeeded by the time this is
+detected, so a `409 CONCURRENT_MODIFICATION` means "your write lost the
+race," not "nothing was captured."
+
 **Not modeled**: voiding the remaining, uncaptured balance after a partial
 capture has already happened. `PARTIALLY_CAPTURED → CANCELLED` isn't a
 valid transition (fails with 409, not silently) — only an untouched
@@ -119,7 +185,12 @@ A dispute/chargeback is tracked as its own record (`Dispute`, the
 dispute has a lifecycle of its own (`NEEDS_RESPONSE` → `UNDER_REVIEW` →
 `WON`/`LOST`, plus a response deadline) that `PaymentAggregate`'s state
 machine has no room to represent, and an operator needs to see and act on
-it independently of the payment record.
+it independently of the payment record. `UNDER_REVIEW` isn't mandatory
+on the way there, though: `DisputeAggregate.resolve()` is reachable
+directly from `NEEDS_RESPONSE` too — the PSP/card network can hand back
+a final `WON`/`LOST` decision without the merchant ever having formally
+submitted evidence (e.g. the dispute is withdrawn, or the response
+window lapses with nothing submitted).
 
 **Creation**: a dispute-created webhook creates the `Dispute` record
 (`respondBy` defaults to 7 days out — a documented default, since neither
@@ -153,14 +224,20 @@ second (human) submission is correctly rejected with 409 — same one-shot
 constraint a human's own submission already has.
 
 **Resolution** is a PSP/card-network decision, not an operator action — it
-arrives via a second webhook. `WON` transitions the payment back to
-`SUCCEEDED`. `LOST` transitions it to `REFUNDED` and books a ledger entry:
-economically, a lost chargeback claws funds back from the merchant exactly
-like a refund does, it's just not merchant-initiated, so
-`PaymentAggregate.resolveDispute()` reuses the same `refunds[]`/
-`RefundRecord` bookkeeping a normal `refund()` call uses (not a separate
-code path) — `totalRefunded`/`remainingRefundable` stay accurate regardless
-of *why* the money left.
+arrives via a second webhook. `WON` restores the payment to whichever
+status it was in *before* the dispute — `SUCCEEDED` if `totalRefunded`
+was zero, `PARTIALLY_REFUNDED` otherwise — rather than unconditionally
+resetting to `SUCCEEDED`, which would silently erase any refund that
+predated the dispute. `LOST` transitions the payment to `REFUNDED` and
+books a ledger entry for the *remaining* refundable balance at the time
+the dispute was created (not the full original charge amount): economically,
+a lost chargeback claws back exactly like a refund does, it's just not
+merchant-initiated, so `PaymentAggregate.resolveDispute()` reuses the
+same `refunds[]`/`RefundRecord` bookkeeping a normal `refund()` call uses
+(not a separate code path) — `totalRefunded`/`remainingRefundable` stay
+accurate regardless of *why* the money left, and a payment that was
+already partially refunded before the dispute started is never
+double-counted between the earlier refund and the dispute-loss clawback.
 
 **Notification**: creation and resolution now emit structured
 `dispute.created`/`dispute.resolved` events via `EventEmitter2`, not just
@@ -186,3 +263,9 @@ an `Idempotency-Key` header. `IdempotencyInterceptor` uses it to:
 This key is deliberately *not* the same thing as `paymentId` — the client
 generates it, and it's what makes "did my request actually go through?"
 retries after a network timeout safe.
+
+Both the Redis cache/lock key and the database's uniqueness constraint on
+`idempotencyKey` are scoped per merchant (`merchantId` is part of both),
+not global — two different merchants can use the identical key value
+without colliding or, worse, one merchant's cached response ever being
+replayed back to a different merchant's request.

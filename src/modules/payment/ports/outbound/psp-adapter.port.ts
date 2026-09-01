@@ -123,6 +123,13 @@ export interface PSPSettlementTransaction {
   settledAt: Date;
 }
 
+export interface PSPQueryOutcomeResult {
+  outcome: 'SUCCEEDED' | 'FAILED' | 'STILL_UNKNOWN';
+  pspTransactionId?: string;
+  errorCode?: string;
+  rawResponse?: Record<string, unknown>;
+}
+
 /**
  * PSP Adapter Port (Outbound)
  * Defines the contract for Payment Service Provider integrations.
@@ -149,6 +156,19 @@ export abstract class PSPAdapterPort {
 
   abstract getHealthStatus(): Promise<PSPHealthStatus>;
   abstract isAvailable(): Promise<boolean>;
+
+  /**
+   * Asks the PSP what actually happened to a request that was sent with
+   * this idempotency key but never got a response back (see
+   * isAmbiguousOutcomeError()) — a read-only lookup, not a new charge
+   * attempt. Deliberately doesn't need the original payment method reference:
+   * this system never persists cardToken/paymentMethodId past the
+   * original request (PCI scope reduction), so any automated
+   * resolution path has to work from the idempotency key alone.
+   * STILL_UNKNOWN means the PSP has no record either — the original
+   * request may genuinely never have reached it.
+   */
+  abstract queryOutcome(idempotencyKey: string): Promise<PSPQueryOutcomeResult>;
 
   /**
    * Fetches the PSP's own settlement record for a time window — its

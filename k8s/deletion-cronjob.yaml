@@ -1,0 +1,156 @@
+# Deletion CronJob — the second, later tier of the data-retention policy
+# (see docs/compliance/data-retention.md's "The three-tier policy"
+# section). Exports records past
+# DELETION_THRESHOLD_YEARS to a backup file, then deletes them from
+# `archive.payments`/`archive.ledger_outbox` — never touches the live
+# `payments`/`ledger_outbox` tables directly, only rows that already went
+# through the archiving tier. See src/jobs/run-deletion-job.ts: the job
+# refuses to delete a batch whose backup didn't write successfully
+# (DELETION_BACKUP_REQUIRED defaults to true).
+#
+# Same "why a CronJob, not @Cron()" reasoning as archiving-cronjob.yaml.
+# Scheduled far less often than archiving — record ages only cross an
+# 8-year (default) boundary slowly, so a daily run would mostly find
+# nothing to do. Weekly is a reasonable POC default; re-tune per actual
+# data volume in a real deployment.
+#
+# PersistentVolumeClaim below backs the default backup destination
+# ("local" — see DELETION_BACKUP_STORAGE in configmap.yaml and
+# src/jobs/backup-storage/get-backup-storage.ts) — it's what makes the
+# backup file durable across the CronJob pod's own lifecycle, since a
+# k8s pod's local filesystem otherwise disappears when the pod does.
+# This default is deliberate, not a placeholder: this project's GitHub
+# Actions CI has no real cloud credentials, so "local" (needing nothing
+# but this PVC) is what keeps CI passing — see
+# docs/compliance/data-retention.md.
+#
+# A real deployment that wants S3/GCS/Azure instead: set
+# DELETION_BACKUP_STORAGE plus that provider's own vars in
+# configmap.yaml/omniswitch-secrets (see get-backup-storage.ts for
+# exactly which ones each provider needs), remove the `env` entries and
+# `volumeMounts`/`volumes` block below that reference this PVC, and this
+# PersistentVolumeClaim resource can be deleted entirely — the cloud
+# adapters don't use it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omniswitch-deletion-backups
+  namespace: payments
+  labels:
+    app: omniswitch-deletion
+    component: data-retention
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: omniswitch-deletion
+  namespace: payments
+  labels:
+    app: omniswitch-deletion
+    component: data-retention
+    workload-type: batch-job
+spec:
+  schedule: "0 4 * * 0"  # weekly, Sunday 04:00 — after the daily archiving run has had time to run
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app: omniswitch-deletion
+            workload-type: batch-job
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            fsGroup: 1001  # PVC-mounted volumes need fsGroup for the non-root container to actually write to them
+          containers:
+            - name: deletion-job
+              image: omniswitch/payment-gateway:1.0.0
+              imagePullPolicy: Always
+              command: ["node", "dist/jobs/run-deletion-job.js"]
+              env:
+                - name: NODE_ENV
+                  value: "production"
+                - name: DB_MASTER_HOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_MASTER_HOST
+                - name: DB_MASTER_PORT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_MASTER_PORT
+                - name: DB_NAME
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_NAME
+                - name: DB_SSL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DB_SSL
+                - name: DELETION_THRESHOLD_YEARS
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DELETION_THRESHOLD_YEARS
+                - name: DELETION_BACKUP_REQUIRED
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DELETION_BACKUP_REQUIRED
+                - name: DELETION_BACKUP_STORAGE
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DELETION_BACKUP_STORAGE
+                - name: DELETION_BACKUP_PATH
+                  valueFrom:
+                    configMapKeyRef:
+                      name: omniswitch-config
+                      key: DELETION_BACKUP_PATH
+                - name: DB_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: omniswitch-secrets
+                      key: DB_USERNAME
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: omniswitch-secrets
+                      key: DB_PASSWORD
+              volumeMounts:
+                - name: deletion-backups
+                  mountPath: /app/backups
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "256Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: deletion-backups
+              persistentVolumeClaim:
+                claimName: omniswitch-deletion-backups

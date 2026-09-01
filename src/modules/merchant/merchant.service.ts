@@ -112,6 +112,7 @@ export class MerchantService {
     platformMerchantId?: string;
     payoutReserveBps?: number;
     payoutReserveHoldDays?: number;
+    enabledPspProviders?: string[];
   }): Promise<{
     merchant: MerchantEntity;
     apiKeySecret: string;
@@ -178,6 +179,7 @@ export class MerchantService {
       ...(params.platformMerchantId ? { platformMerchantId: params.platformMerchantId } : {}),
       ...(params.payoutReserveBps !== undefined ? { payoutReserveBps: params.payoutReserveBps } : {}),
       ...(params.payoutReserveHoldDays !== undefined ? { payoutReserveHoldDays: params.payoutReserveHoldDays } : {}),
+      ...(params.enabledPspProviders ? { enabledPspProviders: params.enabledPspProviders } : {}),
     });
 
     await this.merchantRepo.save(merchant);
@@ -323,6 +325,31 @@ export class MerchantService {
     return merchant;
   }
 
+  /**
+   * Sets which PSPs this merchant's charges are allowed to route through —
+   * see MerchantEntity.enabledPspProviders's docblock. Rejects an empty
+   * array: unlike feeTiers/settlementCurrency (where "clear it" is a
+   * meaningful state), a merchant with zero entitled PSPs can never
+   * successfully charge again — that's very likely a mistake, not an
+   * intended "pause this merchant" action (setActive() already exists for
+   * that, and is reversible/obvious in a way an empty PSP list isn't).
+   */
+  async updatePspEntitlement(merchantId: string, enabledPspProviders: string[]): Promise<MerchantEntity> {
+    if (enabledPspProviders.length === 0) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: 'enabledPspProviders cannot be empty — a merchant must be entitled to at least one PSP',
+        code: 'PSP_ENTITLEMENT_EMPTY',
+      });
+    }
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = merchant.enabledPspProviders;
+    merchant.enabledPspProviders = enabledPspProviders;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`PSP entitlement for merchant ${merchantId} changed from [${previous.join(',')}] to [${enabledPspProviders.join(',')}]`);
+    return merchant;
+  }
+
   async setRiskTierAutoManaged(merchantId: string, enabled: boolean): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
     merchant.riskTierAutoManaged = enabled;
@@ -337,6 +364,53 @@ export class MerchantService {
     merchant.reserveBps = reserveBps;
     merchant.reserveHoldDays = reserveHoldDays;
     await this.merchantRepo.save(merchant);
+    return merchant;
+  }
+
+  /**
+   * Called only by AmbiguousRiskMonitoringService's detection/auto-clear
+   * logic — same posture as applyAutoRiskTier() above: does NOT touch
+   * ambiguousRiskAutoManaged (the caller already only acts on merchants
+   * where it's true), and does not record ambiguousRiskFlaggedBy (an
+   * automated action has no operator identity to attribute it to).
+   */
+  async applyAutoAmbiguousRiskFlag(merchantId: string, flagged: boolean, reason: string): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.ambiguousRiskFlagged = flagged;
+    merchant.ambiguousRiskFlaggedAt = flagged ? new Date() : undefined;
+    merchant.ambiguousRiskFlagReason = flagged ? reason : undefined;
+    merchant.ambiguousRiskFlaggedBy = undefined;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`ambiguousRiskFlagged for merchant ${merchantId} automatically set to ${flagged}${flagged ? `: ${reason}` : ''}`);
+    return merchant;
+  }
+
+  /**
+   * Operator-initiated via PATCH .../ambiguous-risk — always disables
+   * ambiguousRiskAutoManaged, the same "manual input pauses automation"
+   * behavior updateReservePolicy() uses for riskTierAutoManaged. reason
+   * and resolvedBy are both required — this is the same audit-trail
+   * posture AmbiguousPaymentService.resolve() uses for manually
+   * resolving a payment.
+   */
+  async setAmbiguousRiskFlagManual(merchantId: string, flagged: boolean, reason: string, flaggedBy: string): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.ambiguousRiskFlagged = flagged;
+    merchant.ambiguousRiskFlaggedAt = flagged ? new Date() : undefined;
+    merchant.ambiguousRiskFlagReason = reason;
+    merchant.ambiguousRiskFlaggedBy = flaggedBy;
+    merchant.ambiguousRiskAutoManaged = false;
+    await this.merchantRepo.save(merchant);
+    this.logger.warn(`ambiguousRiskFlagged for merchant ${merchantId} manually set to ${flagged} by ${flaggedBy}: ${reason} (ambiguousRiskAutoManaged disabled)`);
+    return merchant;
+  }
+
+  /** Re-enables AmbiguousRiskMonitoringService's automated flag/auto-clear logic for this merchant — same pattern as setRiskTierAutoManaged() above. */
+  async setAmbiguousRiskAutoManaged(merchantId: string, enabled: boolean): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.ambiguousRiskAutoManaged = enabled;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`ambiguousRiskAutoManaged for merchant ${merchantId} set to ${enabled}`);
     return merchant;
   }
 

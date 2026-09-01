@@ -22,13 +22,13 @@ come back to.
 |---|---|---|
 | Language/runtime | TypeScript, Node.js 20 | |
 | Framework | NestJS 11 (Express 5) | DI container, decorators, module system |
-| Database | PostgreSQL 16 | Master + read replica (`@nestjs/typeorm`'s `replication` config) |
-| ORM | TypeORM 0.3 | `synchronize: false` everywhere — migrations are the only source of schema truth |
+| Database | PostgreSQL 16 | Master + read replica (`@nestjs/typeorm`'s `replication` config), fronted by PgBouncer (transaction-mode pooling — see §8) |
+| ORM | TypeORM 1.1 | `synchronize: false` everywhere — migrations are the only source of schema truth |
 | Cache / distributed state | Redis (`ioredis`) | Idempotency locks, rate-limit counters, circuit-breaker state, JWT revocation lists |
 | Secrets | HashiCorp Vault (Transit engine) | Envelope-encrypts `hmac_secret`/TOTP secrets at rest |
 | Auth | `@nestjs/passport` + `passport-jwt`, HS256 | Stateless JWT + a Redis-backed revocation list on top (see §5) |
 | Observability | `prom-client` (`/metrics`), Winston (structured JSON logs), `@nestjs/terminus` (`/health`) | |
-| PSPs | Stripe SDK (`stripe` npm package) + a hand-rolled Adyen HTTP client | Both talk to a local mock server in dev/test, not the real APIs |
+| PSPs | Hand-rolled REST clients for both Stripe and Adyen | Both talk to a local mock server in dev/test, not the real APIs. The `stripe` npm dependency is unused — `StripePSPAdapter` calls the Stripe REST API directly via `fetch()`, pinning `Stripe-Version` itself, the same pattern as the Adyen adapter |
 | Testing | Jest (unit, mocked deps) + Jest/supertest (e2e, real Docker infra) | See §7 |
 
 Nothing here is exotic on purpose — this is meant to read like a
@@ -130,7 +130,9 @@ POST /payments/charge
                      validated now, before any money moves (an invalid split must fail here,
                      not after a real charge already succeeded)
                   3. Risk score computed (stored for audit; doesn't gate anything)
-                  4. AcquirerRoutingService picks a PSP (BIN + amount + live health)
+                  4. AcquirerRoutingService picks a PSP (BIN + amount + live health +
+                     merchant's PSP entitlement — a preferredProvider outside it is
+                     rejected 422, not silently routed elsewhere)
                   5. Adapter calls the PSP — a thrown error retries the other PSP;
                      a normal decline response does not
                   6. On success: Payment marked SUCCEEDED + ledger outbox entry written,
@@ -187,6 +189,7 @@ piece of state becomes available, and where the two failure branches
 | 3. Risk score computed (stored for audit only)              |
 | 4. AcquirerRoutingService.selectOptimalAdapter()            |
 |    -> chosen PSP adapter (BIN + amount + live health)       |
+|    -> also enforces the merchant's PSP entitlement (422)     |
 | 5. PSP Adapter.charge():                                    |
 |      succeeds -> UPDATE Payment SUCCEEDED +                 |
 |                  INSERT ledger outbox event (1 transaction) |
@@ -221,12 +224,14 @@ piece of state becomes available, and where the two failure branches
   failure sets a *terminal* `FAILED` status (not auto-retried) — an
   operator resets it via `POST /admin/outbox/:id/retry`, deliberately,
   so a systemic downstream outage doesn't retry-storm forever.
-- **Marketplace payout sweep** (`PayoutService`, three independent
+- **Marketplace payout sweep** (`PayoutService`, four independent
   `@Cron` sweeps): batches split proceeds into `Payout` records with a
-  rolling reserve, separately rechecks KYC-blocked payouts as merchants
-  get verified, separately initiates bank transfers for eligible ones.
-  Three sweeps, not one, because each concern (batching, KYC, transfer)
-  can become eligible at a different time from the others.
+  rolling reserve, separately releases reserves once their hold period
+  elapses, separately rechecks KYC-blocked payouts as merchants get
+  verified, separately initiates bank transfers for eligible ones. Four
+  sweeps, not one, because each concern (batching, reserve release,
+  KYC, transfer) can become eligible at a different time from the
+  others.
 
 ## 5. Cross-cutting infrastructure concerns
 
@@ -361,7 +366,8 @@ Two distinct suites, and they test different things on purpose:
   happily pass while the real integration is broken.
 
 To run the e2e suite locally: `docker-compose up -d postgres-master
-postgres-replica redis mock-psp vault`, then `npm run test:e2e`.
+postgres-replica pgbouncer-master pgbouncer-replica redis mock-psp vault`,
+then `npm run test:e2e`.
 `maxWorkers: 1` is deliberate — every spec file boots its own full
 `AppModule` against the *same* shared Postgres/Redis, and running files
 concurrently risks cross-file interference on that shared state (two
@@ -382,6 +388,7 @@ for more.
 | Service | Role |
 |---|---|
 | `postgres-master` / `postgres-replica` | Real streaming replication — `TypeOrmModule`'s `replication` config sends writes to master, reads to the replica |
+| `pgbouncer-master` / `pgbouncer-replica` | Transaction-mode connection pooling in front of each Postgres instance — at `hpa.yaml`'s `maxReplicas: 20` × `extra.max: 20` per pod, direct connections could reach 400 against a `max_connections=200` server. `api` connects to these, not to Postgres directly (migrations are the one exception — see `database-migrations.md`). See [`../technical/load-testing.md`](../technical/load-testing.md) (Finding #3) for load-test results |
 | `redis` | Idempotency locks, rate-limit counters, circuit-breaker state, JWT revocation lists |
 | `vault` | Transit engine, envelope-encrypts secrets at rest (dev-mode — see §5) |
 | `mock-psp` | A Node HTTP server mimicking Stripe's and Adyen's real API shapes (`/v1/...`, `/adyen/...`) plus side endpoints for FX rates, KYC review, and bank transfers |
@@ -397,18 +404,36 @@ assumption before you trust a green e2e run more than it's earned.
 **Local dev/test topology** (what `docker-compose.yml` actually wires up):
 
 ```
-+--------------------------------------------------+
-|     api  (NestJS app, production Dockerfile)     |
-+--------------------------------------------------+
-                          |
+                                          +------------------------------------------+
+                                          | api  (NestJS app, production Dockerfile) |
+                                          +------------------------------------------+
+                                                                |
            +-------------------------+-------------------------+-------------------------+--------------------------+
            v                         v                         v                         v                          v
 +--------------------+    +--------------------+    +--------------------+    +--------------------+    +----------------------+
-|  postgres-master   |    |  postgres-replica  |    |       redis        |    |       vault        |    |       mock-psp       |
-|                    |    |                    |    |                    |    |  (Transit engine,  |    | (Stripe/Adyen-shaped |
-|                    |    |                    |    |                    |    |      dev-mode)     |    |     HTTP server)     |
+|  pgbouncer-master  |    | pgbouncer-replica  |    |       redis        |    |       vault        |    |       mock-psp       |
+|      (pooler,      |    |      (pooler,      |    |                    |    |  (Transit engine,  |    | (Stripe/Adyen-shaped |
+| transaction-mode)  |    | transaction-mode)  |    |                    |    |     dev-mode)      |    |     HTTP server)     |
 +--------------------+    +--------------------+    +--------------------+    +--------------------+    +----------------------+
+```
 
+Each pooler then talks to its own Postgres instance:
+
+```
++-------------------+    +-------------------+
+|  pgbouncer-master |    | pgbouncer-replica |
++-------------------+    +-------------------+
+          |                        |
+          v                        v
++-------------------+    +-------------------+
+|  postgres-master  |    |  postgres-replica |
++-------------------+    +-------------------+
+```
+
+...and `postgres-master` streams to `postgres-replica` independently of
+either pooler:
+
+```
 +--------------------+                            +--------------------+
 |  postgres-master   |--[streaming replication]-->|  postgres-replica  |
 +--------------------+                            +--------------------+
@@ -416,11 +441,16 @@ assumption before you trust a green e2e run more than it's earned.
 
 What each `api` edge above actually carries:
 
-- `-> postgres-master`: writes + forced-master reads (see `architecture.md`'s replica-lag notes)
-- `-> postgres-replica`: plain reads (`TypeOrmModule`'s `replication` config)
+- `-> pgbouncer-master -> postgres-master`: writes + forced-master reads (see `architecture.md`'s replica-lag notes)
+- `-> pgbouncer-replica -> postgres-replica`: plain reads (`TypeOrmModule`'s `replication` config)
 - `-> redis`: idempotency locks, rate-limit counters, circuit-breaker state, JWT revocation lists
 - `-> vault`: encrypt/decrypt `hmac_secret`, TOTP secrets
 - `-> mock-psp`: charge/capture/refund/cancel, FX rates, KYC review, bank transfers
+
+Migrations (`npm run migration:run`, `pretest:e2e`) connect straight to
+`postgres-master`'s own port, bypassing the pooler — DDL and
+transaction-mode pooling don't mix well, and migrations aren't a
+connection-count concern in the first place.
 
 **Production topology** (what the `k8s/` manifests describe — not all of
 this has been run against a real cluster; see
@@ -440,15 +470,37 @@ this has been run against a real cluster; see
 |              |      |              |      |  -- see load-testing.md  |
 |              |      |              |      |  for the measured basis) |
 +--------------+      +--------------+      +--------------------------+
-(every pod talks to all four of the below)
-                                    |
-            +-----------------------+----+-----------------------------+--------------------------------+
-            v                            v                             v                                v
-+----------------------+     +----------------------+     +------------------------+     +----------------------------+
-|   Managed Postgres   |     |    Managed Redis     |     |   Real Vault cluster   |     |  Real Stripe / Adyen APIs  |
-|  (master + replica)  |     |                      |     |  (not dev-mode -- see  |     |                            |
-|                      |     |                      |     |  secret-management.md) |     |                            |
-+----------------------+     +----------------------+     +------------------------+     +----------------------------+
+```
+
+(every pod talks to all five of the below — same shape as the local
+dev/test topology above, `k8s/pgbouncer.yaml` in front of Postgres
+either way):
+
+```
+                                                           +-----------+
+                                                           | every Pod |
+                                                           +-----------+
+                                                                 |
+           +-------------------------+------------------------+-------------------------+-----------------------------+
+           v                         v                        v                         v                             v
++---------------------+   +---------------------+   +-------------------+   +-----------------------+   +--------------------------+
+|  PgBouncer (master) |   | PgBouncer (replica) |   |   Managed Redis   |   |   Real Vault cluster  |   | Real Stripe / Adyen APIs |
+|                     |   |                     |   |                   |   |    (not dev-mode --   |   |                          |
+|                     |   |                     |   |                   |   |      see secret-      |   |                          |
+|                     |   |                     |   |                   |   |     management.md)    |   |                          |
++---------------------+   +---------------------+   +-------------------+   +-----------------------+   +--------------------------+
+```
+
+```
++---------------------+   +---------------------+
+|  PgBouncer (master) |   | PgBouncer (replica) |
++---------------------+   +---------------------+
+           |                         |
+           v                         v
++---------------------+   +---------------------+
+|   Managed Postgres  |   |   Managed Postgres  |
+|       (master)      |   |      (replica)      |
++---------------------+   +---------------------+
 ```
 
 The shape doesn't change between the two — same app, same dependency
@@ -456,6 +508,16 @@ list — only *what's behind each box* changes: `mock-psp` becomes real PSP
 APIs, dev-mode Vault becomes a real cluster, a single-node Postgres
 container becomes a managed master/replica pair. That's deliberate: the
 app's own code has no idea which one it's talking to.
+
+**Not shown above, deliberately separate from the request-serving
+topology**: `k8s/archiving-cronjob.yaml` and `k8s/deletion-cronjob.yaml`
+— the data-retention jobs (see
+[`../compliance/data-retention.md`](../compliance/data-retention.md)).
+Each is a `CronJob`, not part of the `Deployment`/HPA — a scheduled,
+single-pod batch run (daily/weekly) using the same production image with
+a different container command, talking to `PgBouncer (master)` the same
+way every request-serving pod does. Neither job sits in the request
+path or scales with traffic.
 
 ## Where to go next
 

@@ -1,6 +1,6 @@
 # Documentation
 
-Three kinds of documentation live here, kept separate because they
+Six kinds of documentation live here, kept separate because they
 answer different questions for different readers.
 
 ## [`guide/`](./guide/)
@@ -10,6 +10,12 @@ business domain guide, the system design doc, and the full API
 reference — meant to be read start to finish, not dipped into. Everything
 below (`technical/`, `business-domain/`) is the deeper reference this
 guide points into once you're working on a specific area.
+
+Also in this folder: [`guide/jobs/`](./guide/jobs/) — an operator
+runbook for the background jobs (archiving, deletion, partition
+maintenance, cutover cleanup), separate from the onboarding reading
+order above since it's day-2-operations reference, not something a new
+engineer needs before their first PR.
 
 ## [`technical/`](./technical/)
 
@@ -55,6 +61,30 @@ compliance posture. Read this if you're changing code.
   CI incidents: a master/replica read race a routine dependency-bump PR
   surfaced, and a heap-flake fix that passed locally three times and then
   broke 61 tests on the actual CI runner
+- [`jobs.md`](./technical/jobs.md) — architecture of the background-job
+  subsystem (archiving, deletion, partition maintenance, cutover
+  cleanup): why they're standalone scripts run as k8s `CronJob`/`Job`
+  resources instead of `@Cron()` methods, the `BackupStorage` factory
+  pattern, and pod labeling
+- [`databases/`](./technical/databases/) — the ERD and table-by-table
+  schema reference, the physical database architecture
+  (master/replica replication, PgBouncer pooling, table partitioning,
+  the `archive` schema), and an index of recurring/one-time database
+  maintenance tasks
+- [`clouds/`](./technical/clouds/) — the pluggable AWS S3/GCS/Azure
+  Blob `BackupStorage` adapters the deletion job can write to:
+  configuration, credentials, and what's been (and hasn't been)
+  verified against real cloud infrastructure
+- [`k8s/`](./technical/k8s/) — what every manifest in the repo's `k8s/`
+  folder actually does: the Postgres/Redis/Vault/PgBouncer data layer,
+  the application Deployment/Service/HPA/config, and the
+  `NetworkPolicy`/Ingress/TLS networking model — including real bugs
+  each one surfaced only once actually deployed to a live cluster
+- [`deployment/`](./technical/deployment/) — how to actually get `k8s/`
+  running: cluster prerequisites it assumes (ingress-nginx, cert-manager,
+  a `StorageClass`), the apply order, a table of silent-failure gotchas,
+  a full runbook, and how to stand up a temporary mock-PSP test
+  environment on top of a real deployment
 
 ## [`business-domain/`](./business-domain/)
 
@@ -82,3 +112,26 @@ to payments domain concepts generally.
   and agentic payments (delegation + spend policy) all have a real
   mechanism built now — this covers what's still only partly done in
   each, plus the business framing throughout
+
+## [`compliance/`](./compliance/)
+
+How this project handles data-retention/AML requirements — what gets
+archived, what gets deleted, on what schedule, and how to reconfigure
+the retention periods for a specific jurisdiction without touching code.
+
+- [`data-retention.md`](./compliance/data-retention.md) — the three-tier
+  policy (live → archive → delete), the two `k8s CronJob`s that enforce
+  it, the full environment-variable configuration reference, and an
+  honest list of what this doesn't cover (this is a reference
+  implementation with sensible defaults, not a substitute for
+  jurisdiction-specific legal/compliance review)
+
+## [`adr/`](./adr/)
+
+Architecture Decision Records — *why* a specific technical decision was
+made (alternatives considered, the trade-off accepted, the real bug it
+fixed if there was one), not a description of the current system
+(that's `technical/architecture.md`). Written once, at the time of the
+decision; a reversed decision gets a new ADR marking the old one
+`Superseded`, not a rewrite. See [`adr/README.md`](./adr/README.md)
+for the full index and format.

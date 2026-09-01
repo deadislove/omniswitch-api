@@ -1,7 +1,6 @@
 import { Injectable, Logger, NotFoundException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
 import { DelegationPort, FindDelegationsFilter } from '../../ports/outbound/delegation.port';
 import { Delegation } from '../../domain/aggregates/delegation.aggregate';
 import { SpendPolicy } from '../../domain/value-objects/spend-policy.vo';
@@ -47,7 +46,7 @@ export class DelegationService {
       allowedCategories: params.allowedCategories,
     });
 
-    const id = uuidv4();
+    const id = randomUUID();
     const jti = randomUUID();
     const expiresIn = params.tokenTtlSeconds ?? DEFAULT_AGENT_TOKEN_TTL_SECONDS;
     const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);

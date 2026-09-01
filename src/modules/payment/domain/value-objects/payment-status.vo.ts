@@ -10,6 +10,12 @@ export enum PaymentStatus {
   PARTIALLY_CAPTURED = 'PARTIALLY_CAPTURED', // Some, but not all, of the authorized amount has been captured
   SUCCEEDED = 'SUCCEEDED',
   FAILED = 'FAILED',
+  // A PSP call that got no response at all (timeout/network failure before
+  // any HTTP response), retried once via the PSP's own idempotency-key
+  // replay guarantee and still inconclusive. Distinct from FAILED: FAILED
+  // means the PSP explicitly declined, AMBIGUOUS means we genuinely don't
+  // know whether the charge went through — reconciliation must resolve it.
+  AMBIGUOUS = 'AMBIGUOUS',
   CANCELLED = 'CANCELLED',
   REFUNDED = 'REFUNDED',
   PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED',
@@ -28,6 +34,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
     PaymentStatus.REQUIRES_CAPTURE,
     PaymentStatus.SUCCEEDED,
     PaymentStatus.FAILED,
+    PaymentStatus.AMBIGUOUS,
   ],
   [PaymentStatus.REQUIRES_ACTION]: [
     PaymentStatus.PROCESSING,
@@ -51,10 +58,23 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
     PaymentStatus.DISPUTED,
   ],
   [PaymentStatus.FAILED]: [],
+  [PaymentStatus.AMBIGUOUS]: [PaymentStatus.SUCCEEDED, PaymentStatus.FAILED],
   [PaymentStatus.CANCELLED]: [],
   [PaymentStatus.REFUNDED]: [],
-  [PaymentStatus.PARTIALLY_REFUNDED]: [PaymentStatus.REFUNDED],
-  [PaymentStatus.DISPUTED]: [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED],
+  // DISPUTED is reachable from here too — a chargeback on a payment that's
+  // already been partially refunded is a normal real-world sequence (a
+  // partial refund for a shipping issue, the cardholder disputes the rest
+  // anyway), not an edge case to leave unmodeled. See
+  // PaymentAggregate.resolveDispute()'s own comment for how WON/LOST both
+  // account for the refund history already present when the dispute
+  // started, rather than assuming a dispute always starts from a clean
+  // SUCCEEDED payment.
+  [PaymentStatus.PARTIALLY_REFUNDED]: [PaymentStatus.REFUNDED, PaymentStatus.DISPUTED],
+  // PARTIALLY_REFUNDED is a valid target here (not just SUCCEEDED) for the
+  // same reason — winning a dispute that started from a partially-refunded
+  // payment should restore that same partially-refunded state, not
+  // silently erase the refund history by resetting to SUCCEEDED.
+  [PaymentStatus.DISPUTED]: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED],
 };
 
 export function isValidTransition(from: PaymentStatus, to: PaymentStatus): boolean {
