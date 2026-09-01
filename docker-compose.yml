@@ -82,6 +82,14 @@ services:
       # api.stripe.com and would try to make live calls with a placeholder key.
       STRIPE_SECRET_KEY: sk_test_placeholder
       STRIPE_BASE_URL: http://mock-psp:4000/v1
+      # Without these, StripeWebhookGuard/AdyenWebhookGuard reject every
+      # webhook outright (WEBHOOK_MISCONFIGURED) — found live while
+      # verifying dispute-webhook behavior against this actual container
+      # (test/setup-env.ts sets these for the Jest e2e suite, which boots
+      # AppModule in-process and never reads this file's env at all, so
+      # this gap was invisible to every e2e run up to this point).
+      STRIPE_WEBHOOK_SECRET: whsec_dev_compose_placeholder_do_not_use_in_prod
+      ADYEN_HMAC_KEY: "00112233445566778899aabbccddeeff00112233445566778899aabbccddee"
       ADYEN_API_KEY: adyen_test_placeholder
       ADYEN_MERCHANT_ACCOUNT: TestMerchant
       ADYEN_BASE_URL: http://mock-psp:4000/adyen

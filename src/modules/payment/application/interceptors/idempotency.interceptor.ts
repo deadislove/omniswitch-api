@@ -62,8 +62,17 @@ export class IdempotencyInterceptor implements NestInterceptor {
       );
     }
 
-    const cacheKey = `${IDEMPOTENCY_PREFIX}${idempotencyKey}`;
-    const lockKey = `${LOCK_PREFIX}${idempotencyKey}`;
+    // Scoped by merchant, not just the raw key — this interceptor runs
+    // after JwtAuthGuard (see PaymentController's class-level @UseGuards
+    // ordering), so req.user is already populated. Without this, a caller
+    // who submits another merchant's *known* Idempotency-Key (leaked via
+    // a logging bug, a shared support ticket) would get that merchant's
+    // cached response replayed back — including its payment ID, PSP
+    // transaction ID, and risk score — before the request ever reaches
+    // the controller's own assertOwnership() check.
+    const merchantId = request.user?.merchantId;
+    const cacheKey = `${IDEMPOTENCY_PREFIX}${merchantId}:${idempotencyKey}`;
+    const lockKey = `${LOCK_PREFIX}${merchantId}:${idempotencyKey}`;
 
     return from(this.processIdempotency(cacheKey, lockKey, idempotencyKey, context, next));
   }
@@ -134,9 +143,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
     // and catchError treats a returned Promise as a value to emit rather than
     // something to flatten — so `return throwError(() => error)` inside an
     // async function shipped the Observable *object* as a 200 response body
-    // instead of propagating the error. Verified live: an over-refund request
-    // that should 409 came back 200 with body `{}`. switchMap here properly
-    // sequences the async cache work before resolving/rejecting.
+    // instead of propagating the error (e.g. an over-refund request that
+    // should 409 would come back 200 with body `{}`). switchMap here
+    // properly sequences the async cache work before resolving/rejecting.
     return new Promise((resolve, reject) => {
       next
         .handle()

@@ -390,7 +390,9 @@ export class PaymentAggregate {
 
   /**
    * Records a chargeback/dispute reported by the PSP via webhook.
-   * Only valid from SUCCEEDED (a payment can't be disputed before it charged).
+   * Valid from SUCCEEDED or PARTIALLY_REFUNDED (a payment can't be disputed
+   * before it charged, but a partial refund doesn't prevent a chargeback on
+   * what's left — a normal real-world sequence, not an edge case).
    */
   markDisputed(reason?: string): void {
     assertValidTransition(this._status, PaymentStatus.DISPUTED);
@@ -405,8 +407,16 @@ export class PaymentAggregate {
    */
   resolveDispute(outcome: 'WON' | 'LOST'): void {
     if (outcome === 'WON') {
-      assertValidTransition(this._status, PaymentStatus.SUCCEEDED);
-      this.transitionTo(PaymentStatus.SUCCEEDED);
+      // Restore whichever pre-dispute state this came from — SUCCEEDED if
+      // nothing had been refunded yet, PARTIALLY_REFUNDED if it had.
+      // Hardcoding SUCCEEDED here would silently erase real refund history
+      // for a payment that was PARTIALLY_REFUNDED before the dispute
+      // started. totalRefunded is derived from `_refunds` and unaffected by
+      // the dispute itself, so it's a safe way to tell the two cases apart
+      // without needing a separate "status before dispute" field.
+      const restoreTo = this.totalRefunded.isZero() ? PaymentStatus.SUCCEEDED : PaymentStatus.PARTIALLY_REFUNDED;
+      assertValidTransition(this._status, restoreTo);
+      this.transitionTo(restoreTo);
       return;
     }
     // LOST: economically identical to a full, merchant-uninitiated refund —
@@ -414,10 +424,18 @@ export class PaymentAggregate {
     // wants. Recorded via the same RefundRecord/refunds[] mechanism a normal
     // refund uses (not a separate code path) so totalRefunded/
     // remainingRefundable stay accurate no matter why the money left.
+    //
+    // Amount is `remainingRefundable`, not the full `_amount` — a dispute
+    // that started from a PARTIALLY_REFUNDED payment already has some of
+    // `_amount` accounted for in `_refunds`; pushing the full amount again
+    // here would double-count the already-refunded portion. For a dispute
+    // that started from SUCCEEDED (nothing refunded yet), remainingRefundable
+    // equals the full amount anyway, so this is a strict generalization, not
+    // a behavior change for that case.
     assertValidTransition(this._status, PaymentStatus.REFUNDED);
     this._refunds.push({
       refundId: `dispute-lost-${this._id}`,
-      amount: this._amount,
+      amount: this.remainingRefundable,
       reason: 'dispute_lost',
       createdAt: new Date(),
     });

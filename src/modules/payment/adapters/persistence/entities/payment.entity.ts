@@ -9,9 +9,20 @@ import {
 import { PaymentStatus } from '../../../domain/value-objects/payment-status.vo';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 
+// Not a literal `@Index(['merchantId', 'idempotencyKey'], {unique: true})`
+// below — the real DB-level constraint (managed by migrations, see
+// ScopeIdempotencyKeyToMerchant) is `UNIQUE (merchant_id,
+// idempotency_key, created_at)`: `created_at` has to be part of it
+// because `payments` is partitioned by that column (Postgres requires
+// every unique constraint on a partitioned table to include the
+// partition key). TypeORM's own migration-generation isn't used in this
+// codebase (all migrations here are hand-written), so this decorator is
+// documentation only, not a live schema-sync source — expressing the
+// true 3-column constraint here would be misleading in the other
+// direction (implying TypeORM manages it), so it's left off entirely
+// rather than declared incorrectly.
 @Entity('payments')
 @Index(['merchantId', 'createdAt'])
-@Index(['idempotencyKey'], { unique: true })
 @Index(['status'])
 @Index(['pspTransactionId'])
 export class PaymentEntity {
@@ -45,7 +56,12 @@ export class PaymentEntity {
   })
   status: PaymentStatus;
 
-  @Column({ name: 'idempotency_key', unique: true })
+  // Not unique on its own at the DB level — see the class-level comment
+  // above. No standalone index either: every lookup filters by
+  // merchantId + idempotencyKey together (findByIdempotencyKey()), which
+  // the UNIQUE (merchant_id, idempotency_key, created_at) constraint's
+  // own index already serves as a leftmost-prefix match.
+  @Column({ name: 'idempotency_key' })
   idempotencyKey: string;
 
   @Column({ name: 'psp_provider', nullable: true, type: 'varchar' })

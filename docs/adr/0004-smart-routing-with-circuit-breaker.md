@@ -70,8 +70,10 @@ already uses — no new connection), not on adapter instance fields —
 5 failures within a 60-second sliding window (a Redis counter with its
 TTL refreshed on every failure — not a run of *consecutive* failures;
 a success while the circuit is still `CLOSED` doesn't reset it) opens
-the circuit for 30 seconds, then it moves to `HALF_OPEN`, where a
-single success does close it again. Because
+the circuit for 30 seconds, then it moves to `HALF_OPEN`, which admits
+exactly one trial call (a shared Redis counter, atomically incremented,
+gates it — see the addendum below); a success on that trial closes the
+circuit, a failure re-opens it immediately. Because
 this state is shared, not per-process, a circuit tripped by traffic
 hitting one replica is visible to every other replica's next routing
 decision immediately — verified live: forcing 5 failures against one
@@ -111,6 +113,23 @@ confirmed both via `GET /payments/routing/health` reporting
 requested `preferredProvider: "STRIPE"` routed to `ADYEN` instead,
 proving `filterAvailableProviders()` actually excluded STRIPE rather
 than just recording a flag nothing reads. Full test run: 35.4s.
+
+**Addendum, 2026-08-30 — `HALF_OPEN` single-trial-call budget**:
+`assertAvailable()` originally admitted *every* call once state was
+anything other than `OPEN` — the instant state flipped to `HALF_OPEN`,
+every replica's concurrent traffic resumed simultaneously, not just a
+single probe, which is the opposite of what `HALF_OPEN` is for (send a
+struggling PSP a trickle, not a resumed full burst, right as it may be
+starting to recover). Confirmed live via a unit test: a second
+`assertAvailable()` call issued immediately after the first one admitted
+the `HALF_OPEN` trial also resolved successfully instead of being
+rejected. Fixed with a second Redis counter (`halfOpenTrialCount`,
+atomic `INCR`, TTL set only by whichever call claims slot 1) that admits
+exactly one trial call per recovery episode and rejects the rest the
+same as `OPEN`; a failed trial re-opens the circuit immediately rather
+than waiting for `FAILURE_THRESHOLD` failures to accumulate again. Full
+detail in
+[`../technical/distributed-state.md`](../technical/distributed-state.md#circuit-breaker).
 
 ## Consequences
 
