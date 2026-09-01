@@ -42,17 +42,13 @@ jobs:
       # can't type-check test/**/*.ts at all — so a strict, no-fix lint
       # run currently reports ~8.7k pre-existing formatting diffs plus a
       # parsing error on every test file. Fixing that is a real, separate
-      # cleanup task (repo-wide reformat, plus a tsconfig/.eslintrc
+      # cleanup task (repo-wide reformat, plus a tsconfig/eslint.config.cjs
       # adjustment) — not something to do silently as a side effect of
       # adding CI. Until then, this step reports lint findings without
       # blocking merges on them.
-      # ESLINT_USE_FLAT_CONFIG=false: see security-scan.yml's eslint step
-      # for why this is needed on ESLint 9.
       - name: Lint (report-only)
         run: npx eslint "{src,apps,libs,test}/**/*.ts"
         continue-on-error: true
-        env:
-          ESLINT_USE_FLAT_CONFIG: 'false'
 
       - run: npx tsc --noEmit
 

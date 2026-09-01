@@ -97,17 +97,10 @@ jobs:
 
       # Separate from ci.yml's general (report-only) lint step — this one
       # only loads eslint-plugin-security's rules (see
-      # .eslintrc.security.cjs for why detect-object-injection is off),
+      # eslint.security.config.cjs for why detect-object-injection is off),
       # is blocking, and doesn't hit the general config's
       # tsconfig/test-file parsing gap since it skips type-aware parsing.
-      #
-      # ESLINT_USE_FLAT_CONFIG=false: ESLint 9 defaults to flat config
-      # (eslint.config.js) and only honors --no-eslintrc/-c <eslintrc file>
-      # with this var set. Needed until this repo migrates its eslintrc
-      # configs to flat config — that escape hatch is removed in ESLint 10.
-      - run: npx eslint --no-eslintrc -c .eslintrc.security.cjs "src/**/*.ts" --max-warnings=0
-        env:
-          ESLINT_USE_FLAT_CONFIG: 'false'
+      - run: npx eslint -c eslint.security.config.cjs "src/**/*.ts" --max-warnings=0
 
   # ─── npm audit: known vulnerabilities in npm dependencies ──────────────────
   npm-audit:
