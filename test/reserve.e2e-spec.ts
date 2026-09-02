@@ -54,7 +54,7 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
   // `replication` config sends plain repository reads to the replica,
   // which has ~1s streaming lag behind master; see reserve.service.ts's
   // own release() and test/ledger-and-outbox.e2e-spec.ts for the same
-  // issue confirmed live elsewhere). These helpers force the read onto
+  // issue). These helpers force the read onto
   // master.
   async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
     const queryRunner = dataSource.createQueryRunner('master');

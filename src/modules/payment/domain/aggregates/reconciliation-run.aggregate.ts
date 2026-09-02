@@ -22,10 +22,11 @@ export interface ReconciliationMismatch {
  * A record of one comparison between this system's ledger and a PSP's own
  * settlement report for a time window — the safety net for ledger/outbox
  * bugs that unit and e2e tests can't catch, since both would have to be
- * wrong the same way to miss one (see the double-booking bug found and
- * fixed earlier in this project's history: reconciliation is exactly the
- * mechanism that would have caught that in a real deployment, faster than
- * "someone eventually notices the books don't add up").
+ * wrong the same way to miss one (see payment-checkout.saga.ts's ledger
+ * timing note on the double-booking bug this class of check would catch:
+ * reconciliation is exactly the mechanism that catches that kind of drift
+ * in a real deployment, faster than "someone eventually notices the books
+ * don't add up").
  *
  * Deliberately a plain record, not a rich aggregate with invariants to
  * protect — like LedgerOutboxEvent, it's closer to a structured log entry

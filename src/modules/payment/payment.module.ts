@@ -114,9 +114,9 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // ThrottlerStorageService/THROTTLER_OPTIONS for the whole app regardless
     // of how many modules call forRoot/forRootAsync — a second registration
     // doesn't get MerchantThrottlerGuard its own counters, it just resolves
-    // to the same global one (confirmed live: a supposedly-independent
-    // "burst limit=5" registration here was silently ignored in favor of
-    // AppModule's limit=10). MerchantThrottlerGuard reuses the same
+    // to the same global one — a supposedly-independent "burst limit=5"
+    // registration here would be silently ignored in favor of AppModule's
+    // limit=10. MerchantThrottlerGuard reuses the same
     // 'default'/'burst' tiers as the global IP-keyed guard; they stay
     // independent per-merchant vs per-IP anyway because ThrottlerGuard's
     // generateKey() hashes the tracker value into the storage key.
@@ -127,12 +127,12 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // on *every* call, so a second forRoot() (this module used to have one)
     // doesn't harmlessly collapse into app.module.ts's — it creates a
     // genuinely separate EventEmitter2 instance, silently splitting the
-    // app's event bus in two. Confirmed live: an e2e test listening via
-    // `app.get(EventEmitter2)` (resolving to AppModule's instance) never
-    // received events DisputeService emitted (resolving to this module's
-    // instance) — 0 received, not a timing flake. AppModule's registration
-    // already covers the whole app via @Global(); this one was pure
-    // duplication that happened to be actively harmful, not just redundant.
+    // app's event bus in two: a listener via `app.get(EventEmitter2)`
+    // (resolving to AppModule's instance) would never receive events
+    // DisputeService emits (resolving to this module's instance) — 0
+    // received, not a timing flake. AppModule's registration already
+    // covers the whole app via @Global(); a second one here would be pure
+    // duplication that's actively harmful, not just redundant.
   ],
   controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController, LegalHoldAdminController, AmbiguousPaymentAdminController, AmbiguousRiskAdminController],
   providers: [

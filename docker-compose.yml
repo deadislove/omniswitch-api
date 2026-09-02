@@ -127,13 +127,12 @@ services:
       # 127.0.0.1, not localhost — same reasoning as the vault service's
       # healthcheck below: inside this container "localhost" resolves to
       # ::1 first, and main.ts's `app.listen(port, '0.0.0.0')` only binds
-      # IPv4, so a "localhost" healthcheck reports Connection refused even
-      # though the app answers fine on 127.0.0.1. Verified live: `docker
-      # exec omniswitch-api wget ... http://localhost:3000/...` fails with
+      # IPv4, so a "localhost" healthcheck would report Connection refused
+      # even though the app answers fine on 127.0.0.1 (`docker exec
+      # omniswitch-api wget ... http://localhost:3000/...` fails with
       # "can't connect to remote host: Connection refused" while the same
-      # command against 127.0.0.1 succeeds — a real, pre-existing bug, not
-      # host-load flakiness (confirmed via the healthcheck's own retry
-      # history: identical failure every 30s regardless of load).
+      # command against 127.0.0.1 succeeds) — not host-load flakiness,
+      # since the failure is identical on every retry regardless of load.
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health/live"]
       interval: 30s
       timeout: 10s
@@ -325,11 +324,11 @@ services:
       # postgres-master's is off 5432 (see docker-compose.yml's comment
       # there): a locally installed Redis commonly already owns
       # 127.0.0.1:6379, and connections silently land on the wrong instance
-      # instead of failing loudly — confirmed live on this machine (a native
-      # redis-server was answering with no password required, while this
-      # container enforces one; every e2e run's ioredis "default user does
-      # not require a password" warning was that collision, not benign
-      # noise). Internal container-to-container traffic still uses 6379.
+      # instead of failing loudly — a native redis-server answering with
+      # no password required, while this container enforces one, is
+      # exactly the collision an ioredis "default user does not require a
+      # password" warning during an e2e run would indicate, not benign
+      # noise. Internal container-to-container traffic still uses 6379.
       - "16379:6379"
     command: >
       redis-server

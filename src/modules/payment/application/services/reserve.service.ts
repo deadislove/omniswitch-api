@@ -111,11 +111,11 @@ export class ReserveService {
     // committed — not a re-fetch. This app's DataSource routes plain
     // reads to a Postgres replica (see app.module.ts's `replication`
     // config); a findById() here immediately after the transaction commits
-    // to master can race the replica's ~1s replication lag (confirmed live:
-    // this returned a stale HELD read right after a 200 release response —
-    // see docs/technical/infra-verification-status.md's note on the same
-    // lag) and report the hold as still HELD despite the write having
-    // already succeeded. Same "don't re-fetch after your own write" posture
+    // to master can race the replica's ~1s replication lag — a stale HELD
+    // read right after a 200 release response, reporting the hold as still
+    // HELD despite the write having already succeeded — see
+    // docs/technical/infra-verification-status.md's note on the same lag.
+    // Same "don't re-fetch after your own write" posture
     // DisputeService.submitEvidence()/MerchantService's update methods
     // already use.
     hold.release(now, options.force ?? false);

@@ -49,10 +49,10 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
   // DataSource, which app.module.ts configures for master/replica
   // `replication` — reads get routed to the replica by default. Every test
   // here reads immediately after a write it just made (or a relay tick it
-  // just triggered), which races the replica's ~1s streaming lag
-  // (confirmed live — see reserve.service.ts's release() and
-  // payment-typeorm.repository.ts's findPending() for the same issue in
-  // application code). These helpers force the read onto master instead.
+  // just triggered), which races the replica's ~1s streaming lag — see
+  // reserve.service.ts's release() and payment-typeorm.repository.ts's
+  // findPending() for the same issue in application code. These helpers
+  // force the read onto master instead.
   async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object, order?: object): Promise<T | null> {
     const queryRunner = dataSource.createQueryRunner('master');
     try {

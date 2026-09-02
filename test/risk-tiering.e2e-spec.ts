@@ -97,7 +97,7 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
   // routing (app.module.ts's `replication` config sends plain repository
   // reads to the replica, which has ~1s streaming lag behind master; see
   // reserve.service.ts's release() and test/ledger-and-outbox.e2e-spec.ts
-  // for the same issue confirmed live elsewhere). This helper forces the
+  // for the same issue). This helper forces the
   // read onto master.
   async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
     const queryRunner = dataSource.createQueryRunner('master');

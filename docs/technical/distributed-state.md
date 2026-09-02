@@ -181,17 +181,17 @@ accumulate again), and both the `HALF_OPEN → CLOSED` success path and the
 immediate-reopen failure path explicitly delete the trial counter so a
 leftover count from one recovery episode can't reject the next one's own
 first trial call. Verified with `redis-circuit-breaker.service.spec.ts`
-(a fake, real-TTL-semantics `CachePort`): confirmed live that, before this
-fix, a second `assertAvailable()` call issued right after the first one
-admitted the `HALF_OPEN` trial also resolved successfully instead of
-being rejected.
+(a fake, real-TTL-semantics `CachePort`): without the trial-counter
+deletion, a second `assertAvailable()` call issued right after the first
+one admitted the `HALF_OPEN` trial would also resolve successfully
+instead of being rejected.
 
 ### Verification
 
-Proven live the same way as rate limiting: the mock PSP was stopped, five
-charge attempts against Stripe were forced to fail from one replica, and a
+Same verification approach as rate limiting: stopping the mock PSP and
+forcing five charge attempts against Stripe to fail from one replica, a
 second replica — checked via `GET /payments/routing/health`, having never
-made any of those failing calls itself — reported Stripe's circuit as
+made any of those failing calls itself — reports Stripe's circuit as
 `OPEN` too.
 
 ### Known trade-offs
@@ -245,8 +245,8 @@ up to 20 times, all within roughly the same moment.
 ### What actually happens per service (not a uniform story)
 
 - **`ReserveService.releaseEligible()` and `SubscriptionService.runBillingSweep()`
-  are self-healing**, not by design intent but as a side effect of
-  unrelated bugs found and fixed *within* each service (see
+  are self-healing**, not by design intent but as a side effect of race
+  fixes made for unrelated reasons *within* each service (see
   `ledger-and-settlement.md` and `subscriptions.md`). `ReserveService`
   releases via an atomically-conditional `UPDATE ... WHERE status =
   'HELD'`; a second replica racing the same hold loses that race and gets
@@ -266,15 +266,14 @@ up to 20 times, all within roughly the same moment.
   (the noon job that creates `Payout` rows from a windowStart/windowEnd
   derived from `findLatestSweepRun()`) used a different mechanism: two
   replicas racing noon previously both read the same "last sweep" window
-  and both created a `Payout` for the same ledger credit — confirmed
-  live via a real concurrent-call reproduction, not just theorized from
-  reading the code. Fixed with a `CachePort.setNX()` distributed lock
-  around the whole method (the same primitive `IdempotencyInterceptor`
-  already uses for per-request locking, applied here to a batch job
-  instead) — a losing caller returns `null` rather than racing the
-  winner. Verified live: the same reproduction now produces exactly one
-  `Payout`, with a permanent regression test in
-  `test/marketplace-payouts.e2e-spec.ts`.
+  and both created a `Payout` for the same ledger credit, reproducible
+  with a real concurrent-call test, not just a theoretical read of the
+  code. Fixed with a `CachePort.setNX()` distributed lock around the
+  whole method (the same primitive `IdempotencyInterceptor` already uses
+  for per-request locking, applied here to a batch job instead) — a
+  losing caller returns `null` rather than racing the winner. The same
+  concurrent-call reproduction now produces exactly one `Payout`, with a
+  permanent regression test in `test/marketplace-payouts.e2e-spec.ts`.
 
   **Deliberate trade-off, not an oversight**: the lock is the only
   safeguard — there is no DB-level uniqueness constraint backstopping

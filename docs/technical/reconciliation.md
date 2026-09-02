@@ -52,12 +52,11 @@ doesn't block the other from being checked. Also available on demand via
 `ReconciliationAdminController` (`GET /api/v1/admin/reconciliation/runs`,
 `POST /api/v1/admin/reconciliation/run`; ADMIN/OPERATOR only).
 
-## Bug found while verifying this: `Date` objects silently shift by the host machine's timezone
+## `Date` objects silently shift by the host machine's timezone
 
-This is the most significant finding of this round — and it isn't a bug in
-the reconciliation feature itself. It's a pre-existing bug in this
-codebase's query layer that reconciliation happened to be the first thing
-to depend on precisely enough to expose.
+This isn't a bug in the reconciliation feature itself — it's a bug in
+this codebase's query layer that reconciliation depends on precisely
+enough to expose.
 
 **Symptom**: reconciling a payment charged seconds earlier against a "last
 hour" window returned zero of our own payments — `transactionsChecked`
@@ -75,14 +74,13 @@ ago fell outside a query for "the last hour," because the bound parameter
 was quietly compared as if it were 8 hours further in the future than it
 actually was.
 
-This was confirmed, not guessed: the row was verified to exist on both the
-Postgres master and replica via direct `psql` queries (ruling out
-replication lag, the first suspect given this project's master/replica
-setup); the exact same zero-result behavior was then reproduced in an
-isolated script with no NestJS/TypeORM DI involved, connecting directly to
-the master with no replication config at all; and the fix was confirmed by
-re-running that same isolated script with `.toISOString()` string
-parameters instead of raw `Date` objects — which returned the expected row.
+Ruling out replication lag (the natural first suspect given this
+project's master/replica setup): the row exists on both the Postgres
+master and replica via direct `psql` queries. The same zero-result
+behavior reproduces in an isolated script with no NestJS/TypeORM DI
+involved, connecting directly to the master with no replication config
+at all — and switching that script's bound parameters to `.toISOString()`
+strings instead of raw `Date` objects returns the expected row.
 
 **Fix**: bind `.toISOString()` strings instead of raw `Date` objects for
 every timestamp comparison against these columns. An ISO string is always
@@ -134,14 +132,12 @@ rather than a broader schema migration).
   (`GET /v1/balance_transactions`, `GET /adyen/settlement-report`),
   smoke-tested directly with `curl` (immediate charge, manual capture +
   capture, listing) before wiring the real adapters to it.
-- `ReconciliationService` now has permanent automated coverage at both
+- `ReconciliationService` has permanent automated coverage at both
   levels: `reconciliation.service.spec.ts` (unit, mocked ports — all
   three mismatch shapes, the partial-capture settlement-summing behavior,
   `runScheduled()`'s per-provider error isolation) and
   `test/reconciliation.e2e-spec.ts` (e2e, against real seeded data with
-  all three mismatch shapes deliberately introduced in one run). Neither
-  existed when this document was first written — the timezone bug above
-  was found and fixed with only manual/`curl` verification at the time.
+  all three mismatch shapes deliberately introduced in one run).
 
 ## What this doesn't cover
 

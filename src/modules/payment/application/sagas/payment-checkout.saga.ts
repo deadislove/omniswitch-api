@@ -82,10 +82,9 @@ export interface CheckoutSagaResult {
  * settlement funds that were never actually charged (a routing/PSP failure
  * still left a PAYMENT_CHARGED entry on the books), and — once manual
  * capture was added — produced two PAYMENT_CHARGED entries for a single
- * payment (one at authorization, one at capture). Confirmed live: capturing
- * a REQUIRES_CAPTURE payment produced duplicate ledger rows for the same
- * paymentId. Entries are now written only at the moment funds are actually
- * confirmed captured: the SUCCEEDED branch here (immediate capture), or
+ * payment: capturing a REQUIRES_CAPTURE payment produced duplicate ledger
+ * rows for the same paymentId. Entries are now written only at the moment
+ * funds are actually confirmed captured: the SUCCEEDED branch here (immediate capture), or
  * PaymentLifecycleService.capture() (manual capture), or
  * WebhookProcessingService (PSP-confirmed via webhook).
  *

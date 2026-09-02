@@ -99,13 +99,12 @@ spec:
             # independently if unset — DB_MASTER_PORT to 5432 (usually
             # correct by coincidence) but DB_REPLICA_PORT to 5433 (almost
             # never correct, since 5432 is the standard PgBouncer/Postgres
-            # port everyone actually uses). Omitting these two previously
-            # meant every replica connection attempt hit a port nothing
-            # was listening on — an immediate refusal, not a slow
-            # timeout — which fails `DataSource.initialize()` as a whole
-            # (TypeORM's `replication` mode treats master+replica startup
-            # as one unit) and prevents the application from booting at
-            # all. Verified live against a real cluster.
+            # port everyone actually uses). Omitting these two means every
+            # replica connection attempt hits a port nothing is listening
+            # on — an immediate refusal, not a slow timeout — which fails
+            # `DataSource.initialize()` as a whole (TypeORM's `replication`
+            # mode treats master+replica startup as one unit) and prevents
+            # the application from booting at all.
             - name: DB_MASTER_PORT
               valueFrom:
                 configMapKeyRef:

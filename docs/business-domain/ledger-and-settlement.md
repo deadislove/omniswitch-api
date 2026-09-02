@@ -173,9 +173,9 @@ already uses — no new connection), shared across every replica — this
 used to be per-process instance fields on
 `StripePSPAdapter`/`AdyenPSPAdapter`, which meant each pod made its own
 independent availability judgment about each PSP with zero coordination
-between them. Verified live: forcing 5 failures against one replica trips
-the breaker as seen by a second replica that never made any of those calls
-itself. Metrics (`successCount`/`totalRequests`/`totalLatencyMs`) are
+between them: forcing 5 failures against one replica trips the breaker
+as seen by a second replica that never made any of those calls itself.
+Metrics (`successCount`/`totalRequests`/`totalLatencyMs`) are
 bucketed into a 15-minute sliding window (per-minute Redis keys, summed at
 read time) rather than accumulating for as long as the Redis keys live —
 see [`distributed-state.md`](../technical/distributed-state.md) for the
@@ -335,27 +335,26 @@ Manage a merchant's settlement currency via `POST /admin/merchants`
 `PATCH /admin/merchants/:id/settlement-currency` (send `null` to clear it
 back to "settle in whatever currency was charged").
 
-**A real bug found verifying the "clear it back to null" path**: setting
-`merchant.settlementCurrency = undefined` and calling `repository.save()`
-does **not** write SQL `NULL` — TypeORM's `save()` silently omits
-`undefined` properties from the generated `UPDATE`, so the *previous*
-value stayed in Postgres despite the API response reporting the field as
-cleared. Caught because the e2e test asserted against a fresh
-`repository.findOne()` read, not the API response it had just gotten back
-from the same call. Fixed by assigning `null` instead — which then
-surfaced a *second*, entity-level issue: TypeORM infers a column's SQL
-type from TypeScript's emitted `design:type` metadata, and a `string |
-null` property reflects as bare `Object`, which fails at
-`DataSource.initialize()` (`Data type "Object" ... is not supported`) —
-not a compile-time error, so it's easy to miss. Fixed by adding an
-explicit `type: 'varchar'` to both affected columns. The same `undefined`
-instead of `null` bug existed in `MfaService.disableMfa()` from an earlier
-round (`mfaSecretCiphertext = undefined`) — found and fixed at the same
-time; merchants who had disabled MFA still had their encrypted TOTP
-secret sitting in the database despite `mfaEnabled: false` correctly
-gating login. Harmless on its own (the value was always ciphertext, and
-`mfaEnabled` already gated its use), but real stale-data hygiene a
-"disable" action should actually deliver.
+**The "clear it back to null" path needs `null`, not `undefined`**:
+setting `merchant.settlementCurrency = undefined` and calling
+`repository.save()` does **not** write SQL `NULL` — TypeORM's `save()`
+silently omits `undefined` properties from the generated `UPDATE`, so
+the *previous* value stays in Postgres despite the API response
+reporting the field as cleared; a fresh `repository.findOne()` read
+(rather than trusting the API response from the same call) is what
+exposes this. Assigning `null` instead surfaces a *second*, entity-level
+issue: TypeORM infers a column's SQL type from TypeScript's emitted
+`design:type` metadata, and a `string | null` property reflects as bare
+`Object`, which fails at `DataSource.initialize()` (`Data type "Object"
+... is not supported`) — not a compile-time error, so it's easy to miss.
+Fixed by adding an explicit `type: 'varchar'` to both affected columns.
+The same `undefined`-instead-of-`null` bug applied to
+`MfaService.disableMfa()` (`mfaSecretCiphertext = undefined`): merchants
+who had disabled MFA still had their encrypted TOTP secret sitting in
+the database despite `mfaEnabled: false` correctly gating login.
+Harmless on its own (the value was always ciphertext, and `mfaEnabled`
+already gated its use), but real stale-data hygiene a "disable" action
+should actually deliver.
 
 This closes the specific, narrow gap DEV_README used to flag ("nothing
 calls `convertTo()` with a real provider"); the two remaining pieces —

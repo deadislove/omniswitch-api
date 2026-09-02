@@ -181,8 +181,7 @@ outbox dead-letter admin recovery flow
 **Deletion** — any record in `archive.payments`/`archive.ledger_outbox`
 (i.e., already archived) whose `created_at` is older than
 `DELETION_THRESHOLD_YEARS` **and** has no still-open dispute (same
-`NEEDS_RESPONSE`/`UNDER_REVIEW` check as archiving, added 2026-08-22
-after review). The dispute check matters here independently of
+`NEEDS_RESPONSE`/`UNDER_REVIEW` check as archiving). The dispute check matters here independently of
 archiving's own check: a payment can be archived with no open dispute
 and then get disputed years later (a long investigation, litigation) —
 age alone crossing `DELETION_THRESHOLD_YEARS` must not override an
@@ -191,7 +190,7 @@ never looks at the live tables directly.
 
 ## Legal hold
 
-A payment's `legal_hold` boolean (added 2026-08-22) overrides both the
+A payment's `legal_hold` boolean overrides both the
 archiving and deletion eligibility checks above
 — a held payment is excluded regardless of age, status, or dispute
 state, same as the dispute check but not tied to a PSP dispute
@@ -309,9 +308,8 @@ one once "now" gets close enough to the edge of that original range.
   (`ALTER TABLE payments_partitioned RENAME TO payments`); PostgreSQL
   does not cascade that rename to child partitions. This job matches
   that existing naming rather than introducing a second, inconsistent
-  one — verified live: an earlier version of this job used
-  `payments_YYYY_MM` and failed immediately with "partition would
-  overlap partition \"payments_partitioned_2026_08\"."
+  one: using `payments_YYYY_MM` instead fails immediately with
+  "partition would overlap partition \"payments_partitioned_2026_08\"."
 
 ## Jurisdictional compliance review checklist
 

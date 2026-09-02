@@ -163,9 +163,9 @@ behavior it affects is actually exercised.
 
 `scripts/network-policy-verify.sh` proves both that unauthorized traffic
 is refused and that the app's own required traffic is allowed, which a
-`kubectl apply` succeeding cannot tell you on its own. Every gotcha in
-the table above was found by actually deploying to a real cluster and
-testing the real behavior — reviewing the YAML by eye did not surface any
-of them. That's worth keeping in mind for any future change to `k8s/`:
-a manifest that parses correctly and a pod that reaches `Running` are
-both necessary and both insufficient to call a change verified.
+`kubectl apply` succeeding cannot tell you on its own. None of the
+gotchas in the table above are visible from reviewing the YAML by eye —
+each only shows up once deployed to a real cluster and exercised.
+That's worth keeping in mind for any future change to `k8s/`: a manifest
+that parses correctly and a pod that reaches `Running` are both
+necessary and both insufficient to call a change verified.

@@ -176,10 +176,10 @@ export class DisputeService {
     // Forced onto master (findByIdOnMaster(), not findById()) — this gates
     // whether the payment/ledger side of a dispute resolution actually
     // runs. A stale (pre-DISPUTED) read here doesn't just show wrong data,
-    // it makes this method silently skip the update below — confirmed
-    // live: a lost dispute's charge.dispute.closed webhook, processed
-    // shortly after the charge.dispute.created webhook that set DISPUTED,
-    // raced this exact read. See PaymentRepositoryPort.findByIdOnMaster().
+    // it makes this method silently skip the update below: a lost
+    // dispute's charge.dispute.closed webhook, processed shortly after the
+    // charge.dispute.created webhook that set DISPUTED, would race this
+    // exact read. See PaymentRepositoryPort.findByIdOnMaster().
     const payment = await this.paymentRepository.findByIdOnMaster(dispute.paymentId);
     if (!payment || payment.status !== PaymentStatus.DISPUTED) {
       this.logger.warn(

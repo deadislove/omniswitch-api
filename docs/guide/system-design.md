@@ -240,8 +240,8 @@ piece of state becomes available, and where the two failure branches
 This API is designed to run as multiple K8s pods (`k8s/hpa.yaml` scales
 to 20). **Anything that needs to be consistent across requests can't
 live in a plain class field** — it has to be in Redis or Postgres. Two
-things got this wrong during development and were fixed: rate-limit
-counters (now `RedisThrottlerStorage`, replacing `@nestjs/throttler`'s
+places in this codebase now follow that rule after previously getting it
+wrong: rate-limit counters (`RedisThrottlerStorage`, replacing `@nestjs/throttler`'s
 default in-process `Map`) and PSP circuit-breaker state (now
 `RedisCircuitBreakerService`, replacing per-adapter instance fields).
 **If you add new cross-request state, ask whether a different pod

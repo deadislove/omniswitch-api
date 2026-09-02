@@ -222,9 +222,9 @@ describe('PaymentCheckoutSaga', () => {
       // The ledger entry is written inside dataSource.transaction, which is
       // only invoked once the charge is confirmed SUCCEEDED — not at Step 1
       // (payment intent creation uses paymentRepository.save(), not a
-      // transaction). Verified live: the old behavior double-booked a
-      // PAYMENT_CHARGED entry for manual-capture payments (once at
-      // authorization, once at capture).
+      // transaction). The old behavior double-booked a PAYMENT_CHARGED
+      // entry for manual-capture payments (once at authorization, once at
+      // capture) — this regression test guards against that.
       expect(paymentRepository.save).toHaveBeenCalledTimes(1);
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
       const transactionCallback = dataSource.transaction.mock.calls[0][0];

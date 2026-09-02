@@ -43,10 +43,10 @@ setDefault('HMAC_SECRET', 'e2e-test-hmac-secret-do-not-use-outside-tests-32c');
 // full suite's cumulative charge volume competes against one limit, not
 // one per file. Adding the subscriptions/reserve/risk-tiering specs (each
 // legitimately firing 10+ charges to reach a real minimum-sample-size
-// threshold) pushed the suite past 100 and started 429-ing unrelated
-// *later* files — confirmed live: test/webhooks.e2e-spec.ts's dispute
-// tests, which don't touch rate limiting at all, started failing with 429
-// once those specs were added. Same reasoning as AUTH_LOGIN_RATE_LIMIT
+// threshold) pushes the suite past 100 and 429s unrelated *later* files —
+// e.g. test/webhooks.e2e-spec.ts's dispute tests, which don't touch rate
+// limiting at all, fail with 429 once those specs run first and exhaust
+// the shared bucket. Same reasoning as AUTH_LOGIN_RATE_LIMIT
 // below: rate-limiting behavior itself is covered by a dedicated, isolated
 // spec, so raising the ambient limit here doesn't weaken that coverage.
 setDefault('RATE_LIMIT_MAX', '2000');
@@ -62,14 +62,13 @@ setDefault('RATE_LIMIT_BURST_MAX', '50');
 // does NOT touch it, because both the global IP-scoped guard and
 // MerchantThrottlerGuard check the same 'default' throttler name and pick
 // up this route-level override instead. Raising RATE_LIMIT_MAX alone
-// (the change described in the comment above) does not actually fix the
-// charge()-specific 429s a full suite run produces — confirmed by hitting
-// this exact 429 on a clean run after RATE_LIMIT_MAX was already raised.
+// (the change described in the comment above) does not fix the
+// charge()-specific 429s a full suite run produces, since that override
+// bypasses RATE_LIMIT_MAX entirely.
 // Same reasoning as RATE_LIMIT_MAX: covered by its own isolated behavior,
 // not by this ambient ceiling, so raising it doesn't weaken any coverage.
-// See docs/technical/load-testing.md, Finding #1, where this same
-// hardcoded cap was first found to be the real ceiling for a single-IP
-// load generator.
+// See docs/technical/load-testing.md, Finding #1: this same hardcoded
+// cap is the real ceiling for a single-IP load generator.
 setDefault('CHARGE_RATE_LIMIT_MAX', '2000');
 // The production default (10/min) is a deliberately aggressive brute-force
 // guard on POST /auth/token — a full e2e run legitimately logs in more than

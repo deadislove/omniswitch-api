@@ -41,10 +41,10 @@ export class MerchantService {
   // findPending()). A merchant created via createMerchant() and looked up
   // again moments later — POST /auth/token immediately after creation
   // being the sharpest real-world case, since nothing else forces a delay
-  // between the two — can race that lag and come back not-found. Confirmed
-  // live: test/reserve.e2e-spec.ts's seedMerchant() → login() sequence
-  // failed with a spurious 401 in CI (though not locally, where I/O is
-  // fast enough that the gap between the two calls usually — not
+  // between the two — can race that lag and come back not-found: without
+  // forcing master, test/reserve.e2e-spec.ts's seedMerchant() → login()
+  // sequence fails with a spurious 401 in CI (though not locally, where
+  // I/O is fast enough that the gap between the two calls usually — not
   // always — outlasts the lag) — see docs/technical/ci-cd.md.
   private async findMerchantOnMaster(where: Record<string, unknown>): Promise<MerchantEntity | null> {
     const queryRunner = this.dataSource.createQueryRunner('master');
@@ -265,8 +265,8 @@ export class MerchantService {
     // null, not undefined — TypeORM's save() silently skips an undefined
     // property instead of writing SQL NULL, which would leave the old
     // currency in the database despite this "clearing" call appearing to
-    // succeed (confirmed live: an undefined assignment here left the prior
-    // value in Postgres while every response still reported it as cleared).
+    // succeed: an undefined assignment here would leave the prior value in
+    // Postgres while every response still reports it as cleared.
     merchant.settlementCurrency = settlementCurrency ? settlementCurrency.toUpperCase() : null;
     await this.merchantRepo.save(merchant);
     this.logger.log(

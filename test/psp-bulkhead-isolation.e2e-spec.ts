@@ -36,10 +36,10 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * effect of proving the bulkhead queues. Reset before and after, same
  * reasoning as resetCircuitBreakerState's own docblock: this state is
  * shared Redis state across every e2e file (maxWorkers: 1, no flush
- * between files) — confirmed live as the root cause of
+ * between files), so a leaked OPEN state here is the root cause of
  * chargeWithForcedThreeDS() flakiness in webhooks.e2e-spec.ts and
- * marketplace-split-refunds.e2e-spec.ts when this file ran before them
- * without a reset: STRIPE's leaked OPEN state made their
+ * marketplace-split-refunds.e2e-spec.ts when this file runs before them
+ * without a reset: STRIPE's leaked OPEN state makes their
  * `preferredProvider: 'STRIPE'` override fall through to ADYEN, which
  * doesn't understand the FORCE_3DS mock marker.
  */

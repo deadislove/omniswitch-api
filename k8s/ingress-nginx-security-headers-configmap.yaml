@@ -18,10 +18,10 @@
 #   --set controller.config.add-headers=ingress-nginx/omniswitch-security-headers
 #
 # (or the equivalent `controller.config.add-headers` key in a values
-# file). Verified live: with that value set and this ConfigMap applied,
-# every response through the real ingress path carries all 5 headers;
-# without it, this ConfigMap alone has no effect (nothing reads it
-# automatically). Global to every Ingress this ingress-nginx install
+# file). With that value set and this ConfigMap applied, every response
+# through the ingress path carries all 5 headers; without it, this
+# ConfigMap alone has no effect (nothing reads it automatically). Global
+# to every Ingress this ingress-nginx install
 # serves, not scoped to just omniswitch-api-ingress — the correct scope
 # here since this repo assumes a dedicated ingress-nginx install for
 # this one application, not a shared multi-tenant one.

@@ -82,16 +82,15 @@ end to end against a real Vault API — not a stub, not a mock — which is
 the whole point for a reference project. It is not close to
 production-ready:
 
-- **No persistence.** Confirmed the hard way during this work: stopping and
-  restarting the *same* Vault container (`docker compose stop vault` /
-  `up -d vault` — not even removing it) wipes the transit engine and its
-  key entirely, because dev-mode storage is in-memory. Every ciphertext
-  encrypted before that restart becomes permanently undecryptable —
-  verified live: re-querying Vault for a pre-restart ciphertext returned
-  `"no handler for route \"transit/decrypt/hmac-secrets\""`, not a
-  "wrong key" error — the whole engine mount was gone. A real deployment
-  uses a persistent storage backend (Raft/integrated storage, Consul) where
-  a restart doesn't lose keys.
+- **No persistence.** Stopping and restarting the *same* Vault container
+  (`docker compose stop vault` / `up -d vault` — not even removing it)
+  wipes the transit engine and its key entirely, because dev-mode storage
+  is in-memory. Every ciphertext encrypted before that restart becomes
+  permanently undecryptable: re-querying Vault for a pre-restart
+  ciphertext returns `"no handler for route \"transit/decrypt/hmac-secrets\""`,
+  not a "wrong key" error — the whole engine mount is gone. A real
+  deployment uses a persistent storage backend (Raft/integrated storage,
+  Consul) where a restart doesn't lose keys.
 - **A static root token, not a real auth method.** Production Vault would
   use AppRole or Kubernetes auth with short-lived tokens and a policy that
   grants this app `encrypt`/`decrypt` on exactly one key — nothing else.
@@ -108,9 +107,9 @@ Both gaps in "What this does *not* cover" above are real, and this
 section is deliberately documentation/example-only, not executable code
 this project claims to have verified — there's no real cloud account,
 Vault cluster, or Sealed Secrets controller in this repo's Docker Compose
-setup to test either path against the way every other change here is
-verified live. Writing working-but-unverified code for either would be
-worse than not writing it: it would look tested when it isn't.
+setup to test either path against real infrastructure. Writing
+working-but-unverified code for either would be worse than not writing
+it: it would look tested when it isn't.
 
 **`k8s/secret.yaml` → a real secret backend.** The annotation on that
 file has said "use External Secrets Operator or Sealed Secrets" since
@@ -148,9 +147,8 @@ docker-compose-based dev environment was never meant to model.
 
 ## A real infra bug this surfaced: no `.dockerignore`
 
-Unrelated to Vault specifically, but found while building the production
-image to verify this change: **this repo had no `.dockerignore` file at
-all.** Every `docker build`'s context — and every `COPY . .` in
+Unrelated to Vault specifically: **this repo had no `.dockerignore` file
+at all.** Every `docker build`'s context — and every `COPY . .` in
 `Dockerfile` — included the entire host working directory: `node_modules`
 with host-specific native bindings, `.env.local` if one existed, and
 critically, a stale `dist/` and `tsconfig.tsbuildinfo` left over from a
@@ -188,17 +186,17 @@ different flavor of "`localhost` doesn't mean what you think it means."
 - Queried Postgres directly after a real e2e run: every
   `hmac_secret_ciphertext` value is genuine Vault ciphertext
   (`vault:v1:...`), never plaintext.
-- Rotation verified live end to end: charged successfully with a merchant's
-  original HMAC secret → called `POST
+- Rotation works end to end: charging successfully with a merchant's
+  original HMAC secret → calling `POST
   /admin/merchants/:id/rotate-hmac-secret` through the real API → the DB
-  ciphertext changed → a charge signed with the **old** secret was
-  rejected (401) → a charge signed with the **new** secret succeeded.
+  ciphertext changes → a charge signed with the **old** secret is
+  rejected (401) → a charge signed with the **new** secret succeeds.
 - The production Docker image was rebuilt (`--no-cache`, after the
   `.dockerignore` fix) and run for real: `VaultTransitService`'s bootstrap
   log appeared, a fresh merchant was seeded, and a real HMAC-signed charge
   succeeded through the containerized app talking to the containerized
   Vault over the Docker network.
-- Vault-down fail-closed behavior verified live (see above).
+- Vault-down fail-closed behavior confirmed (see above).
 
 ## Migration
 

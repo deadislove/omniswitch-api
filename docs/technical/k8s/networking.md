@@ -178,10 +178,10 @@ serves, not just `omniswitch-api-ingress` — but this repo's own
 shared multi-tenant, so that broader scope is the correct one here, not
 a compromise.
 
-Verified live against a real Helm-installed `ingress-nginx` +
-`cert-manager`: a self-signed `ClusterIssuer` under the real
-`letsencrypt-prod` name issued a real certificate, HTTPS termination and
-the HTTP→HTTPS redirect both worked, all three path rules routed
-correctly, all 5 security headers appeared on every response including
-the redirect itself, and `allow-ingress-to-api` was proven load-bearing
-in both directions — removing it broke the path, restoring it fixed it.
+Against a real Helm-installed `ingress-nginx` + `cert-manager`: a
+self-signed `ClusterIssuer` under the real `letsencrypt-prod` name
+issues a real certificate, HTTPS termination and the HTTP→HTTPS redirect
+both work, all three path rules route correctly, all 5 security headers
+appear on every response including the redirect itself, and
+`allow-ingress-to-api` is load-bearing in both directions — removing it
+breaks the path, restoring it fixes it.

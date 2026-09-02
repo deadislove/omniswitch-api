@@ -26,9 +26,10 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * testing something unrelated. Reset before and after, same reasoning
  * as resetCircuitBreakerState's own docblock: this state is shared
  * Redis state across every e2e file (maxWorkers: 1, no flush between
- * files) — confirmed live as one root cause of chargeWithForcedThreeDS()
- * flakiness in webhooks.e2e-spec.ts and marketplace-split-refunds.e2e-spec.ts
- * when this file ran before them without a reset.
+ * files), so a leaked OPEN state here is one root cause of
+ * chargeWithForcedThreeDS() flakiness in webhooks.e2e-spec.ts and
+ * marketplace-split-refunds.e2e-spec.ts when this file runs before them
+ * without a reset.
  */
 describe('Ambiguous payment outcome recovery (e2e)', () => {
   let app: INestApplication;

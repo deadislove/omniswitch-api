@@ -4,7 +4,7 @@
 // real /auth/token endpoint, writing their credentials to .merchants.json.
 //
 // A single-merchant load test is bottlenecked by MerchantThrottlerGuard's
-// per-merchant rate limit almost immediately — confirmed live, see
+// per-merchant rate limit almost immediately — see
 // docs/technical/load-testing.md's "single-merchant" run. Spreading load
 // across many merchants (a more realistic multi-tenant traffic shape
 // anyway) is what actually exercises this app's own processing capacity

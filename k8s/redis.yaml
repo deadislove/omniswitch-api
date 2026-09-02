@@ -63,9 +63,8 @@ spec:
           # style: without them, each line is its own complete shell
           # statement — `exec redis-server` alone is valid, and `exec`
           # replaces the process immediately, silently dropping every
-          # flag after it (including --requirepass) rather than erroring.
-          # Verified live: a first version without the backslashes booted
-          # redis-server with zero arguments and no password at all.
+          # flag after it (including --requirepass) rather than erroring —
+          # booting redis-server with zero arguments and no password at all.
           command:
             - sh
             - -c

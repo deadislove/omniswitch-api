@@ -18,8 +18,7 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * object for its own status column, not a separate copy — renaming
  * payments_status_enum renames what payments_old.status points at too,
  * so DROP TYPE ..._old fails with "other objects depend on it" unless
- * payments_old.status is detached first. Found by actually running this
- * migration against a real cutover-completed schema, not assumed.
+ * payments_old.status is detached first.
  * payments_old is deprecated and read only by drop-cutover-tables.ts via
  * raw SQL (no TypeORM entity), so converting its status column to plain
  * varchar — the same type archive.payments.status already uses — is
@@ -28,11 +27,10 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * already have been dropped (CUTOVER_OLD_TABLE_RETENTION_DAYS elapsed)
  * by the time this migration — or its down() — actually runs. The
  * column's own DEFAULT clause is a second, separate dependency on the
- * enum type beyond the column's data type itself (confirmed live — the
- * first version of this migration dropped only the type dependency and
- * still failed on the default) — dropped here rather than carried
- * forward, since nothing inserts into this frozen historical snapshot
- * table anymore.
+ * enum type beyond the column's data type itself — dropping only the
+ * type dependency and leaving the default in place still fails, so both
+ * are dropped here rather than carried forward, since nothing inserts
+ * into this frozen historical snapshot table anymore.
  */
 export class AddAmbiguousPaymentStatus1787459580113 implements MigrationInterface {
   name = "AddAmbiguousPaymentStatus1787459580113";

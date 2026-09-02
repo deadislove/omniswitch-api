@@ -47,8 +47,8 @@ export class DisputeTypeOrmRepository implements DisputePort {
   // operator opening the list after being notified, or — as
   // test/webhooks.e2e-spec.ts does — a test listing immediately after
   // processing charge.dispute.created), which can lose the race against
-  // the replica's ~1s streaming lag and simply not show the dispute yet.
-  // Confirmed live in CI — see docs/technical/ci-cd.md.
+  // the replica's ~1s streaming lag and simply not show the dispute yet —
+  // see docs/technical/ci-cd.md.
   async findMany(filter?: FindDisputesFilter): Promise<Dispute[]> {
     const queryRunner = this.dataSource.createQueryRunner('master');
     let entities: DisputeEntity[];

@@ -67,8 +67,8 @@ import { Readable } from 'stream';
 // extends it, same IP/merchant-scoping behavior applies), so every
 // request in a single-machine e2e/load-test run — regardless of which
 // merchant it authenticates as — competes for the same 100/min budget.
-// See docs/technical/load-testing.md, Finding #1, for how this was first
-// found to be the actual ceiling.
+// See docs/technical/load-testing.md, Finding #1: this is the actual
+// ceiling for a single-machine load generator.
 const CHARGE_RATE_LIMIT_MAX = Number(process.env.CHARGE_RATE_LIMIT_MAX) || 100;
 const CHARGE_RATE_LIMIT_TTL = Number(process.env.CHARGE_RATE_LIMIT_TTL) || 60000;
 

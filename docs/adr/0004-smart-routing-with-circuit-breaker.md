@@ -76,9 +76,9 @@ gates it — see the addendum below); a success on that trial closes the
 circuit, a failure re-opens it immediately. Because
 this state is shared, not per-process, a circuit tripped by traffic
 hitting one replica is visible to every other replica's next routing
-decision immediately — verified live: forcing 5 failures against one
-replica trips the breaker as seen by a second replica that never made
-any of those calls itself. Success-rate/latency metrics feeding the
+decision immediately: forcing 5 failures against one replica trips the
+breaker as seen by a second replica that never made any of those calls
+itself. Success-rate/latency metrics feeding the
 scoring above are similarly Redis-backed, bucketed into a 15-minute
 sliding window (per-minute keys, summed at read time) rather than
 accumulating unboundedly — see
@@ -98,21 +98,21 @@ throwing, which — at 5 required failures with no help from this signal
 gap: a hung PSP now trips the breaker within a handful of slow calls,
 not minutes.
 
-**Verified live against real elapsed time, not just simulated timers**
-(`test/latency-based-circuit-breaker.e2e-spec.ts`, 2026-08-23):
-`mock-psp` was given a `forceslow` marker that delays 6 real seconds
-before responding successfully (`scripts/mock-psp/server.js`), so this
-test exercises the adapter's actual `fetch()` and the actual elapsed-time
-measurement feeding `recordSuccess()` — not `jest.useFakeTimers()` (used
-for the unit tests in `redis-circuit-breaker.service.spec.ts`) and not a
+**Tested against real elapsed time, not just simulated timers**
+(`test/latency-based-circuit-breaker.e2e-spec.ts`): `mock-psp` is given
+a `forceslow` marker that delays 6 real seconds before responding
+successfully (`scripts/mock-psp/server.js`), so this test exercises the
+adapter's actual `fetch()` and the actual elapsed-time measurement
+feeding `recordSuccess()` — not `jest.useFakeTimers()` (used for the
+unit tests in `redis-circuit-breaker.service.spec.ts`) and not a
 socket-destroy trick (used for the ambiguous-outcome timeout tests,
 where no response at all is the point). 5 sequential slow-but-successful
-STRIPE charges (~6s each, real wall-clock time) opened the circuit —
-confirmed both via `GET /payments/routing/health` reporting
+STRIPE charges (~6s each, real wall-clock time) open the circuit — shown
+both via `GET /payments/routing/health` reporting
 `STRIPE.circuitBreaker: "OPEN"`, and observably: a 6th charge that still
-requested `preferredProvider: "STRIPE"` routed to `ADYEN` instead,
-proving `filterAvailableProviders()` actually excluded STRIPE rather
-than just recording a flag nothing reads. Full test run: 35.4s.
+requests `preferredProvider: "STRIPE"` routes to `ADYEN` instead,
+proving `filterAvailableProviders()` actually excludes STRIPE rather
+than just recording a flag nothing reads.
 
 **Addendum, 2026-08-30 — `HALF_OPEN` single-trial-call budget**:
 `assertAvailable()` originally admitted *every* call once state was
@@ -120,9 +120,9 @@ anything other than `OPEN` — the instant state flipped to `HALF_OPEN`,
 every replica's concurrent traffic resumed simultaneously, not just a
 single probe, which is the opposite of what `HALF_OPEN` is for (send a
 struggling PSP a trickle, not a resumed full burst, right as it may be
-starting to recover). Confirmed live via a unit test: a second
+starting to recover): without a trial budget, a second
 `assertAvailable()` call issued immediately after the first one admitted
-the `HALF_OPEN` trial also resolved successfully instead of being
+the `HALF_OPEN` trial would also resolve successfully instead of being
 rejected. Fixed with a second Redis counter (`halfOpenTrialCount`,
 atomic `INCR`, TTL set only by whichever call claims slot 1) that admits
 exactly one trial call per recovery episode and rejects the rest the

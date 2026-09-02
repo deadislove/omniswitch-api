@@ -51,9 +51,9 @@ const sdk = new NodeSDK({
 sdk.start();
 
 // NestJS's own shutdown hooks (app.enableShutdownHooks()) aren't wired up
-// in main.ts as of this pass — SIGTERM handling here is independent of
-// that, and only responsible for flushing this SDK's own exporter so a
-// pod's last few spans before a rolling-update termination aren't lost.
+// in main.ts — SIGTERM handling here is independent of that, and only
+// responsible for flushing this SDK's own exporter so a pod's last few
+// spans before a rolling-update termination aren't lost.
 process.on('SIGTERM', () => {
   sdk.shutdown().finally(() => process.exit(0));
 });

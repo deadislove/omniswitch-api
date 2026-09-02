@@ -165,17 +165,15 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
       .createQueryBuilder('p')
       .where('p.pspProvider = :pspProvider', { pspProvider })
       .andWhere('p.status IN (:...chargedStatuses)', { chargedStatuses })
-      // .toISOString(), not the raw Date object. Found the hard way while
-      // verifying reconciliation: `created_at` is `timestamp without time
-      // zone` (TypeORM's @CreateDateColumn() default), and node-postgres
-      // serializes a bound Date parameter for such a column using this
-      // *process's local timezone offset*, not UTC. On a UTC+8 dev machine,
-      // that silently shifted every comparison by 8 hours — a payment
-      // charged seconds earlier wasn't found by a "last hour" window query.
-      // An explicit ISO string (always UTC, unambiguous) sidesteps the
-      // serialization entirely. Confirmed via a minimal reproduction
-      // outside the app (same query, Date object vs. .toISOString()) before
-      // concluding this wasn't a logic bug in the WHERE clause itself.
+      // .toISOString(), not the raw Date object: `created_at` is `timestamp
+      // without time zone` (TypeORM's @CreateDateColumn() default), and
+      // node-postgres serializes a bound Date parameter for such a column
+      // using this *process's local timezone offset*, not UTC. On a UTC+8
+      // machine, that silently shifts every comparison by 8 hours — a
+      // payment charged seconds earlier wouldn't be found by a "last hour"
+      // window query. An explicit ISO string (always UTC, unambiguous)
+      // sidesteps the serialization entirely — not a logic bug in the
+      // WHERE clause itself.
       .andWhere('p.createdAt >= :fromDate', { fromDate: fromDate.toISOString() })
       .andWhere('p.createdAt <= :toDate', { toDate: toDate.toISOString() })
       .getMany();

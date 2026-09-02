@@ -54,8 +54,8 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
   // DataSource's replica routing (app.module.ts's `replication` config
   // sends plain repository reads to the replica, which has ~1s streaming
   // lag behind master; see reserve.service.ts's release() and
-  // test/ledger-and-outbox.e2e-spec.ts for the same issue confirmed live
-  // elsewhere). This forces the read onto master instead.
+  // test/ledger-and-outbox.e2e-spec.ts for the same issue). This forces
+  // the read onto master instead.
   async function ledgerEntries(paymentId: string): Promise<any[]> {
     const queryRunner = dataSource.createQueryRunner('master');
     let events: LedgerOutboxEntity[];
@@ -197,10 +197,10 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     // scripts/mock-psp/server.js returns requires_action when the
     // description contains this marker — same forcing mechanism
     // webhooks.e2e-spec.ts uses. This is the regression case for a bug
-    // found while building split-reversal: `splits` used to only be
-    // recorded on the Payment when the saga's SUCCEEDED branch ran
-    // immediately — a charge that instead came back REQUIRES_ACTION and
-    // was only confirmed later via webhook would silently lose its split.
+    // where `splits` used to only be recorded on the Payment when the
+    // saga's SUCCEEDED branch ran immediately — a charge that instead
+    // came back REQUIRES_ACTION and was only confirmed later via webhook
+    // would silently lose its split.
     // The marker is Stripe-only in the mock, so preferredProvider pins
     // routing to STRIPE — now a true override, not a scoring nudge that
     // could still lose and silently send this to ADYEN instead.

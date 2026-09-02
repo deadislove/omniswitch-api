@@ -193,10 +193,10 @@ export class MfaService {
   // written. That sequence has no artificial time compression the way
   // e.g. subscription dunning retries do — a user enrolling MFA and
   // immediately entering the code is completely normal — so the ~1s
-  // replica lag is a genuine production race, not just a test artifact.
-  // Confirmed live: test/mfa.e2e-spec.ts's enroll → confirm sequence
-  // failed with a false 409 "no enrollment in progress" in CI — see
-  // docs/technical/ci-cd.md.
+  // replica lag is a genuine production race, not just a test artifact:
+  // without forcing master, test/mfa.e2e-spec.ts's enroll → confirm
+  // sequence fails with a false 409 "no enrollment in progress" in CI —
+  // see docs/technical/ci-cd.md.
   private async getOrThrow(merchantId: string): Promise<MerchantEntity> {
     const queryRunner = this.dataSource.createQueryRunner('master');
     let merchant: MerchantEntity | null;

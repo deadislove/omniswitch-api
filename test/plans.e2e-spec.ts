@@ -61,8 +61,8 @@ describe('Subscription plan catalog & proration (e2e)', () => {
   // the ambient DataSource's replica routing (app.module.ts's
   // `replication` config sends plain repository reads to the replica,
   // which has ~1s streaming lag behind master; see reserve.service.ts's
-  // release() and test/ledger-and-outbox.e2e-spec.ts for the same issue
-  // confirmed live elsewhere). This helper forces the read onto master.
+  // release() and test/ledger-and-outbox.e2e-spec.ts for the same issue).
+  // This helper forces the read onto master.
   // .update()/.save() calls don't need it — TypeORM's replication mode
   // always routes writes to master regardless of which repository issues
   // them.

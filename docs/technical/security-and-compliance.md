@@ -129,9 +129,9 @@ this scale, but worth knowing if Redis memory ever becomes a constraint.
 - **Short-lived tokens + refresh tokens, no revocation list at all** — a
   legitimate alternative (many APIs use 5–15 minute access tokens precisely
   to make revocation-by-expiry acceptable). Not implemented here because it
-  changes the client integration contract (silent refresh flow) more than
-  this pass was scoped for; the 1-hour expiry plus this revocation mechanism
-  gets equivalent security properties without that client-side complexity.
+  changes the client integration contract (a silent refresh flow); the
+  1-hour expiry plus this revocation mechanism gets equivalent security
+  properties without that client-side complexity.
 - **DB-backed sessions instead of stateless JWTs** — would fully solve
   revocation (and the Redis-durability problem above) by making the database
   the source of truth, but throws away the reason JWTs were chosen in the
@@ -162,7 +162,7 @@ Number (PAN), expiry date, or CVV:
 - `PaymentEntity` has no column that stores a PAN. `psp_raw_response` stores
   whatever the PSP's API returned, which — because Stripe and Adyen never
   return full PANs in their own API responses — never contains one either.
-- As of this pass, `IsNotRawCardNumber` (see `not-raw-card-number.validator.ts`)
+- `IsNotRawCardNumber` (see `not-raw-card-number.validator.ts`)
   rejects any `cardToken` / `paymentMethodId` value that passes a Luhn check
   at PAN-length (12–19 digits), as a defense-in-depth backstop in case a
   client integration accidentally sends a real card number instead of a
