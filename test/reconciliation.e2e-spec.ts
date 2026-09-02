@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { PaymentEntity } from '../src/modules/payment/adapters/persistence/entities/payment.entity';
 
@@ -33,8 +33,7 @@ describe('Reconciliation admin endpoint (e2e)', () => {
     dataSource = app.get(DataSource);
     merchant = await seedMerchant(app, { merchantId: uniqueId('reconmerchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    admin = await seedMerchant(app, { merchantId: uniqueId('reconadmin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('reconadmin')));
   });
 
   afterAll(async () => {

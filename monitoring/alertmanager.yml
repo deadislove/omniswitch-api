@@ -1,0 +1,24 @@
+### Local-dev Alertmanager config for docker-compose.yml's `alertmanager`
+### service. The `default` receiver below is deliberately empty — no
+### Slack/PagerDuty/Opsgenie integration is configured, since this repo has
+### no real paging account to verify one against (same posture as the rest
+### of this project's illustrative-only external integrations, e.g.
+### k8s/external-secrets-example.yaml). Alerts still show up in
+### Alertmanager's own UI (http://localhost:9093) and API once they fire,
+### which is what lets you verify the rules in alert.rules.yml actually
+### trigger — this file just doesn't forward them anywhere further.
+###
+### Before relying on this for a real on-call rotation: add a real
+### receiver (e.g. a `slack_configs` block with an incoming webhook URL,
+### or `webhook_configs` pointing at PagerDuty's Events API) and route
+### `severity: critical` alerts to it explicitly.
+
+route:
+  receiver: default
+  group_by: ['alertname', 'provider']
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+
+receivers:
+  - name: default

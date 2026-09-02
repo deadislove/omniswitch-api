@@ -1,0 +1,71 @@
+### Alert rules for the gauges src/observability/metrics.controller.ts
+### exposes. Each `description` links to the matching section in
+### docs/technical/incident-response.md — that doc is the runbook; this
+### file is only the trigger condition.
+###
+### Loaded two ways from the exact same source of truth:
+### - docker-compose.yml's `prometheus` service mounts this file directly
+###   (see monitoring/prometheus.yml's rule_files) — real, locally
+###   verifiable Prometheus evaluating these rules against real metrics.
+### - k8s/prometheus-rules.yaml wraps this same `groups:` block in a
+###   PrometheusRule CRD for a cluster already running the Prometheus
+###   Operator — illustrative only, not verified against a real Operator
+###   installation (this repo has no cluster to test against). Keep the
+###   two in sync by hand if you change one.
+
+groups:
+  - name: omniswitch-payment-gateway
+    rules:
+      - alert: OmniSwitchApiDown
+        expr: up{job="omniswitch-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'OmniSwitch API is not responding to Prometheus scrapes'
+          description: 'The /metrics endpoint on {{ $labels.instance }} has been unreachable for 1m. See incident-response.md#omniswitchapidown.'
+
+      - alert: PSPCircuitBreakerOpen
+        expr: omniswitch_psp_circuit_breaker_state == 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.provider }} circuit breaker has been OPEN for 2+ minutes'
+          description: 'New charges are being routed away from {{ $labels.provider }} (or failing entirely, if it was the only available provider for a given currency). See incident-response.md#pspcircuitbreakeropen.'
+
+      - alert: PSPSuccessRateLow
+        expr: omniswitch_psp_success_rate_percent < 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.provider }} charge success rate is {{ $value | printf "%.1f" }}%% over the trailing 15m'
+          description: 'Below the circuit breaker''s own OPEN threshold, so this is an early warning, not yet an outage. See incident-response.md#pspsuccessratelow.'
+
+      - alert: LedgerOutboxDeadLetters
+        expr: omniswitch_ledger_outbox_failed_total > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $value }} ledger outbox event(s) dead-lettered as FAILED'
+          description: 'Ledger entries exist that never made it to relay after exhausting retries. See incident-response.md#ledgeroutboxdeadletters.'
+
+      - alert: LedgerOutboxBacklogHigh
+        expr: omniswitch_ledger_outbox_pending_total > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Ledger outbox PENDING backlog is {{ $value }}, sustained for 10m'
+          description: 'Illustrative threshold — not calibrated against any real production traffic volume, since this repo has none to measure. Tune once a real baseline exists. See incident-response.md#ledgeroutboxbackloghigh.'
+
+      - alert: ReconciliationMismatchFound
+        expr: omniswitch_reconciliation_mismatches > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.provider }}''s latest reconciliation run found {{ $value }} mismatch(es)'
+          description: 'This system''s ledger and the PSP''s own settlement report disagree. See incident-response.md#reconciliationmismatchfound.'

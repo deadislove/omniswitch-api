@@ -162,14 +162,33 @@ charge and a real PSP decline (`test/observability.e2e-spec.ts`): the
 gauge reflects both `SUCCEEDED` and `FAILED` immediately, and increments
 by exactly one per additional charge on the same (status, provider) pair.
 
-**Still deliberately out of scope** (would need a larger, separate
-change): distributed tracing (OpenTelemetry spans across the saga → PSP
-call → webhook resolution chain would make debugging a stuck payment far
-faster than grepping correlation IDs across log lines), and
-centralized/tamper-evident log shipping (see the PCI doc's Req 10.5 gap)
-— both need an external tracing/log backend this project doesn't stand
-up, so there's nothing here to verify against real infrastructure the
-way the gauges above could be.
+**Both later addressed, to different degrees of completeness**:
+
+- Distributed tracing: `src/tracing.ts` bootstraps an OpenTelemetry SDK
+  (auto-instrumentation for HTTP/`pg`/`ioredis`/`fetch`-via-`undici` —
+  the last one matters specifically because `StripePSPAdapter`/
+  `AdyenPSPAdapter` call out via the global `fetch()`, not Node's older
+  `http`/`https` modules that most instrumentation guides assume), plus
+  manual `saga.route`/`saga.charge` spans in
+  `payment-checkout.saga.ts` for the cross-step causality auto-
+  instrumentation alone wouldn't group meaningfully. Exported via OTLP to
+  `docker-compose.yml`'s new `jaeger` service. Deliberately did *not*
+  touch `StripePSPAdapter`/`AdyenPSPAdapter`'s own charge/refund/capture/
+  cancel methods to add spans there too — undici auto-instrumentation
+  already covers the actual `fetch()` call nested correctly under
+  `saga.charge`, and manually restructuring four methods' existing
+  circuit-breaker try/catch logic per adapter for a marginal naming
+  improvement wasn't worth the risk on this specific code path. Not yet
+  run against a real charge end-to-end (no Docker daemon in the session
+  that wrote this) — verify a trace actually shows up at `:16686` before
+  trusting this.
+- Centralized logging: [`k8s/log-shipping-example.yaml`](k8s/log-shipping-example.yaml)
+  is a Fluent Bit DaemonSet, illustrative only (same posture as
+  `k8s/external-secrets-example.yaml` — no real SIEM/Loki/Elasticsearch
+  cluster in this repo to verify against). It closes the *centralization*
+  half of the Req 10.5 gap; *tamper-evidence* is a property of whatever
+  backend it's pointed at, not something this manifest can provide on its
+  own — see that file's header and `security-and-compliance.md`.
 
 ---
 
@@ -472,14 +491,17 @@ doesn't care what plaintext it's given. Backup codes are bcrypt-hashed,
 same posture as `apiKeySecretHash`, and single-use — consumed (removed
 from storage) the moment one succeeds, not just checked.
 
-**Deliberately opt-in, not mandatory for any role**: this closes the "not
-implemented anywhere" half of the PCI gap — the capability now genuinely
-exists and works — but *requiring* ADMIN-role merchants to have MFA
-enabled before they can call the admin API at all is a separate policy
-decision, not made here (an ADMIN merchant can still operate with MFA
-off, same as before). See
+**Opt-in for MERCHANT/OPERATOR/READONLY, mandatory for ADMIN**: this
+closes the "not implemented anywhere" half of the PCI gap — the
+capability genuinely exists and works — and a later pass closed the
+other half: `RolesGuard` now rejects any request from an ADMIN-role
+caller whose merchant doesn't have `mfaEnabled`, on every
+`@Roles(...)`-gated route (`POST /auth/mfa/enroll`/`confirm` stay
+reachable regardless, since neither carries `@Roles()`, so an
+ADMIN merchant always has a way to enroll rather than being locked out
+with no path back in). See
 [`docs/technical/security-and-compliance.md`](docs/technical/security-and-compliance.md)
-for why this line wasn't crossed in this pass.
+for what this still doesn't cover.
 
 **A real dependency issue found along the way**: `otplib`'s current major
 version (v13) rebuilt its crypto internals on `@noble`/`@scure`, which

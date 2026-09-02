@@ -14,10 +14,10 @@ const ISSUER = 'OmniSwitch';
 /**
  * MFA Service
  * TOTP-based second factor for merchant login — closes the PCI DSS Req
- * 8.4.2 gap noted in docs/technical/security-and-compliance.md ("not
- * implemented anywhere"). Opt-in per merchant, not mandatory for any role
- * — see that doc's MFA section for why mandating it for ADMIN specifically
- * is a separate, still-open policy decision, not an engineering one.
+ * 8.4.2 gap noted in docs/technical/security-and-compliance.md. Opt-in for
+ * MERCHANT/OPERATOR/READONLY, but mandatory for ADMIN: `RolesGuard`
+ * rejects any request from an ADMIN-role caller whose merchant doesn't
+ * have `mfaEnabled` — see that guard's `assertAdminHasMfaEnabled()`.
  *
  * The TOTP secret is envelope-encrypted via the same VaultTransitService
  * `hmacSecretCiphertext` uses (Vault Transit encryption doesn't care what

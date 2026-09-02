@@ -117,7 +117,8 @@ omniswitch-api/
 - **OpenAPI/Swagger** (`/api/docs`): every controller documents its success response type and the non-2xx cases it actually throws (404/409/422 etc.), not just request bodies — see [`DEV_README.md`](DEV_README.md#openapiswagger-completeness-pass---resolved) for the audit that closed this
 - **Structured JSON Logging** (Winston) with Correlation IDs
 - **Health Checks** (`/health`, `/health/live`, `/health/ready`) for K8s probes
-- **Prometheus Metrics** (`/metrics`) — process metrics plus PSP circuit breaker state/success rate/latency, ledger outbox backlog, and payment volume by status/provider (`omniswitch_payments_total`), all pull-computed at scrape time from existing state rather than in-process counters that would drift across replicas or reset on restart
+- **Prometheus Metrics** (`/metrics`) — process metrics plus PSP circuit breaker state/success rate/latency, ledger outbox backlog, payment volume by status/provider (`omniswitch_payments_total`), and the latest reconciliation run's mismatch count per provider, all pull-computed at scrape time from existing state rather than in-process counters that would drift across replicas or reset on restart
+- **Alerting**: `docker-compose up -d prometheus alertmanager` runs a real Prometheus evaluating [`monitoring/alert.rules.yml`](monitoring/alert.rules.yml) against the metrics above (circuit breaker OPEN, outbox dead-letters/backlog, low PSP success rate, reconciliation mismatches), with results visible in Alertmanager at `:9093` — see [`docs/technical/incident-response.md`](docs/technical/incident-response.md) for what each alert means and how to respond
 - **SSE Streaming** for real-time payment status updates
 - **Bulk Upload** CSV streaming via `multipart/form-data`
 
@@ -156,6 +157,12 @@ npm run start:dev
 #    is how you get the first one). Prints an apiKeyId/apiKeySecret/hmacSecret
 #    once — save them, they're not shown again.
 npm run seed:admin
+
+# 6a. Log in with those credentials, then POST /auth/mfa/enroll and
+#     /auth/mfa/confirm with that token before calling any other admin
+#     endpoint — RolesGuard requires MFA for every ADMIN-role caller (see
+#     Security Notes #8 below). Both routes work without MFA already
+#     enabled, specifically so this step is always reachable.
 
 # 7. Open Swagger docs
 open http://localhost:3000/api/docs
@@ -367,7 +374,7 @@ Measured after the `uuid` → native `crypto.randomUUID()`/`crypto`-based
 5. **JWT revocation**: Tokens can be revoked before their natural expiry — self-service logout (`POST /api/v1/auth/revoke`) and admin-triggered revocation (deactivation, credential rotation, `POST /api/v1/admin/merchants/:id/revoke-sessions`) all take effect immediately. This adds a hard dependency on Redis for *every* authenticated request, not just idempotency — see [`docs/technical/security-and-compliance.md`](docs/technical/security-and-compliance.md#jwt-revocation) for the full trade-off discussion before relying on this in production.
 6. **`hmac_secret` is envelope-encrypted**, not plaintext — `merchants.hmac_secret_ciphertext` holds Vault Transit ciphertext (`VaultTransitService`); the app only ever holds the plaintext key briefly, in memory, at creation/rotation/verification time. A database compromise alone yields ciphertext, not usable signing keys. See [`docs/technical/secret-management.md`](docs/technical/secret-management.md) for the design and, importantly, what it doesn't cover — `docker-compose.yml`'s `vault` service is dev-mode only (in-memory storage, a static root token) and is **not** production-ready as deployed here.
 7. **Database migrations**: `synchronize` is `false` in every environment; schema changes go through versioned migrations (`npm run migration:generate`/`migration:run`), applied automatically by the Docker image's startup command and by the e2e suite. See [`docs/technical/database-migrations.md`](docs/technical/database-migrations.md). Still open: no documented policy yet for backward-compatible migrations across a rolling deploy (old and new app versions briefly running against the same schema).
-8. **MFA is opt-in, not mandatory** for any role — the TOTP mechanism (PCI DSS Req 8.4.2) is fully functional, but an `ADMIN` merchant can still call the admin API with MFA off. See [`docs/technical/security-and-compliance.md`](docs/technical/security-and-compliance.md#mfa--whats-covered-and-what-isnt) for why enforcing it for `ADMIN` specifically is a separate, still-open policy decision.
+8. **MFA (PCI DSS Req 8.4.2) is opt-in for `MERCHANT`/`OPERATOR`/`READONLY`, mandatory for `ADMIN`** — `RolesGuard` rejects any request from an `ADMIN`-role caller whose merchant doesn't have `mfaEnabled`, on every `@Roles(...)`-gated route. `POST /auth/mfa/enroll`/`confirm` stay reachable without MFA so an `ADMIN` merchant (including the one `npm run seed:admin` creates) can complete enrollment rather than being locked out with no way back in. See [`docs/technical/security-and-compliance.md`](docs/technical/security-and-compliance.md#mfa--whats-covered-and-what-isnt) for what this still doesn't cover.
 
 ### PCI DSS
 
@@ -413,10 +420,21 @@ write-ups: [`DEV_README.md`](DEV_README.md) (technical/infra framing) and
   this repo has no cloud account or production Vault cluster to test
   against.
 - **Observability**: `/metrics` covers PSP health, ledger outbox backlog,
-  and payment volume by status/provider — all real. Distributed tracing
-  (OpenTelemetry) and centralized/tamper-evident log shipping are not
-  implemented; both need an external backend this project doesn't stand
-  up.
+  payment volume by status/provider, and reconciliation mismatches — all
+  real, and [`monitoring/alert.rules.yml`](monitoring/alert.rules.yml)
+  turns them into real alerts, evaluated by a real Prometheus/Alertmanager
+  in `docker-compose.yml` (see
+  [`docs/technical/incident-response.md`](docs/technical/incident-response.md)).
+  Centralized log shipping has a concrete shape
+  ([`k8s/log-shipping-example.yaml`](k8s/log-shipping-example.yaml)) but,
+  like the secrets examples above, isn't verified against a real backend.
+  Distributed tracing (OpenTelemetry — see `src/tracing.ts`) covers
+  HTTP/DB/Redis/PSP-`fetch` calls via auto-instrumentation plus manual
+  `saga.route`/`saga.charge` spans (`payment-checkout.saga.ts`), exported
+  via OTLP to `docker-compose.yml`'s `jaeger` service locally; not yet
+  run against real traffic end-to-end in this pass (no Docker daemon
+  available in the session that wired it up) — verify with a real charge
+  and confirm the trace shows up at `:16686` before relying on it.
 - **Fee model**: per-merchant flat rates and volume-based tiers are both
   real and enforced. Still not reconciled against actual PSP interchange
   cost — the fee-estimation logic used for routing/display and the rate

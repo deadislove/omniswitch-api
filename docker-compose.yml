@@ -107,6 +107,11 @@ services:
       # Vault (envelope-encrypts merchants.hmac_secret_ciphertext)
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: omniswitch-dev-root-token
+      # OpenTelemetry — see src/tracing.ts. No depends_on against `jaeger`
+      # below: the OTLP exporter buffers/retries on its own, so api's own
+      # startup shouldn't block on tracing infra being ready first, same
+      # reasoning as prometheus/alertmanager not gating api's startup.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
       pgbouncer-master:
         condition: service_healthy
@@ -400,6 +405,81 @@ services:
       - omniswitch-net
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4000/ || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ─── Jaeger (trace collector + UI) ───────────────────────────────────────────
+  # Receives OTLP/HTTP spans from `api` (see src/tracing.ts and this file's
+  # OTEL_EXPORTER_OTLP_ENDPOINT above). UI at http://localhost:16686 — a
+  # charge should show up as one trace with saga.route/saga.charge spans
+  # (see payment-checkout.saga.ts) and, nested under saga.charge, the
+  # actual outbound fetch() call to Stripe/Adyen/mock-psp, auto-
+  # instrumented via undici (see tracing.ts's docblock for why that
+  # specific instrumentation matters here).
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: omniswitch-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686" # UI
+      - "4318:4318"   # OTLP/HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ─── Prometheus ──────────────────────────────────────────────────────────────
+  # Scrapes `api`'s /metrics (see src/observability/metrics.controller.ts)
+  # and evaluates monitoring/alert.rules.yml against it — real rule
+  # evaluation, not just a manifest reviewed by eye. Pair with a load like
+  # `POST /admin/reconciliation/run` against deliberately-mismatched data,
+  # or manually flipping a circuit breaker via Redis, to watch an alert
+  # actually go from pending to firing.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: omniswitch-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+    depends_on:
+      - api
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ─── Alertmanager ────────────────────────────────────────────────────────────
+  # Receives alerts Prometheus evaluates as firing. monitoring/alertmanager.yml's
+  # default receiver has no real paging/chat integration wired up (see that
+  # file's header) — this exists to prove the alert pipeline itself works
+  # end to end (visible at http://localhost:9093), not to page anyone yet.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: omniswitch-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

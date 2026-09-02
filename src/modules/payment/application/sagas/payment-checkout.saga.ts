@@ -16,6 +16,7 @@ import { ChargeLedgerParamsResolverService, ChargeLedgerParams } from '../servic
 import { ReserveService } from '../services/reserve.service';
 import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
 import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
+import { traced } from '../../../../shared/utils/traced';
 
 export interface CheckoutSagaInput {
   paymentId: string;
@@ -195,13 +196,18 @@ export class PaymentCheckoutSaga {
     // ─── Step 3: Smart PSP Routing ───────────────────────────────────────────
     let routingDecision: any;
     try {
-      const routing = await this.acquirerRouting.selectOptimalAdapter({
-        amount: input.amount,
-        binInfo: input.binInfo,
-        merchantId: input.merchantId,
-        preferredProvider: input.preferredProvider,
-        entitledProviders: chargeLedgerParams.enabledPspProviders,
-      });
+      const routing = await traced(
+        'saga.route',
+        () =>
+          this.acquirerRouting.selectOptimalAdapter({
+            amount: input.amount,
+            binInfo: input.binInfo,
+            merchantId: input.merchantId,
+            preferredProvider: input.preferredProvider,
+            entitledProviders: chargeLedgerParams.enabledPspProviders,
+          }),
+        { 'payment.id': input.paymentId },
+      );
       routingDecision = routing.decision;
     } catch (routingError: unknown) {
       const msg = routingError instanceof Error ? routingError.message : String(routingError);
@@ -220,27 +226,32 @@ export class PaymentCheckoutSaga {
     let finalProvider = routingDecision.selectedProvider;
 
     try {
-      const { result, provider, usedFallback: fb } = await this.acquirerRouting.executeWithSmartRouting(
-        {
-          amount: input.amount,
-          binInfo: input.binInfo,
-          merchantId: input.merchantId,
-          preferredProvider: input.preferredProvider,
-          entitledProviders: chargeLedgerParams.enabledPspProviders,
-        },
-        (adapter) => adapter.charge({
-          paymentId: input.paymentId,
-          idempotencyKey: input.idempotencyKey,
-          amount: input.amount,
-          currency: input.amount.currency.code,
-          merchantId: input.merchantId,
-          customerId: input.customerId,
-          description: input.description,
-          paymentMethodId: input.paymentMethodId,
-          cardToken: input.cardToken,
-          captureMethod: input.captureMethod,
-          binCountry: input.binInfo?.country,
-        }),
+      const { result, provider, usedFallback: fb } = await traced(
+        'saga.charge',
+        () =>
+          this.acquirerRouting.executeWithSmartRouting(
+            {
+              amount: input.amount,
+              binInfo: input.binInfo,
+              merchantId: input.merchantId,
+              preferredProvider: input.preferredProvider,
+              entitledProviders: chargeLedgerParams.enabledPspProviders,
+            },
+            (adapter) => adapter.charge({
+              paymentId: input.paymentId,
+              idempotencyKey: input.idempotencyKey,
+              amount: input.amount,
+              currency: input.amount.currency.code,
+              merchantId: input.merchantId,
+              customerId: input.customerId,
+              description: input.description,
+              paymentMethodId: input.paymentMethodId,
+              cardToken: input.cardToken,
+              captureMethod: input.captureMethod,
+              binCountry: input.binInfo?.country,
+            }),
+          ),
+        { 'payment.id': input.paymentId, 'payment.amount': input.amount.toString() },
       );
 
       chargeResult = result;

@@ -190,7 +190,7 @@ you.
 | Req 8 — session/credential lifecycle | JWT revocation (this document, above), API key rotation, HMAC key rotation all implemented and take effect immediately |
 | Req 10 — logging | Structured JSON logging (Winston) with correlation IDs on every request |
 | Req 3.6 — cryptographic key management | `hmac_secret` is envelope-encrypted via Vault's Transit engine before it ever reaches Postgres — the app only ever has plaintext in memory, briefly, at creation/rotation/verification time. A DB compromise alone yields ciphertext, not usable keys. See [`secret-management.md`](./secret-management.md) for the design and — importantly — what this *doesn't* cover (dev-mode Vault is not production-ready as-is; `JWT_SECRET`/DB credentials/K8s-level secrets are still plain env vars). |
-| Req 8.4.2 — multi-factor authentication | TOTP-based MFA now exists and works: `POST /auth/mfa/enroll`/`confirm`/`verify`/`disable`, opt-in per merchant, enforced at login once enabled — `JwtAuthGuard` rejects a post-login-but-pre-MFA token on every route except the verify step itself. Verified end to end in `test/mfa.e2e-spec.ts`. See the MFA section directly below for what this *doesn't* close. |
+| Req 8.4.2 — multi-factor authentication | TOTP-based MFA: `POST /auth/mfa/enroll`/`confirm`/`verify`/`disable`, enforced at login once enabled — `JwtAuthGuard` rejects a post-login-but-pre-MFA token on every route except the verify step itself. Opt-in for `MERCHANT`/`OPERATOR`/`READONLY`; **mandatory for `ADMIN`** — `RolesGuard` rejects any request from an `ADMIN`-role caller whose merchant doesn't have `mfaEnabled`, on every route gated by `@Roles(...)`. Verified end to end in `test/mfa.e2e-spec.ts`. See the MFA section directly below for what this *doesn't* close. |
 | Req 1 — network segmentation (defense-in-depth, not full CDE isolation) | `k8s/network-policy.yaml` default-denies all ingress/egress in the `payments` namespace, with explicit allows for the app's real traffic paths. Verified against a real `NetworkPolicy`-enforcing CNI via `scripts/network-policy-verify.sh`, not just reviewed by eye. See the section directly below for what this does and doesn't cover. |
 
 ### MFA — what's covered and what isn't
@@ -198,16 +198,26 @@ you.
 The mechanism (TOTP secret enrollment/confirmation, one-time backup codes,
 an enforced-once-enabled login gate) is real, not a stub — see
 `src/modules/merchant/mfa.service.ts` and `DEV_README.md`'s MFA entry for
-the full design and verification. What's **not** done: nothing in this
-codebase *requires* an `ADMIN`-role merchant to have MFA enabled before
-calling the admin API — a merchant can operate with MFA off indefinitely,
-exactly like before this existed. If an assessor judges the admin API to
-be "access into the CDE," Req 8.4.2 likely requires MFA to be *mandatory*
-for that access, not merely available. Enforcing that (e.g. a check
-alongside `RolesGuard` that rejects an `ADMIN`-role JWT whose merchant has
-`mfaEnabled: false`) is a deliberate policy decision this pass didn't
-make, not an oversight — worth doing before relying on this for a real
-assessment.
+the full design and verification. `RolesGuard` additionally requires it
+for any caller whose token carries the `ADMIN` role: on every route
+decorated with `@Roles(...)`, once normal role membership passes, a
+caller holding `ADMIN` is looked up via `MerchantService` and rejected
+(`403`, `MFA_REQUIRED_FOR_ADMIN`) unless `mfaEnabled` is `true` — even on
+a route whose `@Roles(...)` also allows `OPERATOR`/`READONLY`, since the
+check is keyed off the caller's own role, not the route's permitted set.
+This closes the gap this section used to describe. What's still **not**
+covered: this enforces MFA at the API layer only — it doesn't put the
+admin surface behind a separate network-isolated bastion/VPN, and an
+assessor may still want that as defense-in-depth beyond what a
+request-time check provides.
+
+One operational consequence worth knowing before enabling this in an
+existing deployment: any `ADMIN`-role merchant created before this
+enforcement existed (including the one `npm run seed:admin` creates) will
+be locked out of every `@Roles(...)`-gated endpoint until it completes
+`POST /auth/mfa/enroll` + `POST /auth/mfa/confirm` — those two routes
+carry no `@Roles()` decorator, so they stay reachable specifically to
+make that recovery possible without a database-level intervention.
 
 ### Network segmentation — defense-in-depth added, full CDE isolation intentionally out of scope
 
@@ -253,10 +263,10 @@ breaks — and effective — an unauthorized pod is actually refused):
 
 | Requirement | Gap |
 |---|---|
-| **Req 8.4.2 — mandatory MFA for admin access** | The mechanism exists (see above) but isn't enforced for any role — an `ADMIN` merchant can still call `/admin/merchants/*` with MFA off. Making it mandatory for `ADMIN` (or any role judged "access into the CDE") is still open. |
-| **Req 10.5 — log integrity** | Logs are structured but not shipped anywhere tamper-evident (no SIEM, no centralized/immutable log store). Currently just stdout + optional local file in production config. |
+| ~~**Req 8.4.2 — mandatory MFA for admin access**~~ | **Closed** — `RolesGuard` rejects `ADMIN`-role callers without `mfaEnabled` on every `@Roles(...)`-gated route. Putting the admin surface behind a separate network-isolated bastion/VPN (defense-in-depth beyond the API-layer check) remains a separate, still-open hardening option. |
+| **Req 10.5 — log integrity** | **Partially closed.** [`k8s/log-shipping-example.yaml`](../../k8s/log-shipping-example.yaml) shows a Fluent Bit DaemonSet tailing this app's structured JSON stdout (see `logger.config.ts`) and forwarding it off-node — illustrative only, not applied by any deploy path or verified against a real backend (this repo has no SIEM/Loki/Elasticsearch cluster to test against). Centralization is solved by that shape; *tamper-evidence* still depends entirely on the backend it's pointed at (object-lock/WORM storage, an append-only index) — nothing in this repo provides that property itself. The two local `logs/*.log` files `logger.config.ts` also writes are an unrelated, local-disk-only convenience (lost on pod restart, never shipped) — not this gap's answer either. |
 | **Req 11.3 / 11.4 — vulnerability scanning & penetration testing** | PCI DSS requires quarterly scans by an **Approved Scanning Vendor (ASV)** and periodic penetration testing by a qualified third party. Nothing in this repository — including its own code review process — satisfies that requirement. It has to be procured separately, from a party that is not the system's own developer. |
-| **Req 12 — governance** | No incident response plan, no formal security policy documents, no vendor management program for Stripe/Adyen/AWS/etc. These are organizational artifacts, not something a codebase can contain. |
+| **Req 12 — governance** | [`docs/technical/incident-response.md`](./incident-response.md) covers the technical half — what each Prometheus alert means and which admin endpoint addresses it — but is not a substitute for a formal incident response plan, security policy documents, or a vendor management program for Stripe/Adyen/AWS/etc. Those remain organizational artifacts a codebase can't contain on its own. |
 
 ### If you take this to formal PCI DSS certification
 
@@ -272,14 +282,16 @@ SAQ:
    auth method (not a static root token) before this satisfies an auditor —
    that doc is explicit about the gap between "the pattern is right" and
    "this specific deployment is production-ready."
-3. ~~Add MFA to the admin API.~~ **Mechanism done** — TOTP enrollment,
-   backup codes, and an enforced login gate all exist and work (see
-   above). Still open: making MFA *mandatory* for `ADMIN`-role merchants
-   (or putting the admin API behind a separate network-isolated
-   bastion/VPN instead) — the capability exists but isn't required yet.
-4. **Stand up centralized, tamper-evident logging** (ship structured logs to
-   a SIEM or equivalent) before relying on the current stdout/local-file
-   logging for any compliance-relevant audit trail.
+3. ~~Add MFA to the admin API.~~ ~~Make it mandatory for `ADMIN`.~~ **Done** —
+   TOTP enrollment, backup codes, an enforced login gate, and mandatory
+   enforcement for any `ADMIN`-role caller all exist and work (see above).
+   Putting the admin API behind a separate network-isolated bastion/VPN
+   instead/in addition remains open, as further defense-in-depth.
+4. ~~Stand up centralized logging.~~ **Shape done** —
+   [`k8s/log-shipping-example.yaml`](../../k8s/log-shipping-example.yaml)
+   (see above). Still open: pointing it at a real, tamper-evident backend
+   and verifying the pipeline against one — this repo has none to test
+   against — before relying on it for any compliance-relevant audit trail.
 5. **Engage a QSA or complete the appropriate SAQ**, and budget for
    recurring ASV scans (quarterly) and penetration testing (at least
    annually) — these are ongoing obligations, not one-time setup work.

@@ -234,6 +234,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     PaymentProcessorFactory,
     CachePort,
     LedgerOutboxPort,
+    ReconciliationPort,
   ],
 })
 export class PaymentModule {}

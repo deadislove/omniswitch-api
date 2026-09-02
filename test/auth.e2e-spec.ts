@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId } from './utils/seed';
 
 describe('Auth & Merchant Admin (e2e)', () => {
   let app: INestApplication;
@@ -9,11 +9,7 @@ describe('Auth & Merchant Admin (e2e)', () => {
 
   beforeAll(async () => {
     app = await createTestApp();
-    const admin = await seedMerchant(app, {
-      merchantId: uniqueId('admin'),
-      roles: ['ADMIN'],
-    });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -102,6 +98,26 @@ describe('Auth & Merchant Admin (e2e)', () => {
         .get('/api/v1/admin/merchants')
         .set('Authorization', `Bearer ${token}`)
         .expect(403);
+    });
+
+    it('rejects an ADMIN caller that has not enabled MFA', async () => {
+      const admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
+      const token = await login(app, admin.apiKeyId, admin.apiKeySecret);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/merchants')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(403)
+        .expect((res) => {
+          expect(res.body.code).toBe('MFA_REQUIRED_FOR_ADMIN');
+        });
+
+      // The two MFA self-service routes stay reachable regardless — an
+      // ADMIN without MFA still needs a way to enroll.
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/mfa/enroll')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
     });
 
     it('creates a merchant, logs in with the returned credentials, rotates the secret, and invalidates the old one', async () => {

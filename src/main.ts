@@ -1,3 +1,8 @@
+// Must be the first import in this file — see tracing.ts's own docblock
+// for why (auto-instrumentation patches modules at require() time; any
+// import above this one would load unpatched).
+import './tracing';
+
 import { NestFactory, Reflector } from '@nestjs/core';
 import { ValidationPipe, VersioningType, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';

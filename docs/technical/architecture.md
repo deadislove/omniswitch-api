@@ -5,6 +5,9 @@
 ```
 src/
 ├── app.module.ts                  # Root module: DB, throttling, scheduling, health
+├── tracing.ts                     # OpenTelemetry SDK bootstrap — imported first in main.ts,
+│                                   # before anything auto-instrumentation needs to patch
+│                                   # (see this file's own docblock for why order matters)
 ├── main.ts                        # Bootstrap: helmet, CORS, validation, rawBody capture,
 │                                   # global 'api' prefix + URI versioning (see main.ts's
 │                                   # setGlobalPrefix exclude list for health/metrics)
@@ -379,3 +382,6 @@ helpers matching exactly what the guards being tested verify).
   run, the known flaky-test classes on top of the ones described above,
   and two real CI incidents worth reading before touching either
   workflow file or `test/jest-e2e.json`
+- [`incident-response.md`](./incident-response.md) — what each Prometheus
+  alert in [`monitoring/alert.rules.yml`](../../monitoring/alert.rules.yml)
+  means and the admin endpoint/service method that actually addresses it

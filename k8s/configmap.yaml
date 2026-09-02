@@ -109,3 +109,16 @@ data:
   # VAULT_TOKEN (a credential, not just a URL) lives in omniswitch-secrets
   # instead of here.
   VAULT_ADDR: "http://vault.payments.svc.cluster.local:8200"
+
+  # OTEL_EXPORTER_OTLP_ENDPOINT is deliberately absent, same reasoning as
+  # FX_RATE_PROVIDER_URL/KYC_PROVIDER_URL/BANK_TRANSFER_PROVIDER_URL above
+  # — unlike VAULT_ADDR/ADYEN_BASE_URL, there's no single real endpoint to
+  # point this at; a trace collector (Jaeger/Tempo/an OTel Collector/a
+  # vendor agent) is infrastructure this specific deployment has to stand
+  # up and choose, not something with one correct production URL. Leaving
+  # this unset means src/tracing.ts's OTLPTraceExporter falls back to its
+  # own spec default (http://localhost:4318/v1/traces), which resolves to
+  # nothing in a real pod with no local collector sidecar — traces are
+  # generated but go nowhere until this is set to a real collector's
+  # Service address. docker-compose.yml sets this explicitly, pointed at
+  # its own `jaeger` service, for local verification.

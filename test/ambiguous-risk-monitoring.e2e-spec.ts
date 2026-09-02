@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { resetCircuitBreakerState } from './utils/circuit-breaker';
 import { MerchantEntity } from '../src/modules/merchant/merchant.entity';
@@ -47,8 +47,7 @@ describe('Ambiguous risk monitoring — consecutive-streak trigger + manual over
     dataSource = app.get(DataSource);
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 
@@ -302,8 +301,7 @@ describe('Ambiguous risk monitoring — daily-volume trigger (e2e)', () => {
     process.env.AMBIGUOUS_RISK_CONSECUTIVE_THRESHOLD = '50';
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 
