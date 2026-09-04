@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { MerchantService } from '../../../merchant/merchant.service';
 import { DisputePort } from '../../ports/outbound/dispute.port';
@@ -52,13 +53,17 @@ const TIER_POLICIES: Record<RiskTier, TierPolicy> = {
 // WINDOW_DAYS. WON/still-open disputes don't count — a merchant that
 // successfully contests every dispute against it isn't actually
 // bleeding chargebacks, whatever the raw dispute-creation rate looks
-// like.
-const HIGH_RISK_THRESHOLD = 0.01; // >1% lost-dispute rate
-const MEDIUM_RISK_THRESHOLD = 0.005; // >0.5% lost-dispute rate
+// like. Defaults match the illustrative thresholds this file always
+// used — overridable per-deployment (RISK_TIER_HIGH_THRESHOLD/
+// RISK_TIER_MEDIUM_THRESHOLD, read in the constructor below) without a
+// code change, not "calibrated" on their own; see this file's own
+// docblock on TIER_POLICIES for why these are still illustrative.
+const DEFAULT_HIGH_RISK_THRESHOLD = 0.01; // >1% lost-dispute rate
+const DEFAULT_MEDIUM_RISK_THRESHOLD = 0.005; // >0.5% lost-dispute rate
 
-function tierFor(lostDisputeRate: number): RiskTier {
-  if (lostDisputeRate > HIGH_RISK_THRESHOLD) return 'HIGH';
-  if (lostDisputeRate > MEDIUM_RISK_THRESHOLD) return 'MEDIUM';
+function tierFor(lostDisputeRate: number, highThreshold: number, mediumThreshold: number): RiskTier {
+  if (lostDisputeRate > highThreshold) return 'HIGH';
+  if (lostDisputeRate > mediumThreshold) return 'MEDIUM';
   return 'LOW';
 }
 
@@ -86,12 +91,20 @@ function tierFor(lostDisputeRate: number): RiskTier {
 @Injectable()
 export class RiskTieringService {
   private readonly logger = new Logger(RiskTieringService.name);
+  // `ConfigService.get<number>()` doesn't actually cast (see
+  // health.controller.ts's own comment on the same gap) — wrap explicitly.
+  private readonly highRiskThreshold: number;
+  private readonly mediumRiskThreshold: number;
 
   constructor(
     private readonly merchantService: MerchantService,
     private readonly disputePort: DisputePort,
     private readonly paymentRepository: PaymentRepositoryPort,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.highRiskThreshold = Number(configService.get('RISK_TIER_HIGH_THRESHOLD', DEFAULT_HIGH_RISK_THRESHOLD));
+    this.mediumRiskThreshold = Number(configService.get('RISK_TIER_MEDIUM_THRESHOLD', DEFAULT_MEDIUM_RISK_THRESHOLD));
+  }
 
   /**
    * Returns the computed tier and whether it caused a change — `null` if
@@ -101,7 +114,11 @@ export class RiskTieringService {
     const since = new Date(now.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
     const [settledCounts, lostDisputes] = await Promise.all([
-      Promise.all(SETTLED_STATUSES.map((status) => this.paymentRepository.count({ merchantId, status, fromDate: since, toDate: now }))),
+      Promise.all(
+        SETTLED_STATUSES.map((status) =>
+          this.paymentRepository.count({ merchantId, status, fromDate: since, toDate: now }),
+        ),
+      ),
       this.disputePort.countByMerchantSince(merchantId, 'LOST', since),
     ]);
     const settledCharges = settledCounts.reduce((sum, n) => sum + n, 0);
@@ -111,17 +128,18 @@ export class RiskTieringService {
     }
 
     const lostDisputeRate = lostDisputes / settledCharges;
-    const tier = tierFor(lostDisputeRate);
+    const tier = tierFor(lostDisputeRate, this.highRiskThreshold, this.mediumRiskThreshold);
     const policy = TIER_POLICIES[tier];
 
     const merchant = await this.merchantService.findByMerchantId(merchantId);
-    const changed = !merchant || merchant.reserveBps !== policy.reserveBps || merchant.reserveHoldDays !== policy.reserveHoldDays;
+    const changed =
+      !merchant || merchant.reserveBps !== policy.reserveBps || merchant.reserveHoldDays !== policy.reserveHoldDays;
 
     if (changed) {
       await this.merchantService.applyAutoRiskTier(merchantId, policy.reserveBps, policy.reserveHoldDays);
       this.logger.log(
         `Risk tier for merchant ${merchantId} -> ${tier} (${(lostDisputeRate * 100).toFixed(2)}% lost-dispute rate over ` +
-        `${settledCharges} charges/${WINDOW_DAYS}d) — reserve now ${policy.reserveBps}bps/${policy.reserveHoldDays}d`,
+          `${settledCharges} charges/${WINDOW_DAYS}d) — reserve now ${policy.reserveBps}bps/${policy.reserveHoldDays}d`,
       );
     }
 
@@ -160,7 +178,9 @@ export class RiskTieringService {
     }
 
     if (candidates.length > 0) {
-      this.logger.log(`Risk tiering sweep: ${evaluated} evaluated (${changed} changed), ${skipped} skipped, ${candidates.length} auto-managed merchants`);
+      this.logger.log(
+        `Risk tiering sweep: ${evaluated} evaluated (${changed} changed), ${skipped} skipped, ${candidates.length} auto-managed merchants`,
+      );
     }
     return { evaluated, changed, skipped };
   }

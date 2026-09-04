@@ -30,8 +30,6 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
 describe('Ambiguous risk monitoring — consecutive-streak trigger + manual override + auto-clear (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
-  let merchant: SeededMerchant;
-  let token: string;
   let admin: SeededMerchant;
   let adminToken: string;
   const originalDaily = process.env.AMBIGUOUS_RISK_DAILY_THRESHOLD;
@@ -45,8 +43,6 @@ describe('Ambiguous risk monitoring — consecutive-streak trigger + manual over
     process.env.AMBIGUOUS_RISK_CONSECUTIVE_THRESHOLD = '3';
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
-    token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
     ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
@@ -120,7 +116,7 @@ describe('Ambiguous risk monitoring — consecutive-streak trigger + manual over
     expect(summary.ambiguousRiskAutoManaged).toBe(true);
   });
 
-  it('a merchant with an unbroken run of AMBIGUOUS-then-manually-resolved payments still counts as a streak (status alone isn\'t the signal)', async () => {
+  it("a merchant with an unbroken run of AMBIGUOUS-then-manually-resolved payments still counts as a streak (status alone isn't the signal)", async () => {
     // Sanity check on countAmbiguousIncidentsSince/findRecentAmbiguousFlags'
     // "ever ambiguous" definition — resolve the first two via Phase 1's
     // admin endpoint (moving them out of AMBIGUOUS into SUCCEEDED) before
@@ -288,7 +284,6 @@ describe('Ambiguous risk monitoring — consecutive-streak trigger + manual over
 describe('Ambiguous risk monitoring — daily-volume trigger (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
-  let admin: SeededMerchant;
   let adminToken: string;
   const originalDaily = process.env.AMBIGUOUS_RISK_DAILY_THRESHOLD;
   const originalConsecutive = process.env.AMBIGUOUS_RISK_CONSECUTIVE_THRESHOLD;
@@ -301,7 +296,7 @@ describe('Ambiguous risk monitoring — daily-volume trigger (e2e)', () => {
     process.env.AMBIGUOUS_RISK_CONSECUTIVE_THRESHOLD = '50';
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 

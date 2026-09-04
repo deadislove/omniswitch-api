@@ -16,7 +16,6 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
   let merchant: SeededMerchant;
   let token: string;
   let dataSource: DataSource;
-  let admin: SeededMerchant;
   let adminToken: string;
 
   beforeAll(async () => {
@@ -24,7 +23,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
     dataSource = app.get(DataSource);
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -53,7 +52,11 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
   // reserve.service.ts's release() and payment-typeorm.repository.ts's
   // findPending() for the same issue in application code. These helpers
   // force the read onto master instead.
-  async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object, order?: object): Promise<T | null> {
+  async function findOneOnMaster<T extends object>(
+    entityClass: new () => T,
+    where: object,
+    order?: object,
+  ): Promise<T | null> {
     const queryRunner = dataSource.createQueryRunner('master');
     try {
       return await queryRunner.manager.findOne(entityClass, { where, ...(order ? { order } : {}) });
@@ -128,7 +131,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
     expect(await ledgerEntryCount(payment!.id)).toBe(0);
   });
 
-  it('books the platform fee at the merchant\'s own configured rate, not a hardcoded 1.5%', async () => {
+  it("books the platform fee at the merchant's own configured rate, not a hardcoded 1.5%", async () => {
     // 500 bps = 5%, deliberately far from the 150bps (1.5%) default so a
     // fallback-to-default bug would be obvious rather than coincidentally
     // passing.
@@ -143,7 +146,12 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       binInfo: USD_BIN,
     };
     const bodyStr = JSON.stringify(body);
-    const { signature, timestamp } = signHmacRequest(customFeeMerchant.hmacSecret, 'post', '/api/v1/payments/charge', bodyStr);
+    const { signature, timestamp } = signHmacRequest(
+      customFeeMerchant.hmacSecret,
+      'post',
+      '/api/v1/payments/charge',
+      bodyStr,
+    );
     const res = await request(app.getHttpServer())
       .post('/api/v1/payments/charge')
       .set('Authorization', `Bearer ${customFeeToken}`)
@@ -171,7 +179,13 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
     }
 
     async function chargeFeeEntry(m: SeededMerchant, mToken: string, amount: number, currency: string): Promise<any> {
-      const bodyStr = JSON.stringify({ amount, currency, paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN });
+      const bodyStr = JSON.stringify({
+        amount,
+        currency,
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+      });
       const { signature, timestamp } = signHmacRequest(m.hmacSecret, 'post', '/api/v1/payments/charge', bodyStr);
       const res = await request(app.getHttpServer())
         .post('/api/v1/payments/charge')
@@ -197,7 +211,7 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       expect(fee.amountMinorUnits).toBe('600');
     });
 
-    it('crossing a tier\'s volume threshold applies the new rate to the *next* charge, not retroactively to the one that crossed it', async () => {
+    it("crossing a tier's volume threshold applies the new rate to the *next* charge, not retroactively to the one that crossed it", async () => {
       const m = await seedMerchant(app, { merchantId: uniqueId('feetiercross'), platformFeeBps: 1000 });
       const mToken = await login(app, m.apiKeyId, m.apiKeySecret);
       await setFeeTiers(m.merchantId, [{ minVolumeMinorUnits: '10000', bps: 500 }]).expect(200);
@@ -298,7 +312,11 @@ describe('Ledger booking timing & Outbox relay (e2e)', () => {
       // .update() itself is a write, always routed to master by TypeORM's
       // replication mode regardless of which repository issues it — no
       // master-forcing needed here, only for the reads above/below.
-      await outboxRepo.update(event!.id, { status: 'FAILED', lastError: 'simulated downstream publish failure', retryCount: 1 });
+      await outboxRepo.update(event!.id, {
+        status: 'FAILED',
+        lastError: 'simulated downstream publish failure',
+        retryCount: 1,
+      });
 
       const listRes = await request(app.getHttpServer())
         .get('/api/v1/admin/outbox/failed')

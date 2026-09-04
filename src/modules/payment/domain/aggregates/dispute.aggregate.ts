@@ -121,17 +121,43 @@ export class Dispute {
     this._updatedAt = new Date();
   }
 
-  get id(): string { return this._id; }
-  get paymentId(): string { return this._paymentId; }
-  get merchantId(): string { return this._merchantId; }
-  get pspProvider(): PSPProvider { return this._pspProvider; }
-  get pspDisputeId(): string { return this._pspDisputeId; }
-  get amount(): Money { return this._amount; }
-  get reason(): string | undefined { return this._reason; }
-  get status(): DisputeStatus { return this._status; }
-  get respondBy(): Date { return this._respondBy; }
-  get evidence(): string | undefined { return this._evidence; }
-  get createdAt(): Date { return this._createdAt; }
-  get updatedAt(): Date { return this._updatedAt; }
-  get autoDecision(): DisputeAutoDecision | undefined { return this._autoDecision; }
+  get id(): string {
+    return this._id;
+  }
+  get paymentId(): string {
+    return this._paymentId;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get pspProvider(): PSPProvider {
+    return this._pspProvider;
+  }
+  get pspDisputeId(): string {
+    return this._pspDisputeId;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get reason(): string | undefined {
+    return this._reason;
+  }
+  get status(): DisputeStatus {
+    return this._status;
+  }
+  get respondBy(): Date {
+    return this._respondBy;
+  }
+  get evidence(): string | undefined {
+    return this._evidence;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+  get autoDecision(): DisputeAutoDecision | undefined {
+    return this._autoDecision;
+  }
 }

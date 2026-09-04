@@ -196,7 +196,9 @@ export class MerchantService {
     // Rotating credentials usually means "I think this leaked" — kill
     // existing sessions too, not just future logins with the old secret.
     await this.tokenRevocation.revokeAllForMerchant(merchantId);
-    this.logger.log(`Rotated API key secret for merchant ${merchantId} — old secret and existing sessions are now invalid`);
+    this.logger.log(
+      `Rotated API key secret for merchant ${merchantId} — old secret and existing sessions are now invalid`,
+    );
     return apiKeySecret;
   }
 
@@ -228,7 +230,10 @@ export class MerchantService {
    * perTransactionLimit <= monthlyLimit in the domain layer rather than
    * the DTO.
    */
-  async updateFeeTiers(merchantId: string, tiers: { minVolumeMinorUnits: string; bps: number }[]): Promise<MerchantEntity> {
+  async updateFeeTiers(
+    merchantId: string,
+    tiers: { minVolumeMinorUnits: string; bps: number }[],
+  ): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
 
     let previousThreshold = -1n;
@@ -289,7 +294,11 @@ export class MerchantService {
     return merchant;
   }
 
-  async updatePayoutReservePolicy(merchantId: string, payoutReserveBps: number, payoutReserveHoldDays: number): Promise<MerchantEntity> {
+  async updatePayoutReservePolicy(
+    merchantId: string,
+    payoutReserveBps: number,
+    payoutReserveHoldDays: number,
+  ): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
     const previous = `${merchant.payoutReserveBps}bps/${merchant.payoutReserveHoldDays}d`;
     merchant.payoutReserveBps = payoutReserveBps;
@@ -346,7 +355,9 @@ export class MerchantService {
     const previous = merchant.enabledPspProviders;
     merchant.enabledPspProviders = enabledPspProviders;
     await this.merchantRepo.save(merchant);
-    this.logger.log(`PSP entitlement for merchant ${merchantId} changed from [${previous.join(',')}] to [${enabledPspProviders.join(',')}]`);
+    this.logger.log(
+      `PSP entitlement for merchant ${merchantId} changed from [${previous.join(',')}] to [${enabledPspProviders.join(',')}]`,
+    );
     return merchant;
   }
 
@@ -381,7 +392,9 @@ export class MerchantService {
     merchant.ambiguousRiskFlagReason = flagged ? reason : undefined;
     merchant.ambiguousRiskFlaggedBy = undefined;
     await this.merchantRepo.save(merchant);
-    this.logger.log(`ambiguousRiskFlagged for merchant ${merchantId} automatically set to ${flagged}${flagged ? `: ${reason}` : ''}`);
+    this.logger.log(
+      `ambiguousRiskFlagged for merchant ${merchantId} automatically set to ${flagged}${flagged ? `: ${reason}` : ''}`,
+    );
     return merchant;
   }
 
@@ -393,7 +406,12 @@ export class MerchantService {
    * posture AmbiguousPaymentService.resolve() uses for manually
    * resolving a payment.
    */
-  async setAmbiguousRiskFlagManual(merchantId: string, flagged: boolean, reason: string, flaggedBy: string): Promise<MerchantEntity> {
+  async setAmbiguousRiskFlagManual(
+    merchantId: string,
+    flagged: boolean,
+    reason: string,
+    flaggedBy: string,
+  ): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
     merchant.ambiguousRiskFlagged = flagged;
     merchant.ambiguousRiskFlaggedAt = flagged ? new Date() : undefined;
@@ -401,7 +419,9 @@ export class MerchantService {
     merchant.ambiguousRiskFlaggedBy = flaggedBy;
     merchant.ambiguousRiskAutoManaged = false;
     await this.merchantRepo.save(merchant);
-    this.logger.warn(`ambiguousRiskFlagged for merchant ${merchantId} manually set to ${flagged} by ${flaggedBy}: ${reason} (ambiguousRiskAutoManaged disabled)`);
+    this.logger.warn(
+      `ambiguousRiskFlagged for merchant ${merchantId} manually set to ${flagged} by ${flaggedBy}: ${reason} (ambiguousRiskAutoManaged disabled)`,
+    );
     return merchant;
   }
 

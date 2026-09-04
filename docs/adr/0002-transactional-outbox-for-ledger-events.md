@@ -28,7 +28,7 @@ of the ledger write itself was already a source of a real bug: entries
 used to be written speculatively at payment-intent creation, before
 the PSP was ever called, which double-booked money that was never
 actually charged whenever routing or the PSP call failed (see
-[`../business-domain/ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md#when-entries-are-written--this-matters-more-than-it-looks)).
+[`../business-domain/ledger-accounting.md`](../business-domain/ledger-accounting.md#when-entries-are-written--this-matters-more-than-it-looks)).
 Getting *when* a ledger row is written wrong once was enough reason to
 be deliberate about the mechanism that publishes it, too.
 
@@ -54,7 +54,7 @@ update against production.
 
 Full design and the reliability contract (poll → publish →
 mark-published-only-on-success → alert on failure) in
-[`../business-domain/ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md#the-outbox-pattern-and-the-relay).
+[`../business-domain/ledger-accounting.md`](../business-domain/ledger-accounting.md#the-outbox-pattern-and-the-relay).
 
 ## Consequences
 

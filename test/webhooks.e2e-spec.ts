@@ -16,7 +16,6 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
   let app: INestApplication;
   let merchant: SeededMerchant;
   let token: string;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
@@ -25,7 +24,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
     dataSource = app.get(DataSource);
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -99,7 +98,12 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
   async function refundPayment(paymentId: string, amount: number) {
     const bodyObj = { amount };
     const bodyStr = JSON.stringify(bodyObj);
-    const { signature, timestamp } = signHmacRequest(merchant.hmacSecret, 'post', `/api/v1/payments/${paymentId}/refund`, bodyStr);
+    const { signature, timestamp } = signHmacRequest(
+      merchant.hmacSecret,
+      'post',
+      `/api/v1/payments/${paymentId}/refund`,
+      bodyStr,
+    );
     const res = await request(app.getHttpServer())
       .post(`/api/v1/payments/${paymentId}/refund`)
       .set('Authorization', `Bearer ${token}`)
@@ -160,12 +164,16 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         type: 'payment_intent.succeeded',
         data: { object: { id: payment.pspTransactionId, status: 'succeeded' } },
       });
+      // Signed once, reused for both deliveries — signStripeWebhook()
+      // embeds the current timestamp, so recomputing it per iteration
+      // would send two distinctly-signed requests instead of actually
+      // replaying the same webhook delivery twice.
       const signature = signStripeWebhook(STRIPE_WEBHOOK_SECRET, body);
 
       for (let i = 0; i < 2; i++) {
         await request(app.getHttpServer())
           .post('/api/v1/webhooks/stripe')
-          .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, body))
+          .set('Stripe-Signature', signature)
           .set('Content-Type', 'application/json')
           .send(body)
           .expect(200);
@@ -354,7 +362,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
       const evidenceRes = await request(app.getHttpServer())
         .post(`/api/v1/admin/disputes/${disputeRecordId}/evidence`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ evidence: 'Tracking number 1Z999 shows delivery confirmed on the customer\'s doorstep.' })
+        .send({ evidence: "Tracking number 1Z999 shows delivery confirmed on the customer's doorstep." })
         .expect(200);
       expect(evidenceRes.body.status).toBe('UNDER_REVIEW');
 
@@ -609,13 +617,15 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/webhooks/adyen')
         .send({
-          notificationItems: [{
-            NotificationRequestItem: {
-              ...notifyFields,
-              amount: { value: notifyFields.amountValue, currency: notifyFields.amountCurrency },
-              additionalData: { hmacSignature: signAdyenNotification(ADYEN_HMAC_KEY, notifyFields) },
+          notificationItems: [
+            {
+              NotificationRequestItem: {
+                ...notifyFields,
+                amount: { value: notifyFields.amountValue, currency: notifyFields.amountCurrency },
+                additionalData: { hmacSignature: signAdyenNotification(ADYEN_HMAC_KEY, notifyFields) },
+              },
             },
-          }],
+          ],
         })
         .expect(200);
 
@@ -638,13 +648,15 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/webhooks/adyen')
         .send({
-          notificationItems: [{
-            NotificationRequestItem: {
-              ...reversalFields,
-              amount: { value: reversalFields.amountValue, currency: reversalFields.amountCurrency },
-              additionalData: { hmacSignature: signAdyenNotification(ADYEN_HMAC_KEY, reversalFields) },
+          notificationItems: [
+            {
+              NotificationRequestItem: {
+                ...reversalFields,
+                amount: { value: reversalFields.amountValue, currency: reversalFields.amountCurrency },
+                additionalData: { hmacSignature: signAdyenNotification(ADYEN_HMAC_KEY, reversalFields) },
+              },
             },
-          }],
+          ],
         })
         .expect(200);
 

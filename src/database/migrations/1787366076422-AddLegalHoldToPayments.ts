@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Legal-hold flag (Phase 3 follow-up #5 — see docs/compliance/data-
@@ -27,16 +27,15 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * schema-parity and as a defense-in-depth check in the deletion job.
  */
 export class AddLegalHoldToPayments1787366076422 implements MigrationInterface {
-    name = 'AddLegalHoldToPayments1787366076422'
+  name = 'AddLegalHoldToPayments1787366076422';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "payments" ADD COLUMN "legal_hold" boolean NOT NULL DEFAULT false`);
-        await queryRunner.query(`ALTER TABLE "archive"."payments" ADD COLUMN "legal_hold" boolean NOT NULL DEFAULT false`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "payments" ADD COLUMN "legal_hold" boolean NOT NULL DEFAULT false`);
+    await queryRunner.query(`ALTER TABLE "archive"."payments" ADD COLUMN "legal_hold" boolean NOT NULL DEFAULT false`);
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "archive"."payments" DROP COLUMN "legal_hold"`);
-        await queryRunner.query(`ALTER TABLE "payments" DROP COLUMN "legal_hold"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "archive"."payments" DROP COLUMN "legal_hold"`);
+    await queryRunner.query(`ALTER TABLE "payments" DROP COLUMN "legal_hold"`);
+  }
 }

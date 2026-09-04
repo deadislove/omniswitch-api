@@ -75,7 +75,10 @@ export class AmbiguousRiskMonitoringService {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const dailyCount = await this.paymentRepository.countAmbiguousIncidentsSince(merchantId, since);
     if (dailyCount > this.dailyThreshold) {
-      await this.flag(merchantId, `${dailyCount} AMBIGUOUS incidents in the trailing 24 hours (threshold: ${this.dailyThreshold})`);
+      await this.flag(
+        merchantId,
+        `${dailyCount} AMBIGUOUS incidents in the trailing 24 hours (threshold: ${this.dailyThreshold})`,
+      );
       return;
     }
 
@@ -105,7 +108,11 @@ export class AmbiguousRiskMonitoringService {
     const cutoff = new Date(now.getTime() - this.autoClearDays * 24 * 60 * 60 * 1000);
     const merchants = await this.merchantService.list();
     const candidates = merchants.filter(
-      (m) => m.ambiguousRiskFlagged && m.ambiguousRiskAutoManaged && m.ambiguousRiskFlaggedAt && m.ambiguousRiskFlaggedAt <= cutoff,
+      (m) =>
+        m.ambiguousRiskFlagged &&
+        m.ambiguousRiskAutoManaged &&
+        m.ambiguousRiskFlaggedAt &&
+        m.ambiguousRiskFlaggedAt <= cutoff,
     );
 
     let cleared = 0;
@@ -113,7 +120,9 @@ export class AmbiguousRiskMonitoringService {
       try {
         await this.merchantService.applyAutoAmbiguousRiskFlag(merchant.merchantId, false, '');
         cleared++;
-        this.logger.log(`Merchant ${merchant.merchantId} auto-cleared from ambiguous-risk watch (no incident in ${this.autoClearDays} days)`);
+        this.logger.log(
+          `Merchant ${merchant.merchantId} auto-cleared from ambiguous-risk watch (no incident in ${this.autoClearDays} days)`,
+        );
       } catch (err: unknown) {
         // One merchant's failure shouldn't abort the whole sweep — same
         // per-item try/catch posture RiskTieringService/PayoutService use

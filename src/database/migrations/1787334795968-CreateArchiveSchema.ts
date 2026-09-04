@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Cold storage for the archiving tier — a separate Postgres *schema*
@@ -19,12 +19,12 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * cross-reference the archiving job's logs.
  */
 export class CreateArchiveSchema1787334795968 implements MigrationInterface {
-    name = 'CreateArchiveSchema1787334795968'
+  name = 'CreateArchiveSchema1787334795968';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "archive"`);
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "archive"`);
 
-        await queryRunner.query(`
+    await queryRunner.query(`
             CREATE TABLE "archive"."payments" (
                 "id" uuid NOT NULL,
                 "merchant_id" character varying NOT NULL,
@@ -57,13 +57,13 @@ export class CreateArchiveSchema1787334795968 implements MigrationInterface {
                 CONSTRAINT "PK_archive_payments" PRIMARY KEY ("id")
             )
         `);
-        // Looked up by merchant/id for the rare audit/compliance query, and
-        // by created_at to find records approaching the deletion tier's
-        // age threshold — not by anything requiring a hot-path index.
-        await queryRunner.query(`CREATE INDEX "IDX_archive_payments_merchant_id" ON "archive"."payments" ("merchant_id")`);
-        await queryRunner.query(`CREATE INDEX "IDX_archive_payments_created_at" ON "archive"."payments" ("created_at")`);
+    // Looked up by merchant/id for the rare audit/compliance query, and
+    // by created_at to find records approaching the deletion tier's
+    // age threshold — not by anything requiring a hot-path index.
+    await queryRunner.query(`CREATE INDEX "IDX_archive_payments_merchant_id" ON "archive"."payments" ("merchant_id")`);
+    await queryRunner.query(`CREATE INDEX "IDX_archive_payments_created_at" ON "archive"."payments" ("created_at")`);
 
-        await queryRunner.query(`
+    await queryRunner.query(`
             CREATE TABLE "archive"."ledger_outbox" (
                 "id" uuid NOT NULL,
                 "payment_id" character varying NOT NULL,
@@ -78,13 +78,14 @@ export class CreateArchiveSchema1787334795968 implements MigrationInterface {
                 CONSTRAINT "PK_archive_ledger_outbox" PRIMARY KEY ("id")
             )
         `);
-        await queryRunner.query(`CREATE INDEX "IDX_archive_ledger_outbox_payment_id" ON "archive"."ledger_outbox" ("payment_id")`);
-    }
+    await queryRunner.query(
+      `CREATE INDEX "IDX_archive_ledger_outbox_payment_id" ON "archive"."ledger_outbox" ("payment_id")`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`DROP TABLE "archive"."ledger_outbox"`);
-        await queryRunner.query(`DROP TABLE "archive"."payments"`);
-        await queryRunner.query(`DROP SCHEMA "archive"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`DROP TABLE "archive"."ledger_outbox"`);
+    await queryRunner.query(`DROP TABLE "archive"."payments"`);
+    await queryRunner.query(`DROP SCHEMA "archive"`);
+  }
 }

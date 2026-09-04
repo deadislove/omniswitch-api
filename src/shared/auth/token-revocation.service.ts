@@ -54,12 +54,7 @@ export class TokenRevocationService implements OnModuleDestroy {
   /** Revoke every token issued for a merchant up to now (deactivation, credential compromise, "log out everywhere"). */
   async revokeAllForMerchant(merchantId: string): Promise<void> {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    await this.client.set(
-      `${MERCHANT_PREFIX}${merchantId}`,
-      String(nowSeconds),
-      'EX',
-      MERCHANT_REVOCATION_TTL_SECONDS,
-    );
+    await this.client.set(`${MERCHANT_PREFIX}${merchantId}`, String(nowSeconds), 'EX', MERCHANT_REVOCATION_TTL_SECONDS);
   }
 
   /** True if a token with this issued-at time predates the merchant's last "revoke all" action. */

@@ -1,4 +1,5 @@
 import { Injectable, Logger, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { randomUUID as uuidv4 } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -12,7 +13,11 @@ import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { Money } from '../../domain/value-objects/money.vo';
 import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggregate';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
-import { decideAutoDisposition, autoContestEvidenceFor } from '../../domain/services/dispute-policy';
+import {
+  decideAutoDisposition,
+  autoContestEvidenceFor,
+  DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS,
+} from '../../domain/services/dispute-policy';
 
 /**
  * Dispute Service
@@ -29,6 +34,12 @@ import { decideAutoDisposition, autoContestEvidenceFor } from '../../domain/serv
 @Injectable()
 export class DisputeService {
   private readonly logger = new Logger(DisputeService.name);
+  // See dispute-policy.ts's own comment: not FX-normalized, illustrative,
+  // not calibrated against real chargeback win-rate data — this makes it
+  // tunable per-deployment without a code change, not "calibrated" on its
+  // own. `ConfigService.get<number>()` doesn't actually cast (see
+  // health.controller.ts's own comment on the same gap) — wrap explicitly.
+  private readonly autoAcceptThresholdMajorUnits: number;
 
   constructor(
     private readonly disputePort: DisputePort,
@@ -37,7 +48,12 @@ export class DisputeService {
     private readonly processorFactory: PaymentProcessorFactory,
     private readonly dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.autoAcceptThresholdMajorUnits = Number(
+      configService.get('DISPUTE_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS', DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS),
+    );
+  }
 
   async recordDispute(params: {
     paymentId: string;
@@ -85,7 +101,9 @@ export class DisputeService {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Auto-contest evidence submission threw for dispute ${dispute.id}: ${msg} — leaving for manual review`);
+        this.logger.error(
+          `Auto-contest evidence submission threw for dispute ${dispute.id}: ${msg} — leaving for manual review`,
+        );
       }
     }
 
@@ -111,7 +129,7 @@ export class DisputeService {
 
     this.logger.warn(
       `New dispute ${dispute.id} for payment ${params.paymentId} (${params.amount.toString()}) — ` +
-      `auto-decision=${autoDecision}, status=${dispute.status} — needs a response by ${dispute.respondBy.toISOString()}`,
+        `auto-decision=${autoDecision}, status=${dispute.status} — needs a response by ${dispute.respondBy.toISOString()}`,
     );
     return dispute;
   }
@@ -214,7 +232,11 @@ export class DisputeService {
         refundAmount: dispute.amount,
         settlementConversion: settlementConversion
           ? {
-              convertedRefundAmount: dispute.amount.convertTo(settlementConversion.currency, settlementConversion.rate, settlementConversion.provider),
+              convertedRefundAmount: dispute.amount.convertTo(
+                settlementConversion.currency,
+                settlementConversion.rate,
+                settlementConversion.provider,
+              ),
               rate: settlementConversion.rate,
               provider: settlementConversion.provider,
             }

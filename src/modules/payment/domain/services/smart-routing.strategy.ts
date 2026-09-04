@@ -7,9 +7,9 @@ export type CircuitBreakerState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 export interface PSPHealthStatus {
   provider: PSPProvider;
   circuitBreakerState: CircuitBreakerState;
-  successRate: number;       // 0-100 percentage
+  successRate: number; // 0-100 percentage
   avgLatencyMs: number;
-  feePercentage: number;     // e.g., 2.9 for 2.9%
+  feePercentage: number; // e.g., 2.9 for 2.9%
   fixedFeeMinorUnits: number; // e.g., 30 for $0.30
   supportedCurrencies: string[];
   supportedCountries: string[];
@@ -79,10 +79,7 @@ export class SmartRoutingStrategy {
   /**
    * Select the optimal PSP for a given payment context.
    */
-  selectProvider(
-    context: RoutingContext,
-    pspHealthMap: Map<PSPProvider, PSPHealthStatus>,
-  ): RoutingDecision {
+  selectProvider(context: RoutingContext, pspHealthMap: Map<PSPProvider, PSPHealthStatus>): RoutingDecision {
     // Checked before the general availability filter, and raised as a
     // distinct error rather than left to fall through to scoring —
     // entitlement is an explicit permission boundary, so a caller asking
@@ -104,7 +101,7 @@ export class SmartRoutingStrategy {
     if (availableProviders.length === 0) {
       throw new Error(
         `No available PSP providers for currency ${context.amount.currency.code} ` +
-        `from country ${context.binInfo?.country ?? 'UNKNOWN'}`,
+          `from country ${context.binInfo?.country ?? 'UNKNOWN'}`,
       );
     }
 
@@ -204,13 +201,13 @@ export class SmartRoutingStrategy {
     score += (health.successRate / 100) * 30;
 
     // 3. Latency score (0-15 points) - lower is better
-    const latencyScore = Math.max(0, 15 - (health.avgLatencyMs / 100));
+    const latencyScore = Math.max(0, 15 - health.avgLatencyMs / 100);
     score += latencyScore;
 
     // 4. Fee optimization (0-15 points) - lower fee = higher score
     const feeAmount = this.calculateFee(context.amount, health);
     const feeRatio = feeAmount.amount / context.amount.amount;
-    const feeScore = Math.max(0, 15 - (feeRatio * 100));
+    const feeScore = Math.max(0, 15 - feeRatio * 100);
     score += feeScore;
 
     // Note: no preferredProvider bonus here — it's now a true override
@@ -235,11 +232,7 @@ export class SmartRoutingStrategy {
     return percentageFee.add(fixedFee);
   }
 
-  private buildRoutingReason(
-    context: RoutingContext,
-    health: PSPHealthStatus,
-    score: number,
-  ): string {
+  private buildRoutingReason(context: RoutingContext, health: PSPHealthStatus, score: number): string {
     const parts: string[] = [
       `Selected ${health.provider} (score: ${score})`,
       `CB: ${health.circuitBreakerState}`,

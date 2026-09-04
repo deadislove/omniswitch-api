@@ -120,7 +120,7 @@ export class MetricsController {
 
     const paymentVolume = new Gauge({
       name: 'omniswitch_payments_total',
-      help: 'Payment volume by terminal-ish status and PSP provider, across every merchant — cumulative since this row first appeared in the payments table, not since process start (see this gauge\'s collect() / PaymentRepositoryPort.countByStatusAndProvider() for why), so rate() over it behaves like a real counter would',
+      help: "Payment volume by terminal-ish status and PSP provider, across every merchant — cumulative since this row first appeared in the payments table, not since process start (see this gauge's collect() / PaymentRepositoryPort.countByStatusAndProvider() for why), so rate() over it behaves like a real counter would",
       labelNames: ['status', 'provider'],
       registers: [this.registry],
       collect: async () => {

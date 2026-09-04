@@ -1,11 +1,28 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse, PSPQueryOutcomeResult } from '../../../ports/outbound/psp-adapter.port';
+import {
+  PSPAdapterPort,
+  PSPChargeRequest,
+  PSPChargeResponse,
+  PSPRefundRequest,
+  PSPRefundResponse,
+  PSPCaptureRequest,
+  PSPCaptureResponse,
+  PSPCancelRequest,
+  PSPCancelResponse,
+  PSPSettlementTransaction,
+  PSPFeeStatement,
+  PSPDisputeEvidenceResponse,
+  PSPVerifyPaymentMethodRequest,
+  PSPVerifyPaymentMethodResponse,
+  PSPQueryOutcomeResult,
+} from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
 import { Money } from '../../../domain/value-objects/money.vo';
 import { Semaphore } from '../../../../../shared/utils/semaphore';
+import { PspFeeScheduleService } from '../../../application/services/psp-fee-schedule.service';
 
 /**
  * Adyen PSP Adapter
@@ -22,12 +39,15 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
   private readonly merchantAccount: string;
   private readonly baseUrl: string;
   private readonly bulkhead: Semaphore;
+  // Not DI-injected — see the matching comment in StripePSPAdapter for why.
+  private readonly feeSchedule: PspFeeScheduleService;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly circuitBreaker: RedisCircuitBreakerService,
   ) {
     super();
+    this.feeSchedule = new PspFeeScheduleService(configService);
     this.apiKey = configService.get<string>('ADYEN_API_KEY', 'adyen_test_placeholder');
     this.merchantAccount = configService.get<string>('ADYEN_MERCHANT_ACCOUNT', 'TestMerchant');
     this.baseUrl = configService.get<string>('ADYEN_BASE_URL', 'https://checkout-test.adyen.com/v71');
@@ -67,7 +87,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           ...(request.binCountry ? { binCountry: request.binCountry } : {}),
         },
         additionalData: {
-          'allow3DS2': 'true',
+          allow3DS2: 'true',
           // Adyen's classic API doesn't take a per-request manual-capture
           // flag the way Stripe does — "separate capture" is normally an
           // account-level setting in the Customer Area. This flag is a
@@ -299,27 +319,86 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
 
   async getHealthStatus(): Promise<PSPHealthStatus> {
     const metrics = await this.circuitBreaker.getMetrics(this.provider);
-    const successRate = metrics.totalRequests > 0
-      ? (metrics.successCount / metrics.totalRequests) * 100
-      : 100;
+    const successRate = metrics.totalRequests > 0 ? (metrics.successCount / metrics.totalRequests) * 100 : 100;
 
     return {
       provider: this.provider,
       circuitBreakerState: metrics.state,
       successRate: Math.round(successRate),
       avgLatencyMs: Math.round(metrics.avgLatencyMs),
-      feePercentage: 0.3,  // Adyen interchange++ model
-      fixedFeeMinorUnits: 10,
+      // Adyen interchange++ model — see PspFeeScheduleService's own
+      // docblock for why the numbers themselves live there now.
+      ...this.feeSchedule.getSchedule(this.provider),
       supportedCurrencies: [
-        'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'SEK', 'NOK', 'DKK',
-        'PLN', 'CZK', 'HUF', 'RON', 'BGN', 'HRK', 'JPY', 'CNY', 'HKD',
-        'SGD', 'MYR', 'THB', 'IDR', 'PHP', 'INR', 'ZAR', 'AED', 'SAR',
+        'USD',
+        'EUR',
+        'GBP',
+        'AUD',
+        'CAD',
+        'CHF',
+        'SEK',
+        'NOK',
+        'DKK',
+        'PLN',
+        'CZK',
+        'HUF',
+        'RON',
+        'BGN',
+        'HRK',
+        'JPY',
+        'CNY',
+        'HKD',
+        'SGD',
+        'MYR',
+        'THB',
+        'IDR',
+        'PHP',
+        'INR',
+        'ZAR',
+        'AED',
+        'SAR',
       ],
       supportedCountries: [
-        'AT', 'BE', 'BG', 'CY', 'CZ', 'DE', 'DK', 'EE', 'ES', 'FI',
-        'FR', 'GR', 'HR', 'HU', 'IE', 'IT', 'LT', 'LU', 'LV', 'MT',
-        'NL', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK', 'GB', 'US', 'AU',
-        'CA', 'JP', 'SG', 'HK', 'MY', 'TH', 'ID', 'PH', 'IN', 'ZA',
+        'AT',
+        'BE',
+        'BG',
+        'CY',
+        'CZ',
+        'DE',
+        'DK',
+        'EE',
+        'ES',
+        'FI',
+        'FR',
+        'GR',
+        'HR',
+        'HU',
+        'IE',
+        'IT',
+        'LT',
+        'LU',
+        'LV',
+        'MT',
+        'NL',
+        'PL',
+        'PT',
+        'RO',
+        'SE',
+        'SI',
+        'SK',
+        'GB',
+        'US',
+        'AU',
+        'CA',
+        'JP',
+        'SG',
+        'HK',
+        'MY',
+        'TH',
+        'ID',
+        'PH',
+        'IN',
+        'ZA',
       ],
       isAvailable: metrics.state !== 'OPEN',
     };
@@ -332,7 +411,13 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
   async fetchSettlementTransactions(since: Date, until: Date): Promise<PSPSettlementTransaction[]> {
     const query = new URLSearchParams({
       since: Math.floor(since.getTime() / 1000).toString(),
-      until: Math.floor(until.getTime() / 1000).toString(),
+      // ceil, not floor — whole-second resolution truncates `until`'s own
+      // fractional second otherwise, silently excluding a real
+      // transaction landing later in that same second (found live via a
+      // fast e2e test's charge and its own `until = new Date()` capture
+      // landing in the same second). Ceiling costs at most one extra
+      // second of window, never a false negative.
+      until: Math.ceil(until.getTime() / 1000).toString(),
     });
     const response = await fetch(`${this.baseUrl}/settlement-report?${query.toString()}`, {
       method: 'GET',
@@ -348,6 +433,25 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
       amount: Money.fromMinorUnits(tx.amount, tx.currency),
       settledAt: new Date(tx.createdAt),
     }));
+  }
+
+  async fetchFeeStatement(since: Date, until: Date, currency: string): Promise<PSPFeeStatement> {
+    const query = new URLSearchParams({
+      since: Math.floor(since.getTime() / 1000).toString(),
+      // ceil — see fetchSettlementTransactions()'s comment above, same bug.
+      until: Math.ceil(until.getTime() / 1000).toString(),
+      currency,
+    });
+    const response = await fetch(`${this.baseUrl}/statement?${query.toString()}`, {
+      method: 'GET',
+      headers: { 'X-API-Key': this.apiKey },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) {
+      throw new Error(`Adyen statement request failed: ${response.status}`);
+    }
+    const body = await response.json();
+    return { totalFeeMinorUnits: BigInt(body.totalFeeMinorUnits ?? 0), transactionCount: body.transactionCount ?? 0 };
   }
 
   async submitDisputeEvidence(pspDisputeId: string, evidence: string): Promise<PSPDisputeEvidenceResponse> {
@@ -367,21 +471,11 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
   // call, queuing rather than piling up unboundedly if
   // PSP_BULKHEAD_MAX_CONCURRENT Adyen calls are already in flight from
   // this pod. See the constant's docblock above.
-  private async makeRequest(
-    method: string,
-    path: string,
-    body: unknown,
-    idempotencyKey?: string,
-  ): Promise<any> {
+  private async makeRequest(method: string, path: string, body: unknown, idempotencyKey?: string): Promise<any> {
     return this.bulkhead.run(() => this.makeRequestInner(method, path, body, idempotencyKey));
   }
 
-  private async makeRequestInner(
-    method: string,
-    path: string,
-    body: unknown,
-    idempotencyKey?: string,
-  ): Promise<any> {
+  private async makeRequestInner(method: string, path: string, body: unknown, idempotencyKey?: string): Promise<any> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'X-API-Key': this.apiKey,

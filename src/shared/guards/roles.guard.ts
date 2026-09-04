@@ -78,7 +78,8 @@ export class RolesGuard implements CanActivate {
         statusCode: 403,
         error: 'MFA must be enabled for ADMIN access',
         code: 'MFA_REQUIRED_FOR_ADMIN',
-        message: 'Enroll MFA via POST /auth/mfa/enroll and confirm it via POST /auth/mfa/confirm before calling this endpoint.',
+        message:
+          'Enroll MFA via POST /auth/mfa/enroll and confirm it via POST /auth/mfa/confirm before calling this endpoint.',
       });
     }
   }

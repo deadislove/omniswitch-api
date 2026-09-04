@@ -135,7 +135,10 @@ describe('Ambiguous payment auto-resolution (e2e)', () => {
     const queryRunner = dataSource.createQueryRunner('master');
     let events: LedgerOutboxEntity[];
     try {
-      events = await queryRunner.manager.find(LedgerOutboxEntity, { where: { paymentId }, order: { createdAt: 'ASC' } });
+      events = await queryRunner.manager.find(LedgerOutboxEntity, {
+        where: { paymentId },
+        order: { createdAt: 'ASC' },
+      });
     } finally {
       await queryRunner.release();
     }

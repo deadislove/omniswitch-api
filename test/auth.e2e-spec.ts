@@ -158,7 +158,7 @@ describe('Auth & Merchant Admin (e2e)', () => {
       expect(createRes.body.platformFeeBps).toBe(150);
     });
 
-    it('an ADMIN can change a merchant\'s fee rate; a non-ADMIN cannot', async () => {
+    it("an ADMIN can change a merchant's fee rate; a non-ADMIN cannot", async () => {
       const merchantId = uniqueId('feerate');
       const merchant = await seedMerchant(app, { merchantId });
       const merchantToken = await login(app, merchant.apiKeyId, merchant.apiKeySecret);

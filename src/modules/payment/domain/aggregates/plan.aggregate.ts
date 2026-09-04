@@ -45,7 +45,17 @@ export class Plan {
     intervalCount: number;
   }): Plan {
     const now = new Date();
-    return new Plan(params.id, params.merchantId, params.name, params.amount, params.interval, params.intervalCount, true, now, now);
+    return new Plan(
+      params.id,
+      params.merchantId,
+      params.name,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      true,
+      now,
+      now,
+    );
   }
 
   static reconstitute(params: {
@@ -59,7 +69,17 @@ export class Plan {
     createdAt: Date;
     updatedAt: Date;
   }): Plan {
-    return new Plan(params.id, params.merchantId, params.name, params.amount, params.interval, params.intervalCount, params.isActive, params.createdAt, params.updatedAt);
+    return new Plan(
+      params.id,
+      params.merchantId,
+      params.name,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      params.isActive,
+      params.createdAt,
+      params.updatedAt,
+    );
   }
 
   deactivate(now: Date = new Date()): void {
@@ -67,13 +87,31 @@ export class Plan {
     this._updatedAt = now;
   }
 
-  get id(): string { return this._id; }
-  get merchantId(): string { return this._merchantId; }
-  get name(): string { return this._name; }
-  get amount(): Money { return this._amount; }
-  get interval(): BillingInterval { return this._interval; }
-  get intervalCount(): number { return this._intervalCount; }
-  get isActive(): boolean { return this._isActive; }
-  get createdAt(): Date { return this._createdAt; }
-  get updatedAt(): Date { return this._updatedAt; }
+  get id(): string {
+    return this._id;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get name(): string {
+    return this._name;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get interval(): BillingInterval {
+    return this._interval;
+  }
+  get intervalCount(): number {
+    return this._intervalCount;
+  }
+  get isActive(): boolean {
+    return this._isActive;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
 }

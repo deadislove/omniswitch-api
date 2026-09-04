@@ -1,10 +1,4 @@
-import {
-  Entity,
-  PrimaryColumn,
-  Column,
-  CreateDateColumn,
-  Index,
-} from 'typeorm';
+import { Entity, PrimaryColumn, Column, CreateDateColumn, Index } from 'typeorm';
 import { OutboxStatus } from '../../../domain/aggregates/ledger-outbox.aggregate';
 
 @Entity('ledger_outbox')

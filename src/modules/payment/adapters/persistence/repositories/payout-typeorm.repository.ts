@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { PayoutPort, FindPayoutsFilter } from '../../../ports/outbound/payout.port';
 import { Payout } from '../../../domain/aggregates/payout.aggregate';
 import { PayoutSweepRun } from '../../../domain/aggregates/payout-sweep-run.aggregate';

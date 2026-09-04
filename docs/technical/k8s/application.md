@@ -13,7 +13,7 @@ this app's own code needs none of them, unlike `vault.yaml`/
 their containers can't run under the same restriction (see
 [`data-layer.md`](./data-layer.md)). Resource requests/limits are
 `250m`/`256Mi` and `1000m`/`512Mi` — see
-[`../load-testing.md`](../load-testing.md) for what these are based on
+[`load-testing.md`](../tests/load-testing.md) for what these are based on
 and where the reframing math against real measured usage lives.
 
 Three probes, all against `/health/live` or `/health/ready`:

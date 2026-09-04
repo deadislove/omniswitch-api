@@ -34,21 +34,16 @@ jobs:
 
       - run: npm ci
 
-      # Non-blocking, deliberately: this codebase was never actually run
-      # through `eslint --fix` and committed in that state (no
-      # .prettierrc means prettier's default double-quote style fights
-      # the codebase's existing single-quote convention), and
-      # tsconfig.json's `"exclude": ["test"]` means parserOptions.project
-      # can't type-check test/**/*.ts at all — so a strict, no-fix lint
-      # run currently reports ~8.7k pre-existing formatting diffs plus a
-      # parsing error on every test file. Fixing that is a real, separate
-      # cleanup task (repo-wide reformat, plus a tsconfig/eslint.config.cjs
-      # adjustment) — not something to do silently as a side effect of
-      # adding CI. Until then, this step reports lint findings without
-      # blocking merges on them.
-      - name: Lint (report-only)
+      # Blocking: `.prettierrc` (single-quote, matching this codebase's
+      # actual convention) and `tsconfig.eslint.json` (extends the build
+      # tsconfig with test/**/*.ts included, so type-aware rules can
+      # parse test files without touching tsconfig.json's own `exclude`,
+      # which is load-bearing for `nest build` — see eslint.config.cjs's
+      # own comment) closed the two gaps that used to make a strict,
+      # no-fix lint run fail on ~10k pre-existing findings. A clean
+      # `eslint --fix` pass now reports zero problems.
+      - name: Lint
         run: npx eslint "{src,apps,libs,test}/**/*.ts"
-        continue-on-error: true
 
       - run: npx tsc --noEmit
 

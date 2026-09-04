@@ -27,21 +27,22 @@ describe('Latency-based circuit breaker (e2e)', () => {
   let app: INestApplication;
   let merchant: SeededMerchant;
   let token: string;
-  let admin: SeededMerchant;
   let adminToken: string;
 
   beforeAll(async () => {
     app = await createTestApp();
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
 
     // The slow-call-rate window (RedisCircuitBreakerService's
     // recentCallCount/slowCallCount, 60s TTL) is keyed by provider only,
-    // shared across every e2e spec file that hits STRIPE — running as part
-    // of the full suite (maxWorkers: 1, no Redis flush between files) means
-    // whatever ran in the previous file within the last 60s is still in
-    // this window. Without resetting it here, this test's 5 slow calls get
+    // shared across every e2e spec file that hits STRIPE *and runs in the
+    // same Jest worker* (each worker gets its own Redis DB — see
+    // test/setup-env.ts — but files within one worker still run
+    // sequentially with no flush between them) — whatever that worker ran
+    // in the previous file within the last 60s is still in this window.
+    // Without resetting it here, this test's 5 slow calls get
     // diluted by an unknown number of fast calls from prior files and the
     // ratio never crosses SLOW_CALL_RATE_THRESHOLD, making this test flaky
     // as part of the full suite even though it's reliable in isolation.
@@ -76,138 +77,128 @@ describe('Latency-based circuit breaker (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`);
   }
 
-  it(
-    '5 real slow-but-successful STRIPE calls open the circuit, and a subsequent charge preferring STRIPE routes to ADYEN instead',
-    async () => {
-      for (let i = 0; i < 5; i++) {
-        const res = await signedCharge({
-          amount: 20,
-          currency: 'USD',
-          paymentMethodId: 'pm_forceslow',
-          orderId: uniqueId('order'),
-          binInfo: USD_BIN,
-          preferredProvider: 'STRIPE',
-        }).expect(201);
-
-        // Each call is genuinely slow but still succeeds — this is the
-        // exact scenario the sliding-window failure-count trigger can't
-        // see at all, since none of these ever throw.
-        expect(res.body.status).toBe('SUCCEEDED');
-        expect(res.body.pspProvider).toBe('STRIPE');
-      }
-
-      const health = await routingHealth().expect(200);
-      expect((health.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
-
-      // A fresh charge that still prefers STRIPE must now route to ADYEN —
-      // filterAvailableProviders() excludes an OPEN-circuit provider
-      // outright, regardless of preferredProvider's +20 score bonus. This
-      // is the direct, observable proof that the slow-call-rate trigger
-      // isn't just flipping an internal flag nobody reads — it actually
-      // changes routing behavior for the next real charge.
-      const nextCharge = await signedCharge({
-        amount: 10,
+  it('5 real slow-but-successful STRIPE calls open the circuit, and a subsequent charge preferring STRIPE routes to ADYEN instead', async () => {
+    for (let i = 0; i < 5; i++) {
+      const res = await signedCharge({
+        amount: 20,
         currency: 'USD',
-        paymentMethodId: 'pm_card_visa',
+        paymentMethodId: 'pm_forceslow',
         orderId: uniqueId('order'),
         binInfo: USD_BIN,
         preferredProvider: 'STRIPE',
       }).expect(201);
-      expect(nextCharge.body.pspProvider).toBe('ADYEN');
-    },
-    60_000,
-  );
 
-  it(
-    'once the recovery window passes, a fresh charge preferring STRIPE routes back to it — not stuck on ADYEN forever',
-    async () => {
-      // Self-contained trip, independent of the test above's leftover state.
-      await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
+      // Each call is genuinely slow but still succeeds — this is the
+      // exact scenario the sliding-window failure-count trigger can't
+      // see at all, since none of these ever throw.
+      expect(res.body.status).toBe('SUCCEEDED');
+      expect(res.body.pspProvider).toBe('STRIPE');
+    }
 
-      for (let i = 0; i < 5; i++) {
-        await signedCharge({
-          amount: 20,
-          currency: 'USD',
-          paymentMethodId: 'pm_forceslow',
-          orderId: uniqueId('order'),
-          binInfo: USD_BIN,
-          preferredProvider: 'STRIPE',
-        }).expect(201);
-      }
-      const tripped = await routingHealth().expect(200);
-      expect((tripped.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
+    const health = await routingHealth().expect(200);
+    expect((health.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
 
-      // Real wall-clock wait past RECOVERY_TIME_MS (30s) — deliberately with
-      // no refund/capture call against STRIPE in between. Before this fix,
-      // that was the *only* thing that ever moved a stuck OPEN state
-      // forward; a plain health check (the routing layer's own read path)
-      // never did, so a PSP could stay excluded from all new-charge
-      // routing indefinitely past its recovery window.
-      await new Promise((resolve) => setTimeout(resolve, 31_000));
+    // A fresh charge that still prefers STRIPE must now route to ADYEN —
+    // filterAvailableProviders() excludes an OPEN-circuit provider
+    // outright, regardless of preferredProvider's +20 score bonus. This
+    // is the direct, observable proof that the slow-call-rate trigger
+    // isn't just flipping an internal flag nobody reads — it actually
+    // changes routing behavior for the next real charge.
+    const nextCharge = await signedCharge({
+      amount: 10,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
+    }).expect(201);
+    expect(nextCharge.body.pspProvider).toBe('ADYEN');
+  }, 60_000);
 
-      // The health check itself — a pure read, no charge attempted yet —
-      // must already report HALF_OPEN. This is the read path the routing
-      // filter actually consults; it used to report OPEN forever here.
-      const beforeAnyNewCharge = await routingHealth().expect(200);
-      expect((beforeAnyNewCharge.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('HALF_OPEN');
+  it('once the recovery window passes, a fresh charge preferring STRIPE routes back to it — not stuck on ADYEN forever', async () => {
+    // Self-contained trip, independent of the test above's leftover state.
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
 
-      const recovered = await signedCharge({
-        amount: 10,
+    for (let i = 0; i < 5; i++) {
+      await signedCharge({
+        amount: 20,
         currency: 'USD',
-        paymentMethodId: 'pm_card_visa',
+        paymentMethodId: 'pm_forceslow',
         orderId: uniqueId('order'),
         binInfo: USD_BIN,
         preferredProvider: 'STRIPE',
       }).expect(201);
-      // Routed to STRIPE directly (not "failed, then fell back") — proves
-      // STRIPE re-entered the routing candidate pool on its own.
-      expect(recovered.body.pspProvider).toBe('STRIPE');
-      expect(recovered.body.usedFallback).toBe(false);
+    }
+    const tripped = await routingHealth().expect(200);
+    expect((tripped.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
 
-      const closed = await routingHealth().expect(200);
-      expect((closed.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('CLOSED');
-    },
-    90_000,
-  );
+    // Real wall-clock wait past RECOVERY_TIME_MS (30s) — deliberately with
+    // no refund/capture call against STRIPE in between. Before this fix,
+    // that was the *only* thing that ever moved a stuck OPEN state
+    // forward; a plain health check (the routing layer's own read path)
+    // never did, so a PSP could stay excluded from all new-charge
+    // routing indefinitely past its recovery window.
+    await new Promise((resolve) => setTimeout(resolve, 31_000));
 
-  it(
-    'an operator can force-close a stuck circuit without waiting out the recovery window',
-    async () => {
-      await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
+    // The health check itself — a pure read, no charge attempted yet —
+    // must already report HALF_OPEN. This is the read path the routing
+    // filter actually consults; it used to report OPEN forever here.
+    const beforeAnyNewCharge = await routingHealth().expect(200);
+    expect((beforeAnyNewCharge.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe(
+      'HALF_OPEN',
+    );
 
-      for (let i = 0; i < 5; i++) {
-        await signedCharge({
-          amount: 20,
-          currency: 'USD',
-          paymentMethodId: 'pm_forceslow',
-          orderId: uniqueId('order'),
-          binInfo: USD_BIN,
-          preferredProvider: 'STRIPE',
-        }).expect(201);
-      }
-      const tripped = await routingHealth().expect(200);
-      expect((tripped.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
+    const recovered = await signedCharge({
+      amount: 10,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
+    }).expect(201);
+    // Routed to STRIPE directly (not "failed, then fell back") — proves
+    // STRIPE re-entered the routing candidate pool on its own.
+    expect(recovered.body.pspProvider).toBe('STRIPE');
+    expect(recovered.body.usedFallback).toBe(false);
 
-      const reset = await request(app.getHttpServer())
-        .post('/api/v1/payments/routing/circuit-breaker/STRIPE/reset')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-      expect(reset.body.circuitBreaker).toBe('CLOSED');
+    const closed = await routingHealth().expect(200);
+    expect((closed.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('CLOSED');
+  }, 90_000);
 
-      // No 30s wait at all — the whole point of the escape hatch.
-      const chargeRightAfter = await signedCharge({
-        amount: 10,
+  it('an operator can force-close a stuck circuit without waiting out the recovery window', async () => {
+    await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
+
+    for (let i = 0; i < 5; i++) {
+      await signedCharge({
+        amount: 20,
         currency: 'USD',
-        paymentMethodId: 'pm_card_visa',
+        paymentMethodId: 'pm_forceslow',
         orderId: uniqueId('order'),
         binInfo: USD_BIN,
         preferredProvider: 'STRIPE',
       }).expect(201);
-      expect(chargeRightAfter.body.pspProvider).toBe('STRIPE');
-      expect(chargeRightAfter.body.usedFallback).toBe(false);
-    },
-    60_000,
-  );
+    }
+    const tripped = await routingHealth().expect(200);
+    expect((tripped.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('OPEN');
+
+    const reset = await request(app.getHttpServer())
+      .post('/api/v1/payments/routing/circuit-breaker/STRIPE/reset')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(reset.body.circuitBreaker).toBe('CLOSED');
+
+    // No 30s wait at all — the whole point of the escape hatch.
+    const chargeRightAfter = await signedCharge({
+      amount: 10,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
+    }).expect(201);
+    expect(chargeRightAfter.body.pspProvider).toBe('STRIPE');
+    expect(chargeRightAfter.body.usedFallback).toBe(false);
+  }, 60_000);
 
   it('resetting an unknown provider is rejected with 400', async () => {
     await request(app.getHttpServer())

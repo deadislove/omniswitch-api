@@ -33,7 +33,9 @@ export class MockKYCProviderAdapter extends KYCProviderPort {
     }
 
     const body = await response.json();
-    this.logger.log(`KYC verification for "${params.legalName}": ${body.approved ? 'approved' : 'declined'} (applicationId=${body.applicationId})`);
+    this.logger.log(
+      `KYC verification for "${params.legalName}": ${body.approved ? 'approved' : 'declined'} (applicationId=${body.applicationId})`,
+    );
     return { approved: body.approved === true, applicationId: body.applicationId, reason: body.reason };
   }
 }

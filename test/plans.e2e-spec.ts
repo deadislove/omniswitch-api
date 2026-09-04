@@ -20,14 +20,13 @@ import { PaymentEntity } from '../src/modules/payment/adapters/persistence/entit
  */
 describe('Subscription plan catalog & proration (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -98,7 +97,12 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('planbasic') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
-    const plan = await createPlan(merchant, token, { name: 'Pro Monthly', amount: 29.99, currency: 'USD', interval: 'month' });
+    const plan = await createPlan(merchant, token, {
+      name: 'Pro Monthly',
+      amount: 29.99,
+      currency: 'USD',
+      interval: 'month',
+    });
     expect(plan.name).toBe('Pro Monthly');
     expect(plan.amount).toBe(29.99);
     expect(plan.intervalCount).toBe(1);
@@ -120,7 +124,13 @@ describe('Subscription plan catalog & proration (e2e)', () => {
   it('creating a subscription from a plan derives amount/currency/interval from it', async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('planderive') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    const plan = await createPlan(merchant, token, { name: 'Basic', amount: 15, currency: 'USD', interval: 'week', intervalCount: 2 });
+    const plan = await createPlan(merchant, token, {
+      name: 'Basic',
+      amount: 15,
+      currency: 'USD',
+      interval: 'week',
+      intervalCount: 2,
+    });
 
     const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
       planId: plan.id,
@@ -141,7 +151,11 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
     const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-      amount: 12, currency: 'USD', interval: 'month', customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+      amount: 12,
+      currency: 'USD',
+      interval: 'month',
+      customerId: uniqueId('cust'),
+      paymentMethodId: 'pm_card_visa',
     }).expect(201);
 
     // Undefined, not null — this response is the in-memory object the
@@ -158,7 +172,8 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
     await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-      customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+      customerId: uniqueId('cust'),
+      paymentMethodId: 'pm_card_visa',
     }).expect(422);
   });
 
@@ -166,18 +181,38 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     it('an upgrade mid-period charges exactly the prorated difference (deterministic: exactly 50% of the period remaining)', async () => {
       const merchant = await seedMerchant(app, { merchantId: uniqueId('planupgrade') });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-      const planA = await createPlan(merchant, token, { name: 'Basic', amount: 20, currency: 'USD', interval: 'day', intervalCount: 30 });
-      const planB = await createPlan(merchant, token, { name: 'Pro', amount: 40, currency: 'USD', interval: 'day', intervalCount: 30 });
+      const planA = await createPlan(merchant, token, {
+        name: 'Basic',
+        amount: 20,
+        currency: 'USD',
+        interval: 'day',
+        intervalCount: 30,
+      });
+      const planB = await createPlan(merchant, token, {
+        name: 'Pro',
+        amount: 40,
+        currency: 'USD',
+        interval: 'day',
+        intervalCount: 30,
+      });
 
       const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        planId: planA.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: planA.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
 
       await setPeriodToMidpoint(subRes.body.id, 30);
 
-      const changeRes = await signedRequest(merchant, token, 'post', `/api/v1/subscriptions/${subRes.body.id}/change-plan`, {
-        planId: planB.id,
-      }).expect(200);
+      const changeRes = await signedRequest(
+        merchant,
+        token,
+        'post',
+        `/api/v1/subscriptions/${subRes.body.id}/change-plan`,
+        {
+          planId: planB.id,
+        },
+      ).expect(200);
 
       // (40 - 20) * 0.5 remaining = 10 exactly.
       expect(changeRes.body.prorationCharged).toBe(10);
@@ -193,18 +228,38 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     it('a downgrade mid-period charges nothing immediately, but issues a credit for a future period — the price changes going forward', async () => {
       const merchant = await seedMerchant(app, { merchantId: uniqueId('plandowngrade') });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-      const planA = await createPlan(merchant, token, { name: 'Pro', amount: 40, currency: 'USD', interval: 'day', intervalCount: 30 });
-      const planB = await createPlan(merchant, token, { name: 'Basic', amount: 20, currency: 'USD', interval: 'day', intervalCount: 30 });
+      const planA = await createPlan(merchant, token, {
+        name: 'Pro',
+        amount: 40,
+        currency: 'USD',
+        interval: 'day',
+        intervalCount: 30,
+      });
+      const planB = await createPlan(merchant, token, {
+        name: 'Basic',
+        amount: 20,
+        currency: 'USD',
+        interval: 'day',
+        intervalCount: 30,
+      });
 
       const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        planId: planA.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: planA.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
 
       await setPeriodToMidpoint(subRes.body.id, 30);
 
-      const changeRes = await signedRequest(merchant, token, 'post', `/api/v1/subscriptions/${subRes.body.id}/change-plan`, {
-        planId: planB.id,
-      }).expect(200);
+      const changeRes = await signedRequest(
+        merchant,
+        token,
+        'post',
+        `/api/v1/subscriptions/${subRes.body.id}/change-plan`,
+        {
+          planId: planB.id,
+        },
+      ).expect(200);
 
       expect(changeRes.body.prorationCharged).toBeUndefined();
       // (40 - 20) * 0.5 remaining = 10 exactly — the unused portion of the old, pricier plan.
@@ -219,24 +274,46 @@ describe('Subscription plan catalog & proration (e2e)', () => {
       expect(paymentCount).toBe(1);
     });
 
-    it('a downgrade credit partially reduces the next period\'s charge, and is fully consumed if it exceeds that charge', async () => {
+    it("a downgrade credit partially reduces the next period's charge, and is fully consumed if it exceeds that charge", async () => {
       const merchant = await seedMerchant(app, { merchantId: uniqueId('plandowngradecredit') });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-      const planA = await createPlan(merchant, token, { name: 'Pro', amount: 40, currency: 'USD', interval: 'day', intervalCount: 30 });
-      const planB = await createPlan(merchant, token, { name: 'Basic', amount: 20, currency: 'USD', interval: 'day', intervalCount: 30 });
+      const planA = await createPlan(merchant, token, {
+        name: 'Pro',
+        amount: 40,
+        currency: 'USD',
+        interval: 'day',
+        intervalCount: 30,
+      });
+      const planB = await createPlan(merchant, token, {
+        name: 'Basic',
+        amount: 20,
+        currency: 'USD',
+        interval: 'day',
+        intervalCount: 30,
+      });
 
       const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        planId: planA.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: planA.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
       await setPeriodToMidpoint(subRes.body.id, 30);
 
-      const changeRes = await signedRequest(merchant, token, 'post', `/api/v1/subscriptions/${subRes.body.id}/change-plan`, {
-        planId: planB.id,
-      }).expect(200);
+      const changeRes = await signedRequest(
+        merchant,
+        token,
+        'post',
+        `/api/v1/subscriptions/${subRes.body.id}/change-plan`,
+        {
+          planId: planB.id,
+        },
+      ).expect(200);
       expect(changeRes.body.creditIssued).toBe(10); // credit is $10, next period's price is $20 (planB)
 
       // Push the period into the past so the billing sweep considers it due, then run it.
-      await dataSource.getRepository(SubscriptionEntity).update(subRes.body.id, { currentPeriodEnd: new Date(Date.now() - 60_000) });
+      await dataSource
+        .getRepository(SubscriptionEntity)
+        .update(subRes.body.id, { currentPeriodEnd: new Date(Date.now() - 60_000) });
       const sweepRes = await request(app.getHttpServer())
         .post('/api/v1/admin/subscriptions/run-billing')
         .set('Authorization', `Bearer ${adminToken}`)
@@ -259,11 +336,23 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     it('changing to a plan in a different currency is rejected with 409', async () => {
       const merchant = await seedMerchant(app, { merchantId: uniqueId('plancurrency') });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-      const planUsd = await createPlan(merchant, token, { name: 'USD Plan', amount: 20, currency: 'USD', interval: 'month' });
-      const planEur = await createPlan(merchant, token, { name: 'EUR Plan', amount: 20, currency: 'EUR', interval: 'month' });
+      const planUsd = await createPlan(merchant, token, {
+        name: 'USD Plan',
+        amount: 20,
+        currency: 'USD',
+        interval: 'month',
+      });
+      const planEur = await createPlan(merchant, token, {
+        name: 'EUR Plan',
+        amount: 20,
+        currency: 'EUR',
+        interval: 'month',
+      });
 
       const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        planId: planUsd.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: planUsd.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
 
       await signedRequest(merchant, token, 'post', `/api/v1/subscriptions/${subRes.body.id}/change-plan`, {
@@ -278,7 +367,9 @@ describe('Subscription plan catalog & proration (e2e)', () => {
       const planB = await createPlan(merchant, token, { name: 'B', amount: 30, currency: 'USD', interval: 'month' });
 
       const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        planId: planA.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: planA.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
       await signedRequest(merchant, token, 'post', `/api/v1/subscriptions/${subRes.body.id}/cancel`, {}).expect(200);
 
@@ -292,10 +383,17 @@ describe('Subscription plan catalog & proration (e2e)', () => {
     it('a deactivated plan cannot be used for a new subscription, but existing subscribers are unaffected', async () => {
       const merchant = await seedMerchant(app, { merchantId: uniqueId('plandeactivate') });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-      const plan = await createPlan(merchant, token, { name: 'Legacy', amount: 20, currency: 'USD', interval: 'month' });
+      const plan = await createPlan(merchant, token, {
+        name: 'Legacy',
+        amount: 20,
+        currency: 'USD',
+        interval: 'month',
+      });
 
       const subRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        planId: plan.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: plan.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
 
       const deactivateRes = await request(app.getHttpServer())
@@ -306,7 +404,9 @@ describe('Subscription plan catalog & proration (e2e)', () => {
 
       // A new subscription can no longer use it.
       await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        planId: plan.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: plan.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(404);
 
       // The already-subscribed customer keeps working exactly as before —
@@ -320,13 +420,18 @@ describe('Subscription plan catalog & proration (e2e)', () => {
       expect(getRes.body.amount).toBe(20);
     });
 
-    it('a merchant cannot see or use another merchant\'s plan', async () => {
+    it("a merchant cannot see or use another merchant's plan", async () => {
       const owner = await seedMerchant(app, { merchantId: uniqueId('planowner') });
       const ownerToken = await login(app, owner.apiKeyId, owner.apiKeySecret);
       const intruder = await seedMerchant(app, { merchantId: uniqueId('planintruder') });
       const intruderToken = await login(app, intruder.apiKeyId, intruder.apiKeySecret);
 
-      const plan = await createPlan(owner, ownerToken, { name: 'Private', amount: 20, currency: 'USD', interval: 'month' });
+      const plan = await createPlan(owner, ownerToken, {
+        name: 'Private',
+        amount: 20,
+        currency: 'USD',
+        interval: 'month',
+      });
 
       await request(app.getHttpServer())
         .get(`/api/v1/plans/${plan.id}`)
@@ -334,7 +439,9 @@ describe('Subscription plan catalog & proration (e2e)', () => {
         .expect(403);
 
       await signedRequest(intruder, intruderToken, 'post', '/api/v1/subscriptions', {
-        planId: plan.id, customerId: uniqueId('cust'), paymentMethodId: 'pm_card_visa',
+        planId: plan.id,
+        customerId: uniqueId('cust'),
+        paymentMethodId: 'pm_card_visa',
       }).expect(403);
     });
   });

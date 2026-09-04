@@ -10,24 +10,25 @@ import { Money } from '../../domain/value-objects/money.vo';
 
 // ─── Mock Factories ──────────────────────────────────────────────────────────
 
-const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
-  save: jest.fn(),
-  findById: jest.fn(),
-  findByIdOnMaster: jest.fn(),
-  findByIdempotencyKey: jest.fn(),
-  findByPspTransactionId: jest.fn(),
-  findByMerchantId: jest.fn(),
-  update: jest.fn(),
-  existsById: jest.fn(),
-  count: jest.fn(),
-  findByProviderAndDateRange: jest.fn(),
-  countByStatusAndProvider: jest.fn(),
-  sumSucceededVolumeSince: jest.fn(),
-  findAmbiguousOlderThan: jest.fn(),
-  countAmbiguousIncidentsSince: jest.fn(),
-  findRecentAmbiguousFlags: jest.fn(),
-  findAmbiguousEligibleForAutoResolution: jest.fn(),
-} as unknown as jest.Mocked<PaymentRepositoryPort>);
+const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> =>
+  ({
+    save: jest.fn(),
+    findById: jest.fn(),
+    findByIdOnMaster: jest.fn(),
+    findByIdempotencyKey: jest.fn(),
+    findByPspTransactionId: jest.fn(),
+    findByMerchantId: jest.fn(),
+    update: jest.fn(),
+    existsById: jest.fn(),
+    count: jest.fn(),
+    findByProviderAndDateRange: jest.fn(),
+    countByStatusAndProvider: jest.fn(),
+    sumSucceededVolumeSince: jest.fn(),
+    findAmbiguousOlderThan: jest.fn(),
+    countAmbiguousIncidentsSince: jest.fn(),
+    findRecentAmbiguousFlags: jest.fn(),
+    findAmbiguousEligibleForAutoResolution: jest.fn(),
+  }) as unknown as jest.Mocked<PaymentRepositoryPort>;
 
 const createMockReconciliationRepo = (): jest.Mocked<ReconciliationPort> => ({
   save: jest.fn().mockResolvedValue(undefined),
@@ -41,12 +42,14 @@ function createMockProcessorFactory(fetchSettlementTransactions: jest.Mock): Pay
   } as unknown as PaymentProcessorFactory;
 }
 
-function makePayment(overrides: {
-  pspTransactionId?: string;
-  amount?: Money;
-  status?: PaymentStatus;
-  pspProvider?: PSPProvider;
-} = {}): PaymentAggregate {
+function makePayment(
+  overrides: {
+    pspTransactionId?: string;
+    amount?: Money;
+    status?: PaymentStatus;
+    pspProvider?: PSPProvider;
+  } = {},
+): PaymentAggregate {
   return PaymentAggregate.reconstitute({
     id: randomUUID(),
     amount: overrides.amount ?? Money.of(50, 'USD'),
@@ -58,7 +61,11 @@ function makePayment(overrides: {
   });
 }
 
-function makeSettlement(overrides: { pspTransactionId: string; amount?: Money; settledAt?: Date }): PSPSettlementTransaction {
+function makeSettlement(overrides: {
+  pspTransactionId: string;
+  amount?: Money;
+  settledAt?: Date;
+}): PSPSettlementTransaction {
   return {
     pspTransactionId: overrides.pspTransactionId,
     amount: overrides.amount ?? Money.of(50, 'USD'),
@@ -88,7 +95,9 @@ describe('ReconciliationService', () => {
   it('reports CLEAN with zero mismatches when every payment has a matching PSP settlement of the same amount', async () => {
     const payment = makePayment({ pspTransactionId: 'pi_1', amount: Money.of(50, 'USD') });
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
-    fetchSettlementTransactions.mockResolvedValue([makeSettlement({ pspTransactionId: 'pi_1', amount: Money.of(50, 'USD') })]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_1', amount: Money.of(50, 'USD') }),
+    ]);
 
     const run = await service.reconcile('STRIPE', since, until);
 
@@ -118,7 +127,9 @@ describe('ReconciliationService', () => {
   it('flags AMOUNT_MISMATCH when both sides have the transaction but disagree on amount', async () => {
     const payment = makePayment({ pspTransactionId: 'pi_2', amount: Money.of(100, 'USD') });
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
-    fetchSettlementTransactions.mockResolvedValue([makeSettlement({ pspTransactionId: 'pi_2', amount: Money.of(80, 'USD') })]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_2', amount: Money.of(80, 'USD') }),
+    ]);
 
     const run = await service.reconcile('STRIPE', since, until);
 
@@ -137,7 +148,9 @@ describe('ReconciliationService', () => {
 
   it('flags UNKNOWN_AT_PSP when the PSP settled something we have no record of at all', async () => {
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([]);
-    fetchSettlementTransactions.mockResolvedValue([makeSettlement({ pspTransactionId: 'pi_orphan', amount: Money.of(20, 'USD') })]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_orphan', amount: Money.of(20, 'USD') }),
+    ]);
 
     const run = await service.reconcile('STRIPE', since, until);
 
@@ -244,8 +257,16 @@ describe('ReconciliationService', () => {
 
       await service.runScheduled();
 
-      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith('STRIPE', expect.any(Date), expect.any(Date));
-      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith('ADYEN', expect.any(Date), expect.any(Date));
+      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith(
+        'STRIPE',
+        expect.any(Date),
+        expect.any(Date),
+      );
+      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith(
+        'ADYEN',
+        expect.any(Date),
+        expect.any(Date),
+      );
       expect(reconciliationRepo.save).toHaveBeenCalledTimes(2);
     });
 

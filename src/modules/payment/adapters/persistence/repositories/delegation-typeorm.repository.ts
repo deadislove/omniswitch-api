@@ -29,6 +29,7 @@ export class DelegationTypeOrmRepository implements DelegationPort {
     entity.jti = delegation.jti;
     entity.tokenExpiresAt = delegation.tokenExpiresAt;
     entity.revokedAt = delegation.revokedAt ?? null;
+    entity.signingKeyCiphertext = delegation.signingKeyCiphertext ?? null;
     await this.repo.save(entity);
   }
 
@@ -108,6 +109,7 @@ export class DelegationTypeOrmRepository implements DelegationPort {
       createdAt: entity.createdAt,
       revokedAt: entity.revokedAt ?? undefined,
       updatedAt: entity.updatedAt,
+      signingKeyCiphertext: entity.signingKeyCiphertext ?? undefined,
     });
   }
 }

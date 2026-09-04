@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Query, Body, UseGuards, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  Body,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  BadRequestException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsISO8601 } from 'class-validator';
 import { ReconciliationService } from '../services/reconciliation.service';
@@ -16,7 +26,10 @@ class RunReconciliationDto {
   @IsIn(RECONCILED_PROVIDERS)
   pspProvider: PSPProvider;
 
-  @ApiPropertyOptional({ description: 'ISO-8601 — defaults to one hour before "until"', example: '2026-01-01T00:00:00.000Z' })
+  @ApiPropertyOptional({
+    description: 'ISO-8601 — defaults to one hour before "until"',
+    example: '2026-01-01T00:00:00.000Z',
+  })
   @IsOptional()
   @IsISO8601()
   since?: string;
@@ -118,7 +131,10 @@ export class ReconciliationAdminController {
   @ApiOperation({ summary: 'List recent reconciliation runs, optionally filtered by PSP provider' })
   @ApiResponse({ status: 200, type: [ReconciliationRunSummaryDto] })
   @ApiResponse({ status: 400, description: 'Unknown pspProvider' })
-  async listRuns(@Query('pspProvider') pspProvider?: string, @Query('limit') limit?: string): Promise<ReconciliationRunSummaryDto[]> {
+  async listRuns(
+    @Query('pspProvider') pspProvider?: string,
+    @Query('limit') limit?: string,
+  ): Promise<ReconciliationRunSummaryDto[]> {
     const parsedLimit = limit ? Number(limit) : undefined;
     if (pspProvider) {
       if (!RECONCILED_PROVIDERS.includes(pspProvider as PSPProvider)) {

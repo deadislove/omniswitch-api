@@ -1,11 +1,28 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PSPAdapterPort, PSPChargeRequest, PSPChargeResponse, PSPRefundRequest, PSPRefundResponse, PSPCaptureRequest, PSPCaptureResponse, PSPCancelRequest, PSPCancelResponse, PSPSettlementTransaction, PSPDisputeEvidenceResponse, PSPVerifyPaymentMethodRequest, PSPVerifyPaymentMethodResponse, PSPQueryOutcomeResult } from '../../../ports/outbound/psp-adapter.port';
+import {
+  PSPAdapterPort,
+  PSPChargeRequest,
+  PSPChargeResponse,
+  PSPRefundRequest,
+  PSPRefundResponse,
+  PSPCaptureRequest,
+  PSPCaptureResponse,
+  PSPCancelRequest,
+  PSPCancelResponse,
+  PSPSettlementTransaction,
+  PSPFeeStatement,
+  PSPDisputeEvidenceResponse,
+  PSPVerifyPaymentMethodRequest,
+  PSPVerifyPaymentMethodResponse,
+  PSPQueryOutcomeResult,
+} from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
 import { RedisCircuitBreakerService } from '../../circuit-breaker/redis-circuit-breaker.service';
 import { Money } from '../../../domain/value-objects/money.vo';
 import { Semaphore } from '../../../../../shared/utils/semaphore';
+import { PspFeeScheduleService } from '../../../application/services/psp-fee-schedule.service';
 
 /**
  * Stripe PSP Adapter
@@ -20,12 +37,21 @@ export class StripePSPAdapter extends PSPAdapterPort {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly bulkhead: Semaphore;
+  // Not DI-injected — PspFeeScheduleService is a stateless config reader
+  // (no I/O, no mutable state), so constructing it here from the same
+  // configService this adapter already receives is equivalent to sharing
+  // a singleton, without adding a third required constructor param that
+  // would otherwise ripple into every test that does `new
+  // StripePSPAdapter(...)` directly (stripe-psp.adapter.spec.ts,
+  // test/contract/stripe.contract-spec.ts).
+  private readonly feeSchedule: PspFeeScheduleService;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly circuitBreaker: RedisCircuitBreakerService,
   ) {
     super();
+    this.feeSchedule = new PspFeeScheduleService(configService);
     this.apiKey = configService.get<string>('STRIPE_SECRET_KEY', 'sk_test_placeholder');
     // Caps how many concurrent outbound calls to Stripe this pod will have
     // in flight at once — see makeRequest() below, a bulkhead against one
@@ -46,7 +72,9 @@ export class StripePSPAdapter extends PSPAdapterPort {
     const startTime = Date.now();
 
     try {
-      this.logger.log(`Stripe charge: paymentId=${request.paymentId}, amount=${request.amount.amountMinorUnits} ${request.currency}`);
+      this.logger.log(
+        `Stripe charge: paymentId=${request.paymentId}, amount=${request.amount.amountMinorUnits} ${request.currency}`,
+      );
 
       // Build Stripe PaymentIntent params
       const params = new URLSearchParams({
@@ -286,21 +314,39 @@ export class StripePSPAdapter extends PSPAdapterPort {
 
   async getHealthStatus(): Promise<PSPHealthStatus> {
     const metrics = await this.circuitBreaker.getMetrics(this.provider);
-    const successRate = metrics.totalRequests > 0
-      ? (metrics.successCount / metrics.totalRequests) * 100
-      : 100;
+    const successRate = metrics.totalRequests > 0 ? (metrics.successCount / metrics.totalRequests) * 100 : 100;
 
     return {
       provider: this.provider,
       circuitBreakerState: metrics.state,
       successRate: Math.round(successRate),
       avgLatencyMs: Math.round(metrics.avgLatencyMs),
-      feePercentage: 2.9,
-      fixedFeeMinorUnits: 30, // $0.30
+      ...this.feeSchedule.getSchedule(this.provider),
       supportedCurrencies: [
-        'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY', 'HKD',
-        'SGD', 'SEK', 'NOK', 'DKK', 'NZD', 'MXN', 'BRL', 'INR',
-        'JPY', 'TWD', 'THB', 'MYR', 'IDR', 'PHP', 'ZAR', 'AED',
+        'USD',
+        'EUR',
+        'GBP',
+        'AUD',
+        'CAD',
+        'CHF',
+        'CNY',
+        'HKD',
+        'SGD',
+        'SEK',
+        'NOK',
+        'DKK',
+        'NZD',
+        'MXN',
+        'BRL',
+        'INR',
+        'JPY',
+        'TWD',
+        'THB',
+        'MYR',
+        'IDR',
+        'PHP',
+        'ZAR',
+        'AED',
       ],
       supportedCountries: ['*'], // Stripe supports global
       isAvailable: metrics.state !== 'OPEN',
@@ -314,11 +360,19 @@ export class StripePSPAdapter extends PSPAdapterPort {
   async fetchSettlementTransactions(since: Date, until: Date): Promise<PSPSettlementTransaction[]> {
     const query = new URLSearchParams({
       'created[gte]': Math.floor(since.getTime() / 1000).toString(),
-      'created[lte]': Math.floor(until.getTime() / 1000).toString(),
+      // ceil, not floor — Stripe's `created[lte]` is whole-second
+      // resolution, so flooring `until` truncates its own fractional
+      // second and silently excludes a real transaction that landed
+      // later in that same second (found live: a fast e2e test's charge
+      // and its own `until = new Date()` capture landing in the same
+      // second, with the charge's later millisecond then failing `<=` a
+      // floored `until`). Ceiling costs at most one extra second of
+      // window, never a false negative.
+      'created[lte]': Math.ceil(until.getTime() / 1000).toString(),
     });
     const response = await fetch(`${this.baseUrl}/balance_transactions?${query.toString()}`, {
       method: 'GET',
-      headers: { 'Authorization': `Bearer ${this.apiKey}` },
+      headers: { Authorization: `Bearer ${this.apiKey}` },
       signal: AbortSignal.timeout(30000),
     });
     if (!response.ok) {
@@ -330,6 +384,25 @@ export class StripePSPAdapter extends PSPAdapterPort {
       amount: Money.fromMinorUnits(tx.amount, tx.currency),
       settledAt: new Date(tx.createdAt),
     }));
+  }
+
+  async fetchFeeStatement(since: Date, until: Date, currency: string): Promise<PSPFeeStatement> {
+    const query = new URLSearchParams({
+      since: Math.floor(since.getTime() / 1000).toString(),
+      // ceil — see fetchSettlementTransactions()'s comment above, same bug.
+      until: Math.ceil(until.getTime() / 1000).toString(),
+      currency,
+    });
+    const response = await fetch(`${this.baseUrl}/statement?${query.toString()}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) {
+      throw new Error(`Stripe statement request failed: ${response.status}`);
+    }
+    const body = await response.json();
+    return { totalFeeMinorUnits: BigInt(body.totalFeeMinorUnits ?? 0), transactionCount: body.transactionCount ?? 0 };
   }
 
   async submitDisputeEvidence(pspDisputeId: string, evidence: string): Promise<PSPDisputeEvidenceResponse> {
@@ -372,7 +445,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
   ): Promise<any> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
-      'Authorization': `Bearer ${this.apiKey}`,
+      Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
       'Stripe-Version': '2023-10-16',
     };
@@ -419,9 +492,9 @@ export class StripePSPAdapter extends PSPAdapterPort {
 
   private mapRefundReason(reason: string): string {
     const map: Record<string, string> = {
-      'duplicate': 'duplicate',
-      'fraudulent': 'fraudulent',
-      'customer_request': 'requested_by_customer',
+      duplicate: 'duplicate',
+      fraudulent: 'fraudulent',
+      customer_request: 'requested_by_customer',
     };
     return map[reason.toLowerCase()] || 'requested_by_customer';
   }

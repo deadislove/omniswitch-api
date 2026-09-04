@@ -26,7 +26,13 @@ export class PayoutSweepRun {
     windowEnd: Date;
     connectedMerchantsPaid: number;
   }): PayoutSweepRun {
-    return new PayoutSweepRun(params.id, params.windowStart, params.windowEnd, params.connectedMerchantsPaid, new Date());
+    return new PayoutSweepRun(
+      params.id,
+      params.windowStart,
+      params.windowEnd,
+      params.connectedMerchantsPaid,
+      new Date(),
+    );
   }
 
   static reconstitute(params: {
@@ -36,6 +42,12 @@ export class PayoutSweepRun {
     connectedMerchantsPaid: number;
     ranAt: Date;
   }): PayoutSweepRun {
-    return new PayoutSweepRun(params.id, params.windowStart, params.windowEnd, params.connectedMerchantsPaid, params.ranAt);
+    return new PayoutSweepRun(
+      params.id,
+      params.windowStart,
+      params.windowEnd,
+      params.connectedMerchantsPaid,
+      params.ranAt,
+    );
   }
 }

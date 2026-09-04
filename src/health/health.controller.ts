@@ -85,8 +85,6 @@ export class HealthController {
   @ApiResponse({ status: 200, description: 'Terminus HealthCheckResult — database reachable' })
   @ApiResponse({ status: 503, description: 'Terminus HealthCheckResult — database unreachable' })
   async ready() {
-    return this.health.check([
-      () => this.db.pingCheck('database', { timeout: 3000 }),
-    ]);
+    return this.health.check([() => this.db.pingCheck('database', { timeout: 3000 })]);
   }
 }

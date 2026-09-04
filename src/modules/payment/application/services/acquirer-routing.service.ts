@@ -1,6 +1,10 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
-import { RoutingContext, RoutingDecision, PreferredProviderNotEntitledError } from '../../domain/services/smart-routing.strategy';
+import {
+  RoutingContext,
+  RoutingDecision,
+  PreferredProviderNotEntitledError,
+} from '../../domain/services/smart-routing.strategy';
 import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
@@ -67,9 +71,9 @@ export class AcquirerRoutingService {
 
     this.logger.log(
       `[AcquirerRouting] Selected ${result.decision.selectedProvider} ` +
-      `for merchant=${params.merchantId}, ` +
-      `amount=${params.amount.toString()}, ` +
-      `score=${result.decision.score}`,
+        `for merchant=${params.merchantId}, ` +
+        `amount=${params.amount.toString()}, ` +
+        `score=${result.decision.score}`,
     );
 
     return result;

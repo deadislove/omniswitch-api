@@ -180,6 +180,10 @@ the whole thing is cancelled, if nothing has been captured yet).
 
 ## Dispute accounting
 
+See [`disputes.md`](./disputes.md) for the business-policy view (the
+auto-decision policy, the reason-code table, representment) — this
+section covers what happens to the *payment*/ledger specifically.
+
 A dispute/chargeback is tracked as its own record (`Dispute`, the
 `disputes` table), not just the payment's `DISPUTED` status flip — a
 dispute has a lifecycle of its own (`NEEDS_RESPONSE` → `UNDER_REVIEW` →

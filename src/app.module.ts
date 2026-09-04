@@ -5,7 +5,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TerminusModule } from '@nestjs/terminus';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { PaymentModule } from './modules/payment/payment.module';
 import { MerchantModule } from './modules/merchant/merchant.module';
@@ -25,6 +25,7 @@ import { HealthController } from './health/health.controller';
 import { MetricsController } from './observability/metrics.controller';
 import { RedisThrottlerModule } from './shared/throttler/redis-throttler.module';
 import { RedisThrottlerStorage } from './shared/throttler/redis-throttler-storage.service';
+import { DeprecationHeaderInterceptor } from './shared/interceptors/deprecation-header.interceptor';
 
 @Module({
   imports: [
@@ -58,7 +59,19 @@ import { RedisThrottlerStorage } from './shared/throttler/redis-throttler-storag
             },
           ],
         },
-        entities: [PaymentEntity, LedgerOutboxEntity, MerchantEntity, ReconciliationRunEntity, DisputeEntity, ReserveHoldEntity, SubscriptionEntity, PlanEntity, PayoutEntity, PayoutSweepRunEntity, DelegationEntity],
+        entities: [
+          PaymentEntity,
+          LedgerOutboxEntity,
+          MerchantEntity,
+          ReconciliationRunEntity,
+          DisputeEntity,
+          ReserveHoldEntity,
+          SubscriptionEntity,
+          PlanEntity,
+          PayoutEntity,
+          PayoutSweepRunEntity,
+          DelegationEntity,
+        ],
         // Schema is owned by TypeORM migrations (src/database/migrations/,
         // run via `npm run migration:run` / the Docker image's startup
         // command) in every environment, not just production — dev and
@@ -71,14 +84,23 @@ import { RedisThrottlerStorage } from './shared/throttler/redis-throttler-storag
         // which defeats the point of enabling SSL — it stops MITM from being
         // *detected* but not the MITM itself. Verify against a CA bundle
         // instead; DB_SSL_CA can point at a mounted RDS/Cloud SQL CA cert.
-        ssl: config.get('DB_SSL') === 'true'
-          ? {
-              rejectUnauthorized: true,
-              ca: config.get('DB_SSL_CA') || undefined,
-            }
-          : false,
+        ssl:
+          config.get('DB_SSL') === 'true'
+            ? {
+                rejectUnauthorized: true,
+                ca: config.get('DB_SSL_CA') || undefined,
+              }
+            : false,
         extra: {
-          max: 20,
+          // `ConfigService.get<number>()` doesn't actually cast (see
+          // health.controller.ts's own comment on the same gap) — wrap
+          // explicitly. Overridable so the e2e harness can run several
+          // Jest workers' worth of NestJS app instances concurrently
+          // against the same `max_connections=200` Postgres without
+          // exhausting it (see test/setup-env.ts) — production is
+          // unaffected, since nothing sets DB_POOL_MAX there and this
+          // defaults to the same 20 it always was.
+          max: Number(config.get('DB_POOL_MAX', 20)),
           idleTimeoutMillis: 30000,
           connectionTimeoutMillis: 2000,
         },
@@ -97,12 +119,12 @@ import { RedisThrottlerStorage } from './shared/throttler/redis-throttler-storag
         throttlers: [
           {
             name: 'default',
-            ttl: 60000,  // 1 minute window
+            ttl: 60000, // 1 minute window
             limit: config.get<number>('RATE_LIMIT_MAX', 100),
           },
           {
             name: 'burst',
-            ttl: 1000,   // 1 second burst
+            ttl: 1000, // 1 second burst
             limit: config.get<number>('RATE_LIMIT_BURST_MAX', 10),
           },
         ],
@@ -134,6 +156,12 @@ import { RedisThrottlerStorage } from './shared/throttler/redis-throttler-storag
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    // Adds Sunset/Deprecation/Link headers to any route decorated with
+    // @Deprecated() — see docs/technical/api-versioning-policy.md.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: DeprecationHeaderInterceptor,
     },
   ],
 })

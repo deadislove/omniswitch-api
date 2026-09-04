@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Tracks when `payments_old`/`ledger_outbox_old` (the pre-partitioning
@@ -26,23 +26,22 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * past date.
  */
 export class CreateSchemaCutoverLog1787339024677 implements MigrationInterface {
-    name = 'CreateSchemaCutoverLog1787339024677'
+  name = 'CreateSchemaCutoverLog1787339024677';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`
             CREATE TABLE "schema_cutover_log" (
                 "table_name" character varying NOT NULL,
                 "cutover_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
                 CONSTRAINT "PK_schema_cutover_log" PRIMARY KEY ("table_name")
             )
         `);
-        await queryRunner.query(
-            `INSERT INTO "schema_cutover_log" ("table_name", "cutover_at") VALUES ('payments_old', now()), ('ledger_outbox_old', now())`,
-        );
-    }
+    await queryRunner.query(
+      `INSERT INTO "schema_cutover_log" ("table_name", "cutover_at") VALUES ('payments_old', now()), ('ledger_outbox_old', now())`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`DROP TABLE "schema_cutover_log"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`DROP TABLE "schema_cutover_log"`);
+  }
 }

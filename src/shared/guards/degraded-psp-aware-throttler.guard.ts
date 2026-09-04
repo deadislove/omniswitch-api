@@ -16,8 +16,7 @@ import { MerchantPspExposureService } from '../../modules/payment/adapters/circu
 // under CHARGE_RATE_LIMIT_MAX's own 100/min default — deliberately, since
 // the point is to slow this specific merchant's hammering of a struggling
 // PSP, not to match their normal-conditions throughput.
-const DEGRADED_MERCHANT_CHARGE_RATE_LIMIT_MAX =
-  Number(process.env.DEGRADED_MERCHANT_CHARGE_RATE_LIMIT_MAX) || 20;
+const DEGRADED_MERCHANT_CHARGE_RATE_LIMIT_MAX = Number(process.env.DEGRADED_MERCHANT_CHARGE_RATE_LIMIT_MAX) || 20;
 
 const REGISTERED_PROVIDERS = ['STRIPE', 'ADYEN'];
 

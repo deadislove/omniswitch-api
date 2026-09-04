@@ -76,10 +76,7 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
   // to "never blocked" (which would have made every rate limit a no-op).
   async increment(key: string, ttl: number, limit: number): Promise<ThrottlerStorageRecord> {
     const prefixedKey = `throttle:${key}`;
-    const [totalHits, pttl] = (await (this.client as any).throttlerIncrement(
-      prefixedKey,
-      ttl,
-    )) as [number, number];
+    const [totalHits, pttl] = (await (this.client as any).throttlerIncrement(prefixedKey, ttl)) as [number, number];
 
     const timeToExpire = Math.max(0, Math.ceil(pttl / 1000));
     const isBlocked = totalHits > limit;

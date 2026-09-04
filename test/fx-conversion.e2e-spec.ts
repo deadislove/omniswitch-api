@@ -22,14 +22,13 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('FX conversion: merchant settlement currency (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -156,7 +155,13 @@ describe('FX conversion: merchant settlement currency (e2e)', () => {
     }).expect(201);
     expect(chargeRes.body.status).toBe('REQUIRES_CAPTURE');
 
-    const captureRes = await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/capture`, {}).expect(200);
+    const captureRes = await signedRequest(
+      merchant,
+      token,
+      'post',
+      `/api/v1/payments/${chargeRes.body.paymentId}/capture`,
+      {},
+    ).expect(200);
     expect(captureRes.body.status).toBe('SUCCEEDED');
 
     const entries = await ledgerEntries(chargeRes.body.paymentId);

@@ -1,6 +1,5 @@
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
-import { randomUUID as uuidv4 } from 'crypto';
 
 const { combine, timestamp, json, errors, colorize, printf } = winston.format;
 
@@ -25,11 +24,7 @@ export const createLoggerConfig = (serviceName: string, nodeEnv: string) => {
   const isProduction = nodeEnv === 'production';
 
   const formats = isProduction
-    ? combine(
-        errors({ stack: true }),
-        timestamp({ format: 'ISO' }),
-        json(),
-      )
+    ? combine(errors({ stack: true }), timestamp({ format: 'ISO' }), json())
     : combine(
         errors({ stack: true }),
         timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),

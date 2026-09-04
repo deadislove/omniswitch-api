@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * `idempotency_key` was only ever unique globally (`(idempotency_key,
@@ -19,16 +19,19 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * part of any unique constraint, now additionally scoped per merchant.
  */
 export class ScopeIdempotencyKeyToMerchant1788065096858 implements MigrationInterface {
-    name = 'ScopeIdempotencyKeyToMerchant1788065096858'
+  name = 'ScopeIdempotencyKeyToMerchant1788065096858';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_partitioned_idempotency_key"`);
-        await queryRunner.query(`ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_merchant_idempotency_key" UNIQUE ("merchant_id", "idempotency_key", "created_at")`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_partitioned_idempotency_key"`);
+    await queryRunner.query(
+      `ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_merchant_idempotency_key" UNIQUE ("merchant_id", "idempotency_key", "created_at")`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_merchant_idempotency_key"`);
-        await queryRunner.query(`ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_partitioned_idempotency_key" UNIQUE ("idempotency_key", "created_at")`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_merchant_idempotency_key"`);
+    await queryRunner.query(
+      `ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_partitioned_idempotency_key" UNIQUE ("idempotency_key", "created_at")`,
+    );
+  }
 }

@@ -25,7 +25,6 @@ describe('Reconciliation admin endpoint (e2e)', () => {
   let dataSource: DataSource;
   let merchant: SeededMerchant;
   let token: string;
-  let admin: SeededMerchant;
   let adminToken: string;
 
   beforeAll(async () => {
@@ -33,7 +32,7 @@ describe('Reconciliation admin endpoint (e2e)', () => {
     dataSource = app.get(DataSource);
     merchant = await seedMerchant(app, { merchantId: uniqueId('reconmerchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('reconadmin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('reconadmin')));
   });
 
   afterAll(async () => {
@@ -62,82 +61,90 @@ describe('Reconciliation admin endpoint (e2e)', () => {
       .send(body);
   }
 
-  it(
-    'detects MISSING_AT_PSP, AMOUNT_MISMATCH, and UNKNOWN_AT_PSP in one run against real charges',
-    async () => {
-      const since = new Date();
+  it('detects MISSING_AT_PSP, AMOUNT_MISMATCH, and UNKNOWN_AT_PSP in one run against real charges', async () => {
+    const since = new Date();
 
-      // 1) A normal, real STRIPE charge — mock-psp records a genuine
-      //    matching settlement transaction for it. Corrupting our own
-      //    stored amount afterward (simulating a ledger bug, not a bad
-      //    charge) turns this into an AMOUNT_MISMATCH: both sides agree
-      //    the transaction happened, but not on how much.
-      const mismatchCharge = await signedCharge({
-        amount: 50, currency: 'USD', paymentMethodId: 'pm_card_visa',
-        orderId: uniqueId('order'), binInfo: USD_BIN, preferredProvider: 'STRIPE',
-      }).expect(201);
-      await dataSource.getRepository(PaymentEntity).update(mismatchCharge.body.paymentId, {
-        amountMinorUnits: '4000', // was 5000 — mock-psp still thinks it settled 5000
-      });
+    // 1) A normal, real STRIPE charge — mock-psp records a genuine
+    //    matching settlement transaction for it. Corrupting our own
+    //    stored amount afterward (simulating a ledger bug, not a bad
+    //    charge) turns this into an AMOUNT_MISMATCH: both sides agree
+    //    the transaction happened, but not on how much.
+    const mismatchCharge = await signedCharge({
+      amount: 50,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
+    }).expect(201);
+    await dataSource.getRepository(PaymentEntity).update(mismatchCharge.body.paymentId, {
+      amountMinorUnits: '4000', // was 5000 — mock-psp still thinks it settled 5000
+    });
 
-      // 2) A real STRIPE charge whose own payment row is then deleted —
-      //    mock-psp's settlement record is independent of our DB and
-      //    still exists, simulating a charge that settled at the PSP but
-      //    was never durably recorded on our side (e.g. an interrupted
-      //    webhook or a failed insert after the PSP call succeeded).
-      const unknownCharge = await signedCharge({
-        amount: 30, currency: 'USD', paymentMethodId: 'pm_card_visa',
-        orderId: uniqueId('order'), binInfo: USD_BIN, preferredProvider: 'STRIPE',
-      }).expect(201);
-      await dataSource.getRepository(PaymentEntity).delete(unknownCharge.body.paymentId);
+    // 2) A real STRIPE charge whose own payment row is then deleted —
+    //    mock-psp's settlement record is independent of our DB and
+    //    still exists, simulating a charge that settled at the PSP but
+    //    was never durably recorded on our side (e.g. an interrupted
+    //    webhook or a failed insert after the PSP call succeeded).
+    const unknownCharge = await signedCharge({
+      amount: 30,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
+    }).expect(201);
+    await dataSource.getRepository(PaymentEntity).delete(unknownCharge.body.paymentId);
 
-      // 3) A payment we claim was charged at STRIPE but never actually
-      //    was — fabricated directly, simulating a bug that recorded a
-      //    charge without the PSP call it claims to represent ever
-      //    happening.
-      const missingId = randomUUID();
-      await dataSource.getRepository(PaymentEntity).save({
-        id: missingId,
-        merchantId: merchant.merchantId,
-        amountMinorUnits: '7500',
-        currencyCode: 'USD',
-        currencyMinorUnits: 2,
-        status: 'SUCCEEDED' as any,
-        idempotencyKey: missingId,
-        pspProvider: 'STRIPE' as any,
-        pspTransactionId: `pi_never_charged_${missingId}`,
-        refunds: [],
-        captures: [],
-      });
+    // 3) A payment we claim was charged at STRIPE but never actually
+    //    was — fabricated directly, simulating a bug that recorded a
+    //    charge without the PSP call it claims to represent ever
+    //    happening.
+    const missingId = randomUUID();
+    await dataSource.getRepository(PaymentEntity).save({
+      id: missingId,
+      merchantId: merchant.merchantId,
+      amountMinorUnits: '7500',
+      currencyCode: 'USD',
+      currencyMinorUnits: 2,
+      status: 'SUCCEEDED' as any,
+      idempotencyKey: missingId,
+      pspProvider: 'STRIPE' as any,
+      pspTransactionId: `pi_never_charged_${missingId}`,
+      refunds: [],
+      captures: [],
+    });
 
-      // findByProviderAndDateRange() reads off the replica (~1s streaming
-      // lag behind master — see that method's own docblock, an accepted
-      // tradeoff for a passive hourly sweep) — give it time to catch up
-      // rather than racing it.
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+    // findByProviderAndDateRange() reads off the replica (~1s streaming
+    // lag behind master — see that method's own docblock, an accepted
+    // tradeoff for a passive hourly sweep) — give it time to catch up
+    // rather than racing it.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      const res = await runReconciliation({ pspProvider: 'STRIPE', since: since.toISOString() }).expect(200);
+    const res = await runReconciliation({ pspProvider: 'STRIPE', since: since.toISOString() }).expect(200);
 
-      expect(res.body.status).toBe('MISMATCHES_FOUND');
-      const byType = (t: string) => res.body.mismatches.filter((m: { type: string }) => m.type === t);
+    expect(res.body.status).toBe('MISMATCHES_FOUND');
+    const byType = (t: string) => res.body.mismatches.filter((m: { type: string }) => m.type === t);
 
-      const amountMismatches = byType('AMOUNT_MISMATCH');
-      expect(amountMismatches.some((m: any) => m.paymentId === mismatchCharge.body.paymentId)).toBe(true);
+    const amountMismatches = byType('AMOUNT_MISMATCH');
+    expect(amountMismatches.some((m: any) => m.paymentId === mismatchCharge.body.paymentId)).toBe(true);
 
-      const unknownMismatches = byType('UNKNOWN_AT_PSP');
-      expect(unknownMismatches.some((m: any) => m.pspTransactionId === unknownCharge.body.pspTransactionId)).toBe(true);
+    const unknownMismatches = byType('UNKNOWN_AT_PSP');
+    expect(unknownMismatches.some((m: any) => m.pspTransactionId === unknownCharge.body.pspTransactionId)).toBe(true);
 
-      const missingMismatches = byType('MISSING_AT_PSP');
-      expect(missingMismatches.some((m: any) => m.paymentId === missingId)).toBe(true);
-    },
-    15_000,
-  );
+    const missingMismatches = byType('MISSING_AT_PSP');
+    expect(missingMismatches.some((m: any) => m.paymentId === missingId)).toBe(true);
+  }, 15_000);
 
   it('a clean charge with no corruption reconciles with zero mismatches for it', async () => {
     const since = new Date();
     const cleanCharge = await signedCharge({
-      amount: 15, currency: 'USD', paymentMethodId: 'pm_card_visa',
-      orderId: uniqueId('order'), binInfo: USD_BIN, preferredProvider: 'STRIPE',
+      amount: 15,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
     }).expect(201);
 
     await new Promise((resolve) => setTimeout(resolve, 1500));

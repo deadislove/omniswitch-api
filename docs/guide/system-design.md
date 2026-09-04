@@ -368,16 +368,25 @@ Two distinct suites, and they test different things on purpose:
 To run the e2e suite locally: `docker-compose up -d postgres-master
 postgres-replica pgbouncer-master pgbouncer-replica redis mock-psp vault`,
 then `npm run test:e2e`.
-`maxWorkers: 1` is deliberate — every spec file boots its own full
-`AppModule` against the *same* shared Postgres/Redis, and running files
-concurrently risks cross-file interference on that shared state (two
-files' merchants racing the same rate-limit bucket, for instance).
+`maxWorkers: "50%"` — every spec file boots its own full `AppModule`
+against the *same* shared Postgres/Redis, so `test/setup-env.ts` gives
+each Jest worker its own logical Redis DB and a larger DB connection
+pool to avoid concurrent workers racing each other's rate-limit
+bucket/circuit-breaker state or exhausting Postgres's connection limit.
+`"50%"`, not a fixed worker count — the actual flakiness this ran into
+turned out to be real host CPU scheduling contention (measured: load
+average over 20 on a 10-core machine mid-run), not a bug in the
+isolation layer, which diagnostic logging separately confirmed was
+correct. See `docs/technical/ci-cd.md`'s "Parallelizing e2e workers"
+section for the measured numbers and why adaptive sizing is the fix.
 
-A handful of tests are **known to be flaky at full-suite scale** (a
-heap-threshold health check, an outbox-relay timing race, an occasional
-rate-limit burst) — each reconfirmed clean when run in isolation
-repeatedly. If you see one of these fail, re-run the specific file in
-isolation before assuming you broke something; see
+A handful of tests were historically **flaky at full-suite scale** — an
+outbox-relay timing race and an occasional rate-limit burst, each
+reconfirmed clean when run in isolation. (A third, a heap-threshold
+health-check failure, was a miscalibrated threshold rather than a real
+leak — see `ci-cd.md`'s writeup — and is fixed, not just flaky.) If you
+see a failure like this, re-run the specific file in isolation before
+assuming you broke something; see
 [`../technical/architecture.md#testing`](../technical/architecture.md#testing)
 for more.
 
@@ -388,7 +397,7 @@ for more.
 | Service | Role |
 |---|---|
 | `postgres-master` / `postgres-replica` | Real streaming replication — `TypeOrmModule`'s `replication` config sends writes to master, reads to the replica |
-| `pgbouncer-master` / `pgbouncer-replica` | Transaction-mode connection pooling in front of each Postgres instance — at `hpa.yaml`'s `maxReplicas: 20` × `extra.max: 20` per pod, direct connections could reach 400 against a `max_connections=200` server. `api` connects to these, not to Postgres directly (migrations are the one exception — see `database-migrations.md`). See [`../technical/load-testing.md`](../technical/load-testing.md) (Finding #3) for load-test results |
+| `pgbouncer-master` / `pgbouncer-replica` | Transaction-mode connection pooling in front of each Postgres instance — at `hpa.yaml`'s `maxReplicas: 20` × `extra.max: 20` per pod, direct connections could reach 400 against a `max_connections=200` server. `api` connects to these, not to Postgres directly (migrations are the one exception — see `database-migrations.md`). See [`../technical/tests/load-testing.md`](../technical/tests/load-testing.md) (Finding #3) for load-test results |
 | `redis` | Idempotency locks, rate-limit counters, circuit-breaker state, JWT revocation lists |
 | `vault` | Transit engine, envelope-encrypts secrets at rest (dev-mode — see §5) |
 | `mock-psp` | A Node HTTP server mimicking Stripe's and Adyen's real API shapes (`/v1/...`, `/adyen/...`) plus side endpoints for FX rates, KYC review, and bank transfers |
@@ -397,7 +406,7 @@ for more.
 `k8s/` has the corresponding production manifests
 (`deployment.yaml`/`service.yaml`/`hpa.yaml`/`ingress.yaml`/`configmap.yaml`/`secret.yaml`)
 — see
-[`../technical/infra-verification-status.md`](../technical/infra-verification-status.md)
+[`../technical/tests/infra-verification-status.md`](../technical/tests/infra-verification-status.md)
 for exactly what's been proven to work here versus what's an unverified
 assumption before you trust a green e2e run more than it's earned.
 

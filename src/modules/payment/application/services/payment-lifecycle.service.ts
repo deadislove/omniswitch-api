@@ -141,7 +141,11 @@ export class PaymentLifecycleService {
       refundAmount,
       settlementConversion: settlementConversion
         ? {
-            convertedRefundAmount: refundAmount.convertTo(settlementConversion.currency, settlementConversion.rate, settlementConversion.provider),
+            convertedRefundAmount: refundAmount.convertTo(
+              settlementConversion.currency,
+              settlementConversion.rate,
+              settlementConversion.provider,
+            ),
             rate: settlementConversion.rate,
             provider: settlementConversion.provider,
           }
@@ -229,7 +233,10 @@ export class PaymentLifecycleService {
     // books only its own increment, whether or not it's the one that
     // completes the authorization — a partial capture is real money moving,
     // not a placeholder to be corrected later.
-    const { platformFee, settlementConversion, reserveHold } = await this.chargeLedgerParams.resolve(payment.metadata.merchantId, captureAmount);
+    const { platformFee, settlementConversion, reserveHold } = await this.chargeLedgerParams.resolve(
+      payment.metadata.merchantId,
+      captureAmount,
+    );
     if (settlementConversion) {
       payment.recordSettlementConversion({
         currency: settlementConversion.convertedNetAmount.currency.code,
@@ -252,7 +259,12 @@ export class PaymentLifecycleService {
       await this.ledgerOutbox.saveWithPayment(payment.id, outboxEvent, manager);
       if (reserveHold) {
         await this.reserveService.recordHold(
-          { paymentId: payment.id, merchantId: payment.metadata.merchantId, amount: reserveHold.amount, holdDays: reserveHold.holdDays },
+          {
+            paymentId: payment.id,
+            merchantId: payment.metadata.merchantId,
+            amount: reserveHold.amount,
+            holdDays: reserveHold.holdDays,
+          },
           manager,
         );
       }
@@ -327,7 +339,11 @@ export class PaymentLifecycleService {
    * call site in this service — it only guarantees the loser's write
    * never lands, rather than landing and clobbering the winner's.
    */
-  private async saveIfUnchanged(manager: EntityManager, payment: PaymentAggregate, before: PaymentEntity): Promise<void> {
+  private async saveIfUnchanged(
+    manager: EntityManager,
+    payment: PaymentAggregate,
+    before: PaymentEntity,
+  ): Promise<void> {
     const entity = PaymentMapper.toPersistence(payment);
     const { id, ...fields } = entity;
     const result = await manager

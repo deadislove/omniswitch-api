@@ -71,10 +71,18 @@ export class ReserveService {
   async release(id: string, options: { force?: boolean } = {}): Promise<ReserveHold> {
     const hold = await this.reserveHoldPort.findById(id);
     if (!hold) {
-      throw new NotFoundException({ statusCode: 404, error: `Reserve hold ${id} not found`, code: 'RESERVE_HOLD_NOT_FOUND' });
+      throw new NotFoundException({
+        statusCode: 404,
+        error: `Reserve hold ${id} not found`,
+        code: 'RESERVE_HOLD_NOT_FOUND',
+      });
     }
     if (hold.status !== 'HELD') {
-      throw new ConflictException({ statusCode: 409, error: `Reserve hold is already ${hold.status}`, code: 'RESERVE_HOLD_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Reserve hold is already ${hold.status}`,
+        code: 'RESERVE_HOLD_ALREADY_RELEASED',
+      });
     }
     const now = new Date();
     if (!options.force && now < hold.releaseEligibleAt) {
@@ -104,7 +112,11 @@ export class ReserveService {
     });
 
     if (!released) {
-      throw new ConflictException({ statusCode: 409, error: `Reserve hold ${id} lost a race with another release attempt`, code: 'RESERVE_HOLD_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Reserve hold ${id} lost a race with another release attempt`,
+        code: 'RESERVE_HOLD_ALREADY_RELEASED',
+      });
     }
 
     // Return the in-memory aggregate, mutated to match what was just
@@ -119,7 +131,9 @@ export class ReserveService {
     // DisputeService.submitEvidence()/MerchantService's update methods
     // already use.
     hold.release(now, options.force ?? false);
-    this.logger.log(`Reserve hold ${id} released (${hold.amount.toString()}) for merchant ${hold.merchantId}${options.force ? ' [forced]' : ''}`);
+    this.logger.log(
+      `Reserve hold ${id} released (${hold.amount.toString()}) for merchant ${hold.merchantId}${options.force ? ' [forced]' : ''}`,
+    );
     return hold;
   }
 

@@ -227,8 +227,9 @@ state where cluster-wide state was actually needed) — but unlike those
 two, **it has not been fixed here**, only worked around, unevenly, on a
 service-by-service basis.
 
-There are thirteen of these today (fifteen counting the two purely
-read-only ones): `LedgerOutboxRelayService.relay()` (every 10s) and its
+There are thirteen of these today (two of them purely read-only —
+log/alert only, no state mutation):
+`LedgerOutboxRelayService.relay()` (every 10s) and its
 `detectStaleEvents()` (every 5min, log/alert-only — no state mutation,
 so not a duplication concern the way the others below are);
 `ReconciliationService` (hourly, not daily); `ReserveService`,
@@ -313,7 +314,7 @@ up to 20 times, all within roughly the same moment.
   across 20 replicas means the same batch of pending events is likely
   read by multiple pods before any of them finishes publishing. Whether
   that produces a duplicate publish (the in-process `EventEmitter2` emit
-  this relay currently does — see `ledger-and-settlement.md` — would fire
+  this relay currently does — see `ledger-accounting.md` — would fire
   in each replica that read the same event) is a real open question, not
   verified either way.
 - **`AmbiguousPaymentService.runAutoResolutionSweep()` reduces but

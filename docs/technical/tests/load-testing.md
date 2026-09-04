@@ -137,8 +137,8 @@ conclusion, no regression.
 fresh image build) after this round's per-merchant PSP entitlement
 work (`MerchantEntity.enabledPspProviders`, the `preferredProvider`
 true-override fix, and an e2e-only circuit-breaker-state-leak fix —
-see [`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../business-domain/ledger-and-settlement.md#smart-psp-routing)
-and [`../adr/0004-smart-routing-with-circuit-breaker.md`](../adr/0004-smart-routing-with-circuit-breaker.md))
+see [`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../../business-domain/ledger-and-settlement.md#smart-psp-routing)
+and [`../adr/0004-smart-routing-with-circuit-breaker.md`](../../adr/0004-smart-routing-with-circuit-breaker.md))
 — none of which touch the charge path's rate-limiting. 200 seeded merchants, default rate
 limits: 6700 requests, **400 succeeded (`201`)**, 5278 hit the
 route-level `429` cap, **zero `5xx`s**. Matches the historical
@@ -571,7 +571,7 @@ it always has.
 Findings #1–3 above all ran against `docker-compose.yml`, which has no
 `NetworkPolicy` equivalent at all. Answering "does the defense-in-depth
 `NetworkPolicy` (see
-[`security-and-compliance.md`](./security-and-compliance.md#network-segmentation--defense-in-depth-added-full-cde-isolation-intentionally-out-of-scope))
+[`security-and-compliance.md`](../security-and-compliance.md#network-segmentation--defense-in-depth-added-full-cde-isolation-intentionally-out-of-scope))
 cost anything" needed a different environment: a local `kind` cluster
 running Calico as the CNI (kind's own default CNI doesn't enforce
 `NetworkPolicy` at all — a policy applied against it would silently
@@ -717,7 +717,7 @@ charge path that this app's `NetworkPolicy` actually gates.
   multi-replica HPA simulation. Cross-replica behavior (Redis-backed
   circuit breaker/rate-limiter/idempotency state under real concurrent
   pods) is covered separately in
-  [`distributed-state.md`](./distributed-state.md), not re-tested here.
+  [`distributed-state.md`](../distributed-state.md), not re-tested here.
 - **mock-psp has no artificial latency** — these numbers reflect this
   app's own overhead (auth, DB, Redis) plus a near-instant PSP round trip,
   not what a real Stripe/Adyen call would add on top.

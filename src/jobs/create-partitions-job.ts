@@ -79,7 +79,9 @@ async function tableExists(tableName: string): Promise<boolean> {
  * range already existed). The caller (`main()`) logs both so a CronJob
  * run's log line shows whether it did real work or was a no-op.
  */
-export async function ensureUpcomingPartitions(now: Date = new Date()): Promise<{ checked: number; created: string[] }> {
+export async function ensureUpcomingPartitions(
+  now: Date = new Date(),
+): Promise<{ checked: number; created: string[] }> {
   const created: string[] = [];
   let checked = 0;
 

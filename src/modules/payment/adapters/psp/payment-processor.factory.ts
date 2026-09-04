@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PSPAdapterPort } from '../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
-import { SmartRoutingStrategy, RoutingContext, RoutingDecision, PSPHealthStatus } from '../../domain/services/smart-routing.strategy';
+import {
+  SmartRoutingStrategy,
+  RoutingContext,
+  RoutingDecision,
+  PSPHealthStatus,
+} from '../../domain/services/smart-routing.strategy';
 import { StripePSPAdapter } from './stripe/stripe-psp.adapter';
 import { AdyenPSPAdapter } from './adyen/adyen-psp.adapter';
 
@@ -108,8 +113,7 @@ export class PaymentProcessorFactory {
     const adapter = this.getAdapter(decision.selectedProvider);
 
     this.logger.log(
-      `Smart routing decision: ${decision.routingReason} | ` +
-      `Fallbacks: [${decision.fallbackProviders.join(', ')}]`,
+      `Smart routing decision: ${decision.routingReason} | ` + `Fallbacks: [${decision.fallbackProviders.join(', ')}]`,
     );
 
     return { adapter, decision };
@@ -151,7 +155,9 @@ export class PaymentProcessorFactory {
     // resolves to a definite decline (or a repeat of either failure
     // class above) is it safe to consider a fallback.
     if (isAmbiguousOutcomeError(primaryError) || isTransientPspError(primaryError)) {
-      const retryReason = isAmbiguousOutcomeError(primaryError) ? 'outcome ambiguous' : 'returned a transient server error';
+      const retryReason = isAmbiguousOutcomeError(primaryError)
+        ? 'outcome ambiguous'
+        : 'returned a transient server error';
       this.logger.warn(
         `Primary PSP ${decision.selectedProvider} ${retryReason} — retrying the same provider once via idempotency replay before considering any fallback`,
       );
@@ -160,10 +166,9 @@ export class PaymentProcessorFactory {
         return { result, provider: decision.selectedProvider, usedFallback: false };
       } catch (retryError: unknown) {
         if (isAmbiguousOutcomeError(retryError)) {
-          throw Object.assign(
-            new Error(`${decision.selectedProvider} outcome remains ambiguous after one retry.`),
-            { isAmbiguousOutcome: true },
-          );
+          throw Object.assign(new Error(`${decision.selectedProvider} outcome remains ambiguous after one retry.`), {
+            isAmbiguousOutcome: true,
+          });
         }
         // A retry that resolves to a transient 5xx again (or now a 4xx
         // decline) is a confirmed, non-ambiguous failure — safe to fall
@@ -175,7 +180,7 @@ export class PaymentProcessorFactory {
     const primaryMsg = primaryError instanceof Error ? primaryError.message : String(primaryError);
     this.logger.warn(
       `Primary PSP ${decision.selectedProvider} failed: ${primaryMsg}. ` +
-      `Trying fallbacks: [${decision.fallbackProviders.join(', ')}]`,
+        `Trying fallbacks: [${decision.fallbackProviders.join(', ')}]`,
     );
 
     // Tracks whether the most recent attempt (primary, or whichever
@@ -215,7 +220,7 @@ export class PaymentProcessorFactory {
     throw Object.assign(
       new Error(
         `All PSP providers failed. Primary: ${decision.selectedProvider}. ` +
-        `Fallbacks tried: [${decision.fallbackProviders.join(', ')}]`,
+          `Fallbacks tried: [${decision.fallbackProviders.join(', ')}]`,
       ),
       { isAmbiguousOutcome: lastFailureWasAmbiguous },
     );

@@ -43,7 +43,7 @@ against it.
    clean or not — a clean run is itself evidence, not just a non-event.
 4. Logs an error per mismatch (same posture as
    `LedgerOutboxRelayService.detectStaleEvents()` — see
-   [`ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md));
+   [`ledger-accounting.md`](../business-domain/ledger-accounting.md));
    in production this is where paging on-call/finance would be wired in.
 
 Runs automatically every hour (`@Cron(CronExpression.EVERY_HOUR)`) for each
@@ -150,7 +150,7 @@ rather than a broader schema migration).
   integration point where a production deployment would page on-call or
   emit a metric an alert is wired to — nothing is actually wired up in
   this reference project, same posture as everywhere else `logger.error`
-  is used as a stand-in for real alerting (see `ledger-and-settlement.md`'s
+  is used as a stand-in for real alerting (see `ledger-accounting.md`'s
   outbox section, `distributed-state.md`).
 - **Matching is by `pspTransactionId` only.** A charge that succeeded at
   the PSP but whose `pspTransactionId` was never persisted here (e.g. a

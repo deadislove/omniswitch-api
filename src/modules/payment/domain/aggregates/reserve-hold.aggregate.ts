@@ -96,12 +96,28 @@ export class ReserveHold {
     this._releasedAt = now;
   }
 
-  get id(): string { return this._id; }
-  get paymentId(): string { return this._paymentId; }
-  get merchantId(): string { return this._merchantId; }
-  get amount(): Money { return this._amount; }
-  get status(): ReserveHoldStatus { return this._status; }
-  get releaseEligibleAt(): Date { return this._releaseEligibleAt; }
-  get createdAt(): Date { return this._createdAt; }
-  get releasedAt(): Date | undefined { return this._releasedAt; }
+  get id(): string {
+    return this._id;
+  }
+  get paymentId(): string {
+    return this._paymentId;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get status(): ReserveHoldStatus {
+    return this._status;
+  }
+  get releaseEligibleAt(): Date {
+    return this._releaseEligibleAt;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get releasedAt(): Date | undefined {
+    return this._releasedAt;
+  }
 }

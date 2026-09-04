@@ -128,7 +128,9 @@ export class SubscriptionService {
         planId,
       });
       await this.subscriptionPort.save(subscription);
-      this.logger.log(`Subscription ${subscription.id} started trial (${params.trialDays}d) for merchant ${params.merchantId}`);
+      this.logger.log(
+        `Subscription ${subscription.id} started trial (${params.trialDays}d) for merchant ${params.merchantId}`,
+      );
       return subscription;
     }
 
@@ -171,7 +173,9 @@ export class SubscriptionService {
       planId,
     });
     await this.subscriptionPort.save(subscription);
-    this.logger.log(`Subscription ${subscription.id} started active for merchant ${params.merchantId} (first charge ${firstPaymentId})`);
+    this.logger.log(
+      `Subscription ${subscription.id} started active for merchant ${params.merchantId} (first charge ${firstPaymentId})`,
+    );
     return subscription;
   }
 
@@ -190,9 +194,8 @@ export class SubscriptionService {
   private async verifyPaymentMethodOrThrow(merchantId: string, paymentMethodId: string, amount: Money): Promise<void> {
     let verification: { success: boolean; errorMessage?: string };
     try {
-      const { result } = await this.acquirerRouting.executeWithSmartRouting(
-        { amount, merchantId },
-        (adapter) => adapter.verifyPaymentMethod({
+      const { result } = await this.acquirerRouting.executeWithSmartRouting({ amount, merchantId }, (adapter) =>
+        adapter.verifyPaymentMethod({
           paymentMethodId,
           merchantId,
           currency: amount.currency.code,
@@ -236,7 +239,10 @@ export class SubscriptionService {
    * silently on the new (more expensive) plan without ever having paid
    * the difference.
    */
-  async changePlan(subscriptionId: string, newPlanId: string): Promise<{ subscription: Subscription; prorationCharged?: Money; creditIssued?: Money }> {
+  async changePlan(
+    subscriptionId: string,
+    newPlanId: string,
+  ): Promise<{ subscription: Subscription; prorationCharged?: Money; creditIssued?: Money }> {
     const subscription = await this.getOrThrow(subscriptionId);
     if (subscription.status !== 'ACTIVE') {
       throw new ConflictException({
@@ -292,7 +298,11 @@ export class SubscriptionService {
     await this.subscriptionPort.save(subscription);
     this.logger.log(
       `Subscription ${subscription.id} changed to plan ${newPlan.id} (${newPlan.name})` +
-      (proration ? `, prorated charge ${proration.toString()}` : creditIssued ? `, issued credit ${creditIssued.toString()} toward a future period` : ', no proration owed'),
+        (proration
+          ? `, prorated charge ${proration.toString()}`
+          : creditIssued
+            ? `, issued credit ${creditIssued.toString()} toward a future period`
+            : ', no proration owed'),
     );
     return { subscription, prorationCharged: proration, creditIssued };
   }
@@ -308,7 +318,11 @@ export class SubscriptionService {
   async getOrThrow(id: string): Promise<Subscription> {
     const subscription = await this.subscriptionPort.findById(id);
     if (!subscription) {
-      throw new NotFoundException({ statusCode: 404, error: `Subscription ${id} not found`, code: 'SUBSCRIPTION_NOT_FOUND' });
+      throw new NotFoundException({
+        statusCode: 404,
+        error: `Subscription ${id} not found`,
+        code: 'SUBSCRIPTION_NOT_FOUND',
+      });
     }
     return subscription;
   }
@@ -317,7 +331,9 @@ export class SubscriptionService {
     const subscription = await this.getOrThrow(id);
     subscription.requestCancellation(new Date(), !atPeriodEnd);
     await this.subscriptionPort.save(subscription);
-    this.logger.log(`Subscription ${id} cancellation requested (atPeriodEnd=${atPeriodEnd}) — now ${subscription.status}`);
+    this.logger.log(
+      `Subscription ${id} cancellation requested (atPeriodEnd=${atPeriodEnd}) — now ${subscription.status}`,
+    );
     if (subscription.status === 'CANCELED') {
       this.emitCanceledEvent(subscription, 'merchant_requested');
     }
@@ -348,7 +364,10 @@ export class SubscriptionService {
     });
   }
 
-  private emitCanceledEvent(subscription: Subscription, reason: 'dunning_exhausted' | 'hard_decline' | 'period_end_reached' | 'merchant_requested'): void {
+  private emitCanceledEvent(
+    subscription: Subscription,
+    reason: 'dunning_exhausted' | 'hard_decline' | 'period_end_reached' | 'merchant_requested',
+  ): void {
     this.eventEmitter.emit('subscription.canceled', {
       subscriptionId: subscription.id,
       merchantId: subscription.merchantId,
@@ -438,7 +457,10 @@ export class SubscriptionService {
             `Subscription ${subscription.id} billing attempt failed (status=${result.status}, errorCode=${result.errorCode ?? '(none)'}, attempt ${subscription.failedAttempts}/${MAX_DUNNING_ATTEMPTS}) — now ${subscription.status}`,
           );
           if (subscription.status === 'CANCELED') {
-            this.emitCanceledEvent(subscription, subscription.canceledByHardDecline ? 'hard_decline' : 'dunning_exhausted');
+            this.emitCanceledEvent(
+              subscription,
+              subscription.canceledByHardDecline ? 'hard_decline' : 'dunning_exhausted',
+            );
           } else {
             this.emitPastDueEvent(subscription);
           }
@@ -467,7 +489,9 @@ export class SubscriptionService {
     }
 
     if (due.length > 0) {
-      this.logger.log(`Subscription billing sweep: ${charged} charged, ${canceled} canceled, ${failed} failed, ${due.length} due`);
+      this.logger.log(
+        `Subscription billing sweep: ${charged} charged, ${canceled} canceled, ${failed} failed, ${due.length} due`,
+      );
     }
     return { charged, canceled, failed };
   }

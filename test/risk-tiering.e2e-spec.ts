@@ -23,14 +23,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 describe('Automatic risk-tier adjustment (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -38,7 +37,13 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
   });
 
   async function chargeImmediate(m: SeededMerchant, t: string, amount = 20) {
-    const bodyObj = { amount, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN };
+    const bodyObj = {
+      amount,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+    };
     const bodyStr = JSON.stringify(bodyObj);
     const { signature, timestamp } = signHmacRequest(m.hmacSecret, 'post', '/api/v1/payments/charge', bodyStr);
     const res = await request(app.getHttpServer())
@@ -131,10 +136,14 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('riskhigh') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
-    const payments: any[] = [];
-    for (let i = 0; i < 10; i++) {
-      payments.push(await chargeImmediate(merchant, token));
-    }
+    // Concurrent, not sequential — each call has its own randomUUID()
+    // idempotency key and orderId, so there's no shared state making 10
+    // sequential real round-trips necessary; under real contention
+    // (`maxWorkers` > 1 — see ci-cd.md's "Parallelizing e2e workers"),
+    // 10 sequential real charges compounded per-call latency enough to
+    // exceed even a raised test timeout, in this file specifically —
+    // this is the actual fix, not a longer timeout papering over it.
+    const payments: any[] = await Promise.all(Array.from({ length: 10 }, () => chargeImmediate(merchant, token)));
     // 1 lost dispute / 10 settled charges = 10% — comfortably over the
     // (deliberately low, illustrative) 1% HIGH-risk threshold.
     await createLostDispute(payments[0]);
@@ -158,10 +167,14 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
       .expect(200);
     expect(patchRes.body.riskTierAutoManaged).toBe(false);
 
-    const payments: any[] = [];
-    for (let i = 0; i < 10; i++) {
-      payments.push(await chargeImmediate(merchant, token));
-    }
+    // Concurrent, not sequential — each call has its own randomUUID()
+    // idempotency key and orderId, so there's no shared state making 10
+    // sequential real round-trips necessary; under real contention
+    // (`maxWorkers` > 1 — see ci-cd.md's "Parallelizing e2e workers"),
+    // 10 sequential real charges compounded per-call latency enough to
+    // exceed even a raised test timeout, in this file specifically —
+    // this is the actual fix, not a longer timeout papering over it.
+    const payments: any[] = await Promise.all(Array.from({ length: 10 }, () => chargeImmediate(merchant, token)));
     await createLostDispute(payments[0]);
 
     await runTieringNow();
@@ -185,14 +198,18 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
     expect(afterReenable.reserveHoldDays).toBe(90);
   });
 
-  it('a merchant\'s reserve tapers back down once the lost dispute driving it falls outside the trailing 90-day window', async () => {
+  it("a merchant's reserve tapers back down once the lost dispute driving it falls outside the trailing 90-day window", async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('risktaper') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
-    const payments: any[] = [];
-    for (let i = 0; i < 10; i++) {
-      payments.push(await chargeImmediate(merchant, token));
-    }
+    // Concurrent, not sequential — each call has its own randomUUID()
+    // idempotency key and orderId, so there's no shared state making 10
+    // sequential real round-trips necessary; under real contention
+    // (`maxWorkers` > 1 — see ci-cd.md's "Parallelizing e2e workers"),
+    // 10 sequential real charges compounded per-call latency enough to
+    // exceed even a raised test timeout, in this file specifically —
+    // this is the actual fix, not a longer timeout papering over it.
+    const payments: any[] = await Promise.all(Array.from({ length: 10 }, () => chargeImmediate(merchant, token)));
     const disputeId = await createLostDispute(payments[0]);
     await runTieringNow();
 
@@ -203,7 +220,9 @@ describe('Automatic risk-tier adjustment (e2e)', () => {
     // trailing window RiskTieringService actually looks at — simulating
     // time passing without touching real wall-clock time.
     const disputeEntity = await findOneOnMaster(DisputeEntity, { pspDisputeId: disputeId });
-    await dataSource.getRepository(DisputeEntity).update(disputeEntity!.id, { createdAt: new Date(Date.now() - 100 * DAY_MS) });
+    await dataSource
+      .getRepository(DisputeEntity)
+      .update(disputeEntity!.id, { createdAt: new Date(Date.now() - 100 * DAY_MS) });
 
     await runTieringNow();
 

@@ -80,7 +80,10 @@ export class OutboxAdminController {
   @ApiOperation({ summary: 'Reset a FAILED event back to PENDING so the relay retries it on its next tick' })
   @ApiResponse({ status: 200, type: RetryResponseDto })
   @ApiResponse({ status: 404, description: 'Outbox event not found' })
-  @ApiResponse({ status: 409, description: 'Event is not currently FAILED (lost a race with another retry, or moved on)' })
+  @ApiResponse({
+    status: 409,
+    description: 'Event is not currently FAILED (lost a race with another retry, or moved on)',
+  })
   async retry(@Param('id') id: string): Promise<RetryResponseDto> {
     await this.outboxRecovery.retry(id);
     return { id, status: 'PENDING' };

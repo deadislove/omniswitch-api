@@ -28,8 +28,10 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * `ambiguous-payment-outcome.e2e-spec.ts`/`psp-bulkhead-isolation.e2e-spec.ts`
  * also reset for. Reset before and after (and, since this file alone makes enough such
  * calls to cross FAILURE_THRESHOLD within itself, before *every* test
- * too) so it doesn't happen here or leak into whichever e2e file runs
- * next (maxWorkers: 1, no Redis flush between files).
+ * too) so it doesn't happen here or leak into whichever e2e file the same
+ * Jest worker runs next (each worker gets its own Redis DB — see
+ * test/setup-env.ts — but files within one worker still run sequentially
+ * with no flush between them).
  */
 describe('Ambiguous payment admin resolution (e2e)', () => {
   let app: INestApplication;
@@ -89,7 +91,10 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     const queryRunner = dataSource.createQueryRunner('master');
     let events: LedgerOutboxEntity[];
     try {
-      events = await queryRunner.manager.find(LedgerOutboxEntity, { where: { paymentId }, order: { createdAt: 'ASC' } });
+      events = await queryRunner.manager.find(LedgerOutboxEntity, {
+        where: { paymentId },
+        order: { createdAt: 'ASC' },
+      });
     } finally {
       await queryRunner.release();
     }
@@ -172,7 +177,11 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/api/v1/admin/payments/${paymentId}/resolve-ambiguous`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ outcome: 'SUCCEEDED', pspTransactionId: 'pi_manually_confirmed_123', reason: 'Confirmed in Stripe dashboard' })
+      .send({
+        outcome: 'SUCCEEDED',
+        pspTransactionId: 'pi_manually_confirmed_123',
+        reason: 'Confirmed in Stripe dashboard',
+      })
       .expect(200);
 
     expect(res.body.status).toBe('SUCCEEDED');

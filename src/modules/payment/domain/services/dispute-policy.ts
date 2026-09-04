@@ -20,7 +20,12 @@ export type DisputeAutoDecision = 'ACCEPT' | 'CONTEST' | 'MANUAL_REVIEW';
 // Same reasoning as RiskTieringService's reserve tiers: not FX-normalized
 // across currencies — a 15-unit threshold means very different things for
 // USD vs. JPY vs. KWD. A flat major-unit cutoff, not a calibrated one.
-const AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS = 15;
+// Overridable at the call site (DisputeService reads
+// DISPUTE_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS) rather than read from
+// ConfigService here directly — this file is a pure domain module (no
+// I/O, no DI), and stays that way on purpose; see this file's own
+// docblock and RiskTieringService's matching comment on its thresholds.
+export const DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS = 15;
 
 // Reason codes with a reasonably templatable, evidence-based response.
 // Deliberately conservative — 'fraudulent' is excluded even though it's
@@ -35,10 +40,10 @@ const AUTO_CONTESTABLE_REASONS = new Set(['product_not_received', 'duplicate']);
 const EVIDENCE_TEMPLATES: Record<string, string> = {
   product_not_received:
     'Automated response (dispute policy): shipment/delivery confirmation is on file for this order. ' +
-    'Operator: verify tracking before this dispute\'s response deadline in case a fuller submission is warranted.',
+    "Operator: verify tracking before this dispute's response deadline in case a fuller submission is warranted.",
   duplicate:
     'Automated response (dispute policy): transaction records on file show this as a single, non-duplicate charge. ' +
-    'Operator: confirm no duplicate settlement occurred before this dispute\'s response deadline.',
+    "Operator: confirm no duplicate settlement occurred before this dispute's response deadline.",
 };
 
 // Shown to an operator regardless of what the auto-policy decided —
@@ -68,15 +73,22 @@ const DEFAULT_EVIDENCE_GUIDANCE =
  * worth contesting regardless of why it was filed, the same reasoning a
  * human operator would apply first.
  */
-export function decideAutoDisposition(amount: Money, reason?: string): DisputeAutoDecision {
-  if (amount.amount < AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS) return 'ACCEPT';
+export function decideAutoDisposition(
+  amount: Money,
+  reason?: string,
+  autoAcceptThresholdMajorUnits: number = DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS,
+): DisputeAutoDecision {
+  if (amount.amount < autoAcceptThresholdMajorUnits) return 'ACCEPT';
   if (reason && AUTO_CONTESTABLE_REASONS.has(reason)) return 'CONTEST';
   return 'MANUAL_REVIEW';
 }
 
 /** Only meaningful when decideAutoDisposition() returned 'CONTEST' — every reason in AUTO_CONTESTABLE_REASONS has a template. */
 export function autoContestEvidenceFor(reason?: string): string {
-  return (reason && EVIDENCE_TEMPLATES[reason]) || 'Automated response (dispute policy): evidence submitted per default dispute policy.';
+  return (
+    (reason && EVIDENCE_TEMPLATES[reason]) ||
+    'Automated response (dispute policy): evidence submitted per default dispute policy.'
+  );
 }
 
 export function evidenceGuidanceFor(reason?: string): string {

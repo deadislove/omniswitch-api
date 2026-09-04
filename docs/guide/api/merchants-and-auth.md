@@ -143,7 +143,7 @@ Sets (or, with an empty array, clears) a volume-based fee schedule that
 supersedes `platformFeeBps` once trailing monthly volume crosses a
 threshold. See
 [`../business-domain-guide.md`](../business-domain-guide.md) and
-[`../../business-domain/ledger-and-settlement.md#fee-model`](../../business-domain/ledger-and-settlement.md#fee-model).
+[`../../business-domain/fee-model.md`](../../business-domain/fee-model.md).
 
 - **Body**: `{ tiers: [{ minVolumeMinorUnits: string, bps: number }] }`
   — strictly ascending, no duplicate thresholds.
@@ -206,7 +206,7 @@ payment incidents (see
 note on `AMBIGUOUS`) cross a volume or streak threshold — purely
 observational, does not change how that merchant's charges are
 processed. See
-[`../../business-domain/ledger-and-settlement.md`](../../business-domain/ledger-and-settlement.md)
+[`../../business-domain/risk-and-fraud.md`](../../business-domain/risk-and-fraud.md#ambiguous-risk-monitoring-psp-reliability-signal)
 for the full design.
 
 #### `PATCH /admin/merchants/:id/ambiguous-risk`

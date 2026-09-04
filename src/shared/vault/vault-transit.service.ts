@@ -67,11 +67,9 @@ export class VaultTransitService implements OnModuleInit {
   }
 
   async decrypt(ciphertext: string): Promise<string> {
-    const res = await this.request<{ data: { plaintext: string } }>(
-      'POST',
-      `/v1/transit/decrypt/${TRANSIT_KEY_NAME}`,
-      { ciphertext },
-    );
+    const res = await this.request<{ data: { plaintext: string } }>('POST', `/v1/transit/decrypt/${TRANSIT_KEY_NAME}`, {
+      ciphertext,
+    });
     return Buffer.from(res.data.plaintext, 'base64').toString('utf8');
   }
 

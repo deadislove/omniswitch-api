@@ -54,11 +54,12 @@ const createMockLedgerOutbox = (): jest.Mocked<LedgerOutboxPort> => ({
   findCreatedBetween: jest.fn(),
 });
 
-const createMockAcquirerRouting = (): jest.Mocked<AcquirerRoutingService> => ({
-  selectOptimalAdapter: jest.fn(),
-  executeWithSmartRouting: jest.fn(),
-  getPSPHealthSummary: jest.fn(),
-} as any);
+const createMockAcquirerRouting = (): jest.Mocked<AcquirerRoutingService> =>
+  ({
+    selectOptimalAdapter: jest.fn(),
+    executeWithSmartRouting: jest.fn(),
+    getPSPHealthSummary: jest.fn(),
+  }) as any;
 
 const createMockDataSource = () => ({
   transaction: jest.fn().mockImplementation(async (cb: any) => {
@@ -107,13 +108,14 @@ const createSagaInput = (overrides: Partial<CheckoutSagaInput> = {}): CheckoutSa
   ...overrides,
 });
 
-const createEuropeanBinInfo = () => new BinInfo({
-  bin: '491761',
-  country: 'DE',
-  cardBrand: CardBrand.VISA,
-  cardType: CardType.CREDIT,
-  issuingBank: 'Deutsche Bank',
-});
+const createEuropeanBinInfo = () =>
+  new BinInfo({
+    bin: '491761',
+    country: 'DE',
+    cardBrand: CardBrand.VISA,
+    cardType: CardType.CREDIT,
+    issuingBank: 'Deutsche Bank',
+  });
 
 // ─── Test Suite ──────────────────────────────────────────────────────────────
 
@@ -167,7 +169,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: ['ADYEN'],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE (score: 85)',
           score: 85,
         },
@@ -205,7 +207,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -234,9 +236,7 @@ describe('PaymentCheckoutSaga', () => {
     it('should NOT write any ledger entry when routing fails before a PSP is ever contacted', async () => {
       const input = createSagaInput();
 
-      acquirerRouting.selectOptimalAdapter.mockRejectedValue(
-        new Error('No available PSP providers for currency USD'),
-      );
+      acquirerRouting.selectOptimalAdapter.mockRejectedValue(new Error('No available PSP providers for currency USD'));
 
       await expect(saga.execute(input)).rejects.toThrow('No available PSP');
 
@@ -259,7 +259,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: ['ADYEN'],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -295,15 +295,13 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
       });
 
-      acquirerRouting.executeWithSmartRouting.mockRejectedValue(
-        new Error('Connection timeout: STRIPE'),
-      );
+      acquirerRouting.executeWithSmartRouting.mockRejectedValue(new Error('Connection timeout: STRIPE'));
 
       await expect(saga.execute(input)).rejects.toThrow();
 
@@ -319,9 +317,7 @@ describe('PaymentCheckoutSaga', () => {
     it('should mark payment FAILED when routing finds no available PSP', async () => {
       const input = createSagaInput();
 
-      acquirerRouting.selectOptimalAdapter.mockRejectedValue(
-        new Error('No available PSP providers for currency USD'),
-      );
+      acquirerRouting.selectOptimalAdapter.mockRejectedValue(new Error('No available PSP providers for currency USD'));
 
       await expect(saga.execute(input)).rejects.toThrow('No available PSP');
 
@@ -342,7 +338,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: ['ADYEN'],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -510,7 +506,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -552,7 +548,7 @@ describe('PaymentCheckoutSaga', () => {
     });
 
     it('should handle KWD (3-decimal currency) correctly', () => {
-      const kwd = Money.of(10.500, 'KWD');
+      const kwd = Money.of(10.5, 'KWD');
       expect(kwd.amountMinorUnits).toBe(10500n);
       expect(kwd.currency.minorUnits).toBe(3);
     });
@@ -588,7 +584,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },

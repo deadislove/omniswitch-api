@@ -4,7 +4,8 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 export class RefundPaymentDto {
   @ApiPropertyOptional({
     example: 49.99,
-    description: 'Amount to refund in major currency units. Omit for a full refund of the remaining refundable balance.',
+    description:
+      'Amount to refund in major currency units. Omit for a full refund of the remaining refundable balance.',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })
@@ -22,7 +23,8 @@ export class RefundPaymentDto {
 export class CapturePaymentDto {
   @ApiPropertyOptional({
     example: 99.99,
-    description: 'Amount to capture in major currency units. Omit to capture the full remaining authorized amount. Multiple partial captures against the same authorization are supported as long as their sum does not exceed the original amount.',
+    description:
+      'Amount to capture in major currency units. Omit to capture the full remaining authorized amount. Multiple partial captures against the same authorization are supported as long as their sum does not exceed the original amount.',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })

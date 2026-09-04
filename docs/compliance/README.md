@@ -4,7 +4,10 @@ This folder covers compliance areas that are about *how long data is
 kept and what happens to it over time* — distinct from
 [`../technical/security-and-compliance.md`](../technical/security-and-compliance.md),
 which covers JWT revocation design and PCI DSS scope/gaps (protecting
-data while it's live, not what happens to it as it ages).
+data while it's live, not what happens to it as it ages), and from
+[`../business-domain/compliance-and-security.md`](../business-domain/compliance-and-security.md),
+which explains *why* these requirements shaped specific domain-model
+decisions rather than documenting the mechanisms themselves.
 
 ## What's here
 

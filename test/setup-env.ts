@@ -31,24 +31,55 @@ setDefault('DB_SSL', 'false');
 setDefault('REDIS_HOST', 'localhost');
 setDefault('REDIS_PORT', '16379');
 setDefault('REDIS_PASSWORD', 'redis_secret');
-setDefault('REDIS_DB', '1'); // separate logical DB from local dev's REDIS_DB=0
+// Each Jest worker gets its own logical Redis DB, not a shared one —
+// `JEST_WORKER_ID` (always set by Jest, 1-indexed) selects it, so
+// idempotency locks/circuit-breaker windows/rate-limit buckets/JWT
+// revocation sets can't land in the same keyspace *concurrently* across
+// workers. `test/jest-e2e.json` currently runs with `maxWorkers: 1`, so
+// this isolation is inert today (only worker 1 ever exists) — it's
+// verified-correct groundwork for `docs/technical/ci-cd.md`'s
+// "Parallelizing e2e workers" section, which documents a real,
+// reproducible flakiness class that showed up when `maxWorkers` was
+// actually raised and is NOT explained by this Redis isolation being
+// wrong (confirmed via targeted diagnostics — see that section). Left in
+// place, harmless at maxWorkers:1, ready for whoever picks the
+// parallelization work back up. Redis's default `databases` count is 16;
+// `+1` keeps DB 0 (local dev) and DB 1 (historically the sole e2e DB, now
+// worker 1's) free of collision with worker indices, and a worker count
+// above 14 would wrap into local dev's/an earlier worker's DB.
+setDefault('REDIS_DB', String(1 + Number(process.env.JEST_WORKER_ID || 1)));
+// Configurable (production, app.module.ts, still defaults to 20 — this
+// override is test-only) so N concurrent NestJS app instances can be
+// bounded against one `max_connections=200` Postgres without a code
+// change. 15 at `maxWorkers: 4` caps worst case at 4 * 2 pools * 15 =
+// 120 connections, well under 200 — a real fix for real queueing delays
+// found under contention (see ci-cd.md's "Parallelizing e2e workers":
+// risk-tiering.e2e-spec.ts's 10-sequential-real-charge test was timing
+// out even at a 60s budget, consistent with this app instance's own
+// small pool queueing internally under concurrent load, not just
+// external cross-worker contention).
+setDefault('DB_POOL_MAX', '15');
 
 // Test-only secrets — never used outside this process.
 setDefault('JWT_SECRET', 'e2e-test-jwt-secret-do-not-use-outside-tests-32chars');
 setDefault('HMAC_SECRET', 'e2e-test-hmac-secret-do-not-use-outside-tests-32c');
 
 // The production default (100/min) is IP-scoped, not per-merchant — every
-// e2e spec file's charge() calls in a single `npm run test:e2e` run share
-// one IP-keyed bucket (the whole suite finishes in well under 60s), so the
-// full suite's cumulative charge volume competes against one limit, not
-// one per file. Adding the subscriptions/reserve/risk-tiering specs (each
-// legitimately firing 10+ charges to reach a real minimum-sample-size
-// threshold) pushes the suite past 100 and 429s unrelated *later* files —
-// e.g. test/webhooks.e2e-spec.ts's dispute tests, which don't touch rate
-// limiting at all, fail with 429 once those specs run first and exhaust
-// the shared bucket. Same reasoning as AUTH_LOGIN_RATE_LIMIT
-// below: rate-limiting behavior itself is covered by a dedicated, isolated
-// spec, so raising the ambient limit here doesn't weaken that coverage.
+// e2e spec file's charge() calls share one IP-keyed bucket *within a Jest
+// worker* (the REDIS_DB isolation above scopes it per worker, not per
+// file — see that comment), so a worker's own cumulative charge volume
+// across however many spec files it happens to run competes against one
+// limit, not one per file. Files like subscriptions/reserve/risk-tiering
+// (each legitimately firing 10+ charges to reach a real
+// minimum-sample-size threshold) can still push a worker's bucket past
+// 100 and 429 whatever unrelated file runs next in that same worker.
+// Raised well above what any single worker's realistic file assignment
+// would need — this was originally calibrated against the *entire* suite
+// sharing one bucket (a stricter constraint than today's per-worker
+// one), so it has headroom to spare now, not less. Same reasoning as
+// AUTH_LOGIN_RATE_LIMIT below: rate-limiting behavior itself is covered
+// by a dedicated, isolated spec, so raising the ambient limit here
+// doesn't weaken that coverage.
 setDefault('RATE_LIMIT_MAX', '2000');
 // Generous headroom for the *other* spec files, which legitimately fire
 // several requests per second against one seeded merchant. The dedicated

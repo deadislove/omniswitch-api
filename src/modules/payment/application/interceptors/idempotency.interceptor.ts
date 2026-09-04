@@ -128,11 +128,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     // Mark as PROCESSING
-    await this.cache.set<IdempotencyRecord>(
-      cacheKey,
-      { status: 'PROCESSING' },
-      IDEMPOTENCY_TTL_SECONDS,
-    );
+    await this.cache.set<IdempotencyRecord>(cacheKey, { status: 'PROCESSING' }, IDEMPOTENCY_TTL_SECONDS);
 
     this.logger.debug(`Idempotency lock acquired: key=${idempotencyKey}`);
 

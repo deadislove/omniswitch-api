@@ -39,6 +39,37 @@ function send(res, code, body) {
   res.end(JSON.stringify(body));
 }
 
+// Base fee schedule — kept identical to PspFeeScheduleService's own
+// defaults on purpose: the point of the /statement endpoints below is to
+// simulate a REAL PSP invoice diverging from this app's routing-time
+// *estimate* the same way a real interchange schedule would (different
+// card types/networks costing different amounts), not to test against an
+// arbitrary different number.
+const BASE_FEE_SCHEDULE = {
+  STRIPE: { feePercentage: 2.9, fixedFeeMinorUnits: 30 },
+  ADYEN: { feePercentage: 0.3, fixedFeeMinorUnits: 10 },
+};
+
+// A real interchange bill is not one flat rate — different card
+// types/networks (premium rewards cards, corporate cards, cross-border
+// cards) cost a real PSP more to process, and that variance is exactly
+// what PspCostReconciliationService's report exists to catch drifting
+// from a flat-rate *estimate*. Deterministic (hashed from the PSP's own
+// transaction id, not random) so a statement is reproducible for the
+// same settlement data rather than different on every call — a fifth of
+// transactions simulate a "premium card" surcharge, matching real-world
+// premium-card mix being a minority, not the majority, of volume.
+function realFeeForTransactionMinorUnits(provider, amountMinorUnits, txId) {
+  const schedule = BASE_FEE_SCHEDULE[provider];
+  let hash = 0;
+  for (let i = 0; i < txId.length; i++) {
+    hash = (hash * 31 + txId.charCodeAt(i)) >>> 0;
+  }
+  const isPremiumCard = hash % 5 === 0;
+  const effectivePercentage = schedule.feePercentage + (isPremiumCard ? 1.5 : 0);
+  return Math.round((amountMinorUnits * effectivePercentage) / 100) + schedule.fixedFeeMinorUnits;
+}
+
 // Decline-code markers for a charge — a paymentMethodId/storedPaymentMethodId
 // containing one of these substrings (case-insensitive) declines the charge
 // with that code, the same "magic substring" convention as FORCE_3DS/
@@ -303,6 +334,27 @@ const server = http.createServer((req, res) => {
       });
       return send(res, 200, { object: 'list', data: matching });
     }
+    // PspCostReconciliationService's "actual invoiced fee" side — a real
+    // fee statement computed from this mock's own settlement records
+    // (realFeeForTransactionMinorUnits, above), not the flat-rate estimate
+    // PspFeeScheduleService uses for routing. Real Stripe exposes this via
+    // fee_details on each balance transaction / the Reporting API; this
+    // mock exposes the aggregate directly since nothing here needs the
+    // per-transaction breakdown.
+    if (path === '/v1/statement' && req.method === 'GET') {
+      const since = Number(query.get('since')) || 0;
+      const until = Number(query.get('until')) || Infinity;
+      const currency = (query.get('currency') || 'USD').toUpperCase();
+      const matching = stripeSettlements.filter((t) => {
+        const ts = new Date(t.createdAt).getTime() / 1000;
+        return ts >= since && ts <= until && t.currency.toUpperCase() === currency;
+      });
+      const totalFeeMinorUnits = matching.reduce(
+        (sum, t) => sum + realFeeForTransactionMinorUnits('STRIPE', t.amount, t.id),
+        0,
+      );
+      return send(res, 200, { totalFeeMinorUnits, transactionCount: matching.length, currency });
+    }
     if (segments[0] === 'v1' && segments[1] === 'disputes' && segments.length === 3 && req.method === 'POST') {
       // Real Stripe: submitting evidence[...] fields + submit=true moves a
       // dispute to 'under_review'. This mock doesn't validate the evidence
@@ -442,6 +494,24 @@ const server = http.createServer((req, res) => {
         return ts >= since && ts <= until;
       });
       return send(res, 200, { transactions });
+    }
+    // Adyen counterpart of /v1/statement above — real Adyen exposes this
+    // via its settlement batch reports (a CSV export), which include a
+    // real per-line commission amount; this mock exposes the same
+    // aggregate directly.
+    if (path === '/adyen/statement' && req.method === 'GET') {
+      const since = Number(query.get('since')) || 0;
+      const until = Number(query.get('until')) || Infinity;
+      const currency = (query.get('currency') || 'USD').toUpperCase();
+      const matching = adyenSettlements.filter((t) => {
+        const ts = new Date(t.createdAt).getTime() / 1000;
+        return ts >= since && ts <= until && (t.currency || '').toUpperCase() === currency;
+      });
+      const totalFeeMinorUnits = matching.reduce(
+        (sum, t) => sum + realFeeForTransactionMinorUnits('ADYEN', t.amount, t.id),
+        0,
+      );
+      return send(res, 200, { totalFeeMinorUnits, transactionCount: matching.length, currency });
     }
 
     // KYC verification — MockKYCProviderAdapter's target. Resolves

@@ -100,17 +100,17 @@ omniswitch-api/
 - **SCA/3DS2 Risk Assessment**: Risk score → Frictionless or Challenge flow
 - **Circuit Breaker**: Per-PSP failure tracking with OPEN/HALF_OPEN/CLOSED states, Redis-backed (`RedisCircuitBreakerService`) so every replica shares one view of each PSP's health instead of each pod deciding independently
 - **Reconciliation**: Hourly (plus on-demand) diff of this system's ledger against each PSP's own settlement report — catches ledger/outbox bugs that unit/e2e tests structurally can't (see [`docs/technical/reconciliation.md`](docs/technical/reconciliation.md))
-- **Per-merchant fee rate, with optional volume-based tiers**: Platform fee is a configurable basis-points rate per merchant (`MerchantEntity.platformFeeBps`, default 150 = 1.5%), not a single hardcoded percentage — set at onboarding or changed via `PATCH /admin/merchants/:id/fee-rate`. Optionally superseded by an ascending `feeTiers` schedule (`PATCH /admin/merchants/:id/fee-tiers`) that steps the rate down once this merchant's trailing current-month `SUCCEEDED` volume, in the currency being charged, reaches a threshold — priced off volume *before* the charge being resolved, so the charge that crosses a threshold still bills at the old rate
-- **FX conversion (settlement currency)**: A merchant can be paid out in a currency different from whatever currency a charge was made in (`MerchantEntity.settlementCurrency`) — converted via a real `FXRateProviderPort` at charge/capture time, booked as two correctly double-entry-balanced ledger legs, not just a value-object-level capability nothing called. Refunds and lost disputes replay the *same* charge-time rate rather than booking against the merchant in the charge currency regardless of what they actually received, so they net cleanly against the original payout
-- **Presentment currency**: `POST /payments/charge` accepts an optional `presentmentCurrency` and returns a computed display amount for the customer's statement — purely informational, doesn't touch what's actually charged/settled/booked
-- **Dispute/chargeback handling**: A dispute is tracked as its own record with a lifecycle (`NEEDS_RESPONSE` → `UNDER_REVIEW` → `WON`/`LOST`) and a response deadline, not just a payment status flip — representment (submitting evidence) actually calls the PSP; resolution (won/lost) arrives by webhook and, on a loss, books a ledger entry the same way a refund does
-- **Dispute auto-decision policy**: Every new dispute is automatically classified `ACCEPT`/`CONTEST`/`MANUAL_REVIEW` by amount and reason code — `CONTEST` immediately auto-submits templated evidence to the PSP for real; every dispute carries reason-code-specific evidence guidance either way. Creation/resolution emit structured events, not just log lines. See [`docs/business-domain/payment-lifecycle.md`](docs/business-domain/payment-lifecycle.md#dispute-accounting)
-- **Merchant risk tiering & reserves**: A configurable per-merchant reserve (`MerchantEntity.reserveBps`/`reserveHoldDays`) withholds a slice of each charge's net amount into its own `ReserveHold` record instead of paying it out immediately, released either by a daily sweep or an operator's manual override — see [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#merchant-risk-tiering--reserves) for the ledger mechanics
+- **Per-merchant fee rate, with optional volume-based tiers**: Platform fee is a configurable basis-points rate per merchant (`MerchantEntity.platformFeeBps`, default 150 = 1.5%), not a single hardcoded percentage — set at onboarding or changed via `PATCH /admin/merchants/:id/fee-rate`. Optionally superseded by an ascending `feeTiers` schedule (`PATCH /admin/merchants/:id/fee-tiers`) that steps the rate down once this merchant's trailing current-month `SUCCEEDED` volume, in the currency being charged, reaches a threshold — priced off volume *before* the charge being resolved, so the charge that crosses a threshold still bills at the old rate. See [`docs/business-domain/fee-model.md`](docs/business-domain/fee-model.md), which also covers PSP interchange cost reconciliation (a separate number from this one)
+- **FX conversion (settlement currency)**: A merchant can be paid out in a currency different from whatever currency a charge was made in (`MerchantEntity.settlementCurrency`) — converted via a real `FXRateProviderPort` at charge/capture time, booked as two correctly double-entry-balanced ledger legs, not just a value-object-level capability nothing called. Refunds and lost disputes replay the *same* charge-time rate rather than booking against the merchant in the charge currency regardless of what they actually received, so they net cleanly against the original payout. See [`docs/business-domain/fx-conversion.md`](docs/business-domain/fx-conversion.md)
+- **Presentment currency**: `POST /payments/charge` accepts an optional `presentmentCurrency` and returns a computed display amount for the customer's statement — purely informational, doesn't touch what's actually charged/settled/booked. See [`docs/business-domain/fx-conversion.md#presentment-currency`](docs/business-domain/fx-conversion.md#presentment-currency)
+- **Dispute/chargeback handling**: A dispute is tracked as its own record with a lifecycle (`NEEDS_RESPONSE` → `UNDER_REVIEW` → `WON`/`LOST`) and a response deadline, not just a payment status flip — representment (submitting evidence) actually calls the PSP; resolution (won/lost) arrives by webhook and, on a loss, books a ledger entry the same way a refund does. See [`docs/business-domain/disputes.md`](docs/business-domain/disputes.md)
+- **Dispute auto-decision policy**: Every new dispute is automatically classified `ACCEPT`/`CONTEST`/`MANUAL_REVIEW` by amount and reason code — `CONTEST` immediately auto-submits templated evidence to the PSP for real; every dispute carries reason-code-specific evidence guidance either way. Creation/resolution emit structured events, not just log lines. See [`docs/business-domain/disputes.md#the-auto-decision-policy`](docs/business-domain/disputes.md#the-auto-decision-policy)
+- **Merchant risk tiering & reserves**: A configurable per-merchant reserve (`MerchantEntity.reserveBps`/`reserveHoldDays`) withholds a slice of each charge's net amount into its own `ReserveHold` record instead of paying it out immediately, released either by a daily sweep or an operator's manual override — see [`docs/business-domain/risk-and-fraud.md`](docs/business-domain/risk-and-fraud.md#risk-tiering-chargeback-driven-reserves) for the business policy and [`docs/business-domain/ledger-and-settlement.md#merchant-risk-tiering--reserves`](docs/business-domain/ledger-and-settlement.md#merchant-risk-tiering--reserves) for the ledger mechanics
 - **Recurring billing / subscriptions**: A `Subscription` produces its own real `Payment` every billing period by reusing `PaymentCheckoutSaga` wholesale — same smart routing, ledger booking, and FX/reserve handling a one-time charge gets — with decline-code-aware dunning (a hard decline like `stolen_card` cancels immediately, a retryable one like `insufficient_funds` uses a real day 1/3/7 backoff, not a flat retry-every-tick policy), real `subscription.past_due`/`subscription.canceled` event emission carrying the decline code, a real payment-method verification before a trial ever starts (`PSPAdapterPort.verifyPaymentMethod()` — Stripe's real SetupIntent primitive, a zero-value authorization for Adyen), and crash-recovery via a deterministic per-period payment id, not a distributed transaction. See [`docs/business-domain/subscriptions.md`](docs/business-domain/subscriptions.md) for the state machine and what's deliberately simplified (an illustrative, uncalibrated hard-decline code set)
 - **Subscription plan catalog & proration**: A merchant-scoped `Plan` catalog (`POST /plans`) lets a subscription reference a reusable price instead of carrying its own amount, and `POST /subscriptions/:id/change-plan` prorates the remaining part of the current period through the same `PaymentCheckoutSaga` every other charge uses — upgrades charge the difference immediately (and the plan switch and the charge succeed or fail together), downgrades issue a credit applied against a future period's charge instead of a refund now. See [`docs/business-domain/subscriptions.md#plans-and-proration`](docs/business-domain/subscriptions.md#plans-and-proration)
 - **Automatic risk-tier adjustment**: `RiskTieringService` recomputes each merchant's trailing lost-dispute rate on a daily sweep and adjusts its reserve policy accordingly — in both directions, with a manual-override escape hatch (`MerchantEntity.riskTierAutoManaged`) so an operator's hand-tuned reserve doesn't get silently clobbered. Deliberately simple, illustrative thresholds, not a calibrated underwriting model — see [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#automatic-risk-tier-adjustment)
-- **Marketplace splits**: A `PLATFORM` merchant can onboard `CONNECTED` merchants under it (`MerchantEntity.accountType`/`platformMerchantId`) and route part of a charge's net proceeds directly to them via `POST /payments/charge`'s `splits` — each split is its own `MERCHANT` ledger credit, validated (recipient ownership, split total vs. net payout) before the PSP is ever called so an invalid split can't leave a charged-but-unbooked payment behind. A refund or lost dispute reverses each recipient's share proportionally, not just the platform's own account. See [`docs/business-domain/ledger-and-settlement.md#marketplace-splits`](docs/business-domain/ledger-and-settlement.md#marketplace-splits) for the mechanism
-- **Marketplace payout scheduling, KYC, and transfer initiation**: A connected merchant's split proceeds are batched into scheduled `Payout` records (`POST /admin/marketplace/run-payouts`, daily `@Cron`) instead of being available the instant they're credited, withholding a configurable rolling reserve released later on its own schedule. A real (mocked) KYC review (`POST /admin/merchants/:id/kyc/submit`) gates whether a payout can actually be transferred — mirroring Stripe Connect's `charges_enabled`/`payouts_enabled` split, not whether the connected account can receive splits at all — and a verified payout's net amount can be sent via a real (mocked) bank transfer (`POST /admin/marketplace/payouts/:id/initiate-transfer`). See [`docs/business-domain/ledger-and-settlement.md#payout-kyc-gating-and-real-transfer-initiation`](docs/business-domain/ledger-and-settlement.md#payout-kyc-gating-and-real-transfer-initiation)
+- **Marketplace splits**: A `PLATFORM` merchant can onboard `CONNECTED` merchants under it (`MerchantEntity.accountType`/`platformMerchantId`) and route part of a charge's net proceeds directly to them via `POST /payments/charge`'s `splits` — each split is its own `MERCHANT` ledger credit, validated (recipient ownership, split total vs. net payout) before the PSP is ever called so an invalid split can't leave a charged-but-unbooked payment behind. A refund or lost dispute reverses each recipient's share proportionally, not just the platform's own account. See [`docs/business-domain/marketplace-and-payouts.md#marketplace-splits`](docs/business-domain/marketplace-and-payouts.md#marketplace-splits) for the mechanism
+- **Marketplace payout scheduling, KYC, and transfer initiation**: A connected merchant's split proceeds are batched into scheduled `Payout` records (`POST /admin/marketplace/run-payouts`, daily `@Cron`) instead of being available the instant they're credited, withholding a configurable rolling reserve released later on its own schedule. A real (mocked) KYC review (`POST /admin/merchants/:id/kyc/submit`) gates whether a payout can actually be transferred — mirroring Stripe Connect's `charges_enabled`/`payouts_enabled` split, not whether the connected account can receive splits at all — and a verified payout's net amount can be sent via a real (mocked) bank transfer (`POST /admin/marketplace/payouts/:id/initiate-transfer`). See [`docs/business-domain/marketplace-and-payouts.md#payout-kyc-gating-and-real-transfer-initiation`](docs/business-domain/marketplace-and-payouts.md#payout-kyc-gating-and-real-transfer-initiation)
 - **Agentic payments**: A merchant can authorize an autonomous agent via `POST /delegations`, returning a narrowly-scoped JWT (`AGENT` role, accepted on exactly one route, `POST /payments/charge`) bound to a real `SpendPolicy` (per-transaction limit, rolling monthly limit, optional category allowlist) — enforced by an atomic, race-safe reservation *before* the checkout saga ever calls a PSP, released again if that charge goes on to actually decline. `POST /delegations/:id/revoke` reuses the existing JWT revocation mechanism, so it takes effect immediately, not just once the token naturally expires. See [`docs/business-domain/future-directions.md#agentic-payments`](docs/business-domain/future-directions.md#agentic-payments)
 
 ### Observability
@@ -188,26 +188,162 @@ docker-compose down
 
 ## 📡 API Endpoints
 
+Every real route this system exposes — 78 in total, grouped by domain
+area. This table is generated by reading the controllers directly (every
+`@Get`/`@Post`/`@Patch`/`@Delete`/`@Sse` decorator), not maintained by
+hand separately — if it and the code ever disagree, the code is right. For
+full request/response schemas, error codes, and the reasoning behind
+each endpoint's design, see [`docs/guide/api/`](docs/guide/api/) — this
+table is the index, not the full reference.
+
+**Auth key**: `Public` = no token; `JWT` = any authenticated role; a
+role list means only those roles; `+HMAC` means the three
+`X-Signature`/`X-Timestamp`/`X-Merchant-Id` headers are also required
+(exempt for an `AGENT` token — see
+[`docs/guide/api/README.md#hmac-request-signing`](docs/guide/api/README.md#hmac-request-signing)).
+
+### Auth ([`merchants-and-auth.md`](docs/guide/api/merchants-and-auth.md))
+
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| `POST` | `/api/v1/auth/token` | Exchange API Key ID + Secret for a JWT | Public |
-| `POST` | `/api/v1/auth/revoke` | Revoke the current JWT (logout) — takes effect immediately | JWT |
-| `POST` | `/api/v1/auth/mfa/enroll` | Start MFA enrollment (generates a TOTP secret) | JWT |
-| `POST` | `/api/v1/auth/mfa/confirm` | Confirm enrollment with a TOTP code — enables MFA, returns backup codes | JWT |
+| `POST` | `/api/v1/auth/token` | Exchange an API Key ID + Secret for a JWT (or a short-lived pending token if MFA is enabled) | Public |
+| `POST` | `/api/v1/auth/revoke` | Revoke the current token (logout) — takes effect immediately | JWT |
+| `POST` | `/api/v1/auth/mfa/enroll` | Start MFA enrollment (generates a TOTP secret, not yet enforced) | JWT |
+| `POST` | `/api/v1/auth/mfa/confirm` | Confirm enrollment with a TOTP code — enables MFA, returns one-time backup codes | JWT |
 | `POST` | `/api/v1/auth/mfa/verify` | Trade a pending MFA token for a full one | JWT (mfaPending) |
-| `POST` | `/api/v1/auth/mfa/disable` | Disable MFA (requires a valid TOTP/backup code) | JWT |
-| `POST` | `/api/v1/payments/charge` | Charge payment (smart routing) | JWT + HMAC |
-| `GET` | `/api/v1/payments/:id` | Get payment details | JWT |
-| `GET` | `/api/v1/payments/:id/status/stream` | SSE real-time status | JWT |
-| `POST` | `/api/v1/payments/bulk-upload` | CSV bulk invoice upload | JWT |
-| `GET` | `/api/v1/payments/routing/health` | PSP routing health | JWT (ADMIN) |
-| `GET` | `/api/v1/admin/reconciliation/runs` | List recent reconciliation runs | JWT (ADMIN/OPERATOR) |
-| `POST` | `/api/v1/admin/reconciliation/run` | Trigger an on-demand reconciliation run | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/auth/mfa/disable` | Disable MFA — requires a valid TOTP/backup code | JWT |
+
+### Merchants (admin) ([`merchants-and-auth.md`](docs/guide/api/merchants-and-auth.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `GET` | `/api/v1/admin/merchants` | List merchants (no secrets) | JWT (ADMIN) |
+| `POST` | `/api/v1/admin/merchants` | Onboard a new merchant — returns the API key secret once | JWT (ADMIN) |
+| `POST` | `/api/v1/admin/merchants/:id/rotate-api-key` | Rotate a merchant's API key secret | JWT (ADMIN) |
+| `POST` | `/api/v1/admin/merchants/:id/rotate-hmac-secret` | Rotate a merchant's HMAC signing key | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/status` | Activate/deactivate a merchant (deactivating revokes all sessions) | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/fee-rate` | Change a merchant's platform fee rate (bps) | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/fee-tiers` | Set/clear a merchant's volume-based fee schedule | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/settlement-currency` | Change a merchant's settlement currency | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/reserve-policy` | Change a merchant's reserve rate/hold period (disables auto risk-tiering) | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/payout-reserve-policy` | Change a connected merchant's marketplace payout rolling-reserve policy | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/risk-tier-auto` | Enable/disable automatic risk-tier reserve management | JWT (ADMIN) |
+| `PATCH` | `/api/v1/admin/merchants/:id/psp-entitlement` | Set which PSPs this merchant's charges may route through | JWT (ADMIN) |
+| `POST` | `/api/v1/admin/merchants/:id/kyc/submit` | Submit/re-submit a connected merchant's KYC application | JWT (ADMIN) |
+| `POST` | `/api/v1/admin/merchants/:id/revoke-sessions` | Invalidate every token currently issued to this merchant | JWT (ADMIN) |
+
+### Payments ([`payments.md`](docs/guide/api/payments.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `POST` | `/api/v1/payments/charge` | Charge a payment with smart PSP routing — also usable by an AGENT token, checked against its delegation's spend policy | JWT/AGENT + HMAC (exempt for AGENT) |
+| `GET` | `/api/v1/payments/:id` | Get payment details by id | JWT |
+| `GET` | `/api/v1/payments/:id/status/stream` | SSE stream for real-time payment status updates | JWT |
+| `POST` | `/api/v1/payments/:id/refund` | Refund a payment (full or partial) | JWT + HMAC |
+| `POST` | `/api/v1/payments/:id/capture` | Capture a previously authorized (`REQUIRES_CAPTURE`) payment | JWT + HMAC |
+| `POST` | `/api/v1/payments/:id/cancel` | Cancel a payment before capture | JWT + HMAC |
+| `POST` | `/api/v1/payments/bulk-upload` | Bulk invoice upload (CSV, `multipart/form-data`) for batch processing | JWT |
+| `GET` | `/api/v1/payments/routing/health` | PSP routing/circuit-breaker health status | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/payments/routing/circuit-breaker/:provider/reset` | Force a PSP's circuit breaker back to CLOSED | JWT (ADMIN/OPERATOR) |
+
+### Ambiguous payments (risk & recovery) ([`risk-and-reserves.md`](docs/guide/api/risk-and-reserves.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `GET` | `/api/v1/admin/payments/ambiguous` | List `AMBIGUOUS` payments (a PSP call that got no response at all) | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/payments/ambiguous/run-auto-resolution` | Trigger the automated PSP-query resolution sweep on demand | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/payments/:id/resolve-ambiguous` | Manually resolve an `AMBIGUOUS` payment after checking the PSP directly | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/payments/:id/legal-hold` | Place a legal hold — excludes a payment from archiving/deletion | JWT (ADMIN/OPERATOR) |
+| `DELETE` | `/api/v1/admin/payments/:id/legal-hold` | Release a legal hold | JWT (ADMIN/OPERATOR) |
+
+### Subscriptions & Plans ([`subscriptions-and-plans.md`](docs/guide/api/subscriptions-and-plans.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `POST` | `/api/v1/subscriptions` | Create a subscription (from a `Plan` or a direct amount/interval) — charges the first period immediately unless `trialDays` is set | JWT + HMAC |
+| `GET` | `/api/v1/subscriptions/:id` | Get a subscription by id | JWT |
+| `GET` | `/api/v1/subscriptions` | List subscriptions (a MERCHANT sees only their own) | JWT |
+| `POST` | `/api/v1/subscriptions/:id/cancel` | Cancel a subscription — immediately, or at period end | JWT + HMAC |
+| `POST` | `/api/v1/subscriptions/:id/change-plan` | Switch to a different plan — prorates the difference immediately (upgrade) or issues a credit (downgrade) | JWT + HMAC |
+| `POST` | `/api/v1/admin/subscriptions/run-billing` | Run the billing sweep now instead of waiting for the daily schedule | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/plans` | Create a reusable subscription plan | JWT |
+| `GET` | `/api/v1/plans/:id` | Get a plan by id | JWT |
+| `GET` | `/api/v1/plans` | List plans (a MERCHANT sees only their own) | JWT |
+| `POST` | `/api/v1/plans/:id/deactivate` | Deactivate a plan — existing subscribers are unaffected | JWT |
+
+### Agentic Payments ([`agentic-payments.md`](docs/guide/api/agentic-payments.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `POST` | `/api/v1/delegations` | Authorize a new agent within a spend policy — returns the agent's JWT once | JWT (MERCHANT/ADMIN) |
+| `GET` | `/api/v1/delegations/:id` | Get a delegation by id | JWT |
+| `GET` | `/api/v1/delegations` | List delegations (a MERCHANT sees only their own) | JWT |
+| `POST` | `/api/v1/delegations/:id/revoke` | Revoke a delegation — the agent's JWT is rejected on its very next request | JWT (MERCHANT/ADMIN) |
+
+### Disputes ([`disputes.md`](docs/guide/api/disputes.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
 | `GET` | `/api/v1/admin/disputes` | List disputes, filterable by merchant/status | JWT (ADMIN/OPERATOR) |
-| `POST` | `/api/v1/admin/disputes/:id/evidence` | Submit evidence to contest a dispute (representment) | JWT (ADMIN/OPERATOR) |
-| `GET` | `/health` | Full health check | Public |
+| `GET` | `/api/v1/admin/disputes/:id` | Get a single dispute by id | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/disputes/:id/evidence` | Submit evidence to contest a dispute (representment) — calls the PSP | JWT (ADMIN/OPERATOR) |
+
+### Risk & Reserves ([`risk-and-reserves.md`](docs/guide/api/risk-and-reserves.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `GET` | `/api/v1/admin/reserves` | List reserve holds, filterable by merchant/status | JWT (ADMIN/OPERATOR) |
+| `GET` | `/api/v1/admin/reserves/:id` | Get a single reserve hold by id | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/reserves/:id/release` | Manually release a hold, bypassing `releaseEligibleAt` | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/reserves/release-eligible` | Run the reserve-release sweep now | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/risk-tiering/run` | Run the risk-tiering sweep now instead of waiting for the daily schedule | JWT (ADMIN/OPERATOR) |
+| `PATCH` | `/api/v1/admin/merchants/:id/ambiguous-risk` | Manually flag/clear a merchant's ambiguous-risk status (reason required, audited) | JWT (ADMIN/OPERATOR) |
+| `PATCH` | `/api/v1/admin/merchants/:id/ambiguous-risk-auto` | Re-enable automatic ambiguous-risk flag/auto-clear for a merchant | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/merchants/ambiguous-risk/run-auto-clear` | Run the ambiguous-risk auto-clear sweep now | JWT (ADMIN/OPERATOR) |
+
+### Marketplace & Payouts ([`marketplace.md`](docs/guide/api/marketplace.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `GET` | `/api/v1/admin/marketplace/payouts` | List payouts, filterable by connected merchant | JWT (ADMIN/OPERATOR) |
+| `GET` | `/api/v1/admin/marketplace/payouts/:id` | Get a single payout by id | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/marketplace/run-payouts` | Run the payout sweep now — batches unswept connected-merchant balances into `Payout`s | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/marketplace/payouts/:id/release-reserve` | Manually release a payout's rolling reserve | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/marketplace/release-eligible-reserves` | Run the payout reserve-release sweep now | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/marketplace/recheck-kyc-blocks` | Clear every KYC-blocked payout whose recipient is now `VERIFIED` | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/marketplace/payouts/:id/initiate-transfer` | Initiate a (mock) bank transfer for a payout's net amount | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/marketplace/initiate-eligible-transfers` | Run the transfer-initiation sweep now | JWT (ADMIN/OPERATOR) |
+
+### Reconciliation ([`platform-ops.md`](docs/guide/api/platform-ops.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `GET` | `/api/v1/admin/reconciliation/runs` | List recent reconciliation runs | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/reconciliation/run` | Trigger an on-demand reconciliation run (defaults to the last hour) | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/psp-cost-reconciliation/run` | Compare estimated vs. actual-invoiced PSP processing fees for a window | JWT (ADMIN/OPERATOR) |
+
+### Ledger Outbox ([`platform-ops.md`](docs/guide/api/platform-ops.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `GET` | `/api/v1/admin/outbox/failed` | List dead-lettered (`FAILED`) ledger outbox events | JWT (ADMIN/OPERATOR) |
+| `POST` | `/api/v1/admin/outbox/:id/retry` | Reset a `FAILED` event back to `PENDING` for the relay to retry | JWT (ADMIN/OPERATOR) |
+
+### Webhooks ([`webhooks.md`](docs/guide/api/webhooks.md))
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `POST` | `/api/v1/webhooks/stripe` | Stripe webhook receiver | Signature (`Stripe-Signature`) |
+| `POST` | `/api/v1/webhooks/adyen` | Adyen webhook receiver | Signature (HMAC in payload) |
+
+### Observability
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `GET` | `/health` | Comprehensive health check (readiness probe) | Public |
 | `GET` | `/health/live` | Liveness probe | Public |
 | `GET` | `/health/ready` | Readiness probe | Public |
+| `GET` | `/metrics` | Prometheus metrics | Public |
 
 ### Charge Payment Request
 
@@ -305,7 +441,7 @@ kubectl get pods -n payments -l app=omniswitch-api
 
 `k8s/hpa.yaml`'s 70% CPU / 80% memory thresholds are backed by a real,
 reproducible load-testing baseline, not just reasonable-looking
-defaults — see [`docs/technical/load-testing.md`](docs/technical/load-testing.md).
+defaults — see [`docs/technical/load-testing.md`](docs/technical/tests/load-testing.md).
 
 ---
 
@@ -316,7 +452,7 @@ generator, real Postgres/Redis/mock-psp — not a synthetic in-process
 benchmark), resource-capped to match `k8s/deployment.yaml`'s limits
 (1 CPU / 512Mi per pod). Full methodology and all findings (including why
 the charge path's own ceiling can't be measured from a single machine):
-[`docs/technical/load-testing.md`](docs/technical/load-testing.md).
+[`docs/technical/load-testing.md`](docs/technical/tests/load-testing.md).
 
 **Read path** (`GET /payments/:id`) — 90s sustained at 150 req/s, `api`
 connecting through PgBouncer (transaction-mode pooling, itself capped to
@@ -342,7 +478,7 @@ the poolers are resource-isolated the way a real cluster would enforce
 them; an earlier uncapped test run showed elevated CPU/tail-latency that
 turned out to be host-level container contention on the test machine,
 not a PgBouncer-inherent cost — see
-[`docs/technical/load-testing.md`](docs/technical/load-testing.md)
+[`docs/technical/load-testing.md`](docs/technical/tests/load-testing.md)
 (Finding #3) for the full story, including that confound.
 
 <details>
@@ -373,7 +509,7 @@ Measured after the `uuid` → native `crypto.randomUUID()`/`crypto`-based
 4. **JWT**: Use RS256 (asymmetric) in production instead of HS256
 5. **JWT revocation**: Tokens can be revoked before their natural expiry — self-service logout (`POST /api/v1/auth/revoke`) and admin-triggered revocation (deactivation, credential rotation, `POST /api/v1/admin/merchants/:id/revoke-sessions`) all take effect immediately. This adds a hard dependency on Redis for *every* authenticated request, not just idempotency — see [`docs/technical/security-and-compliance.md`](docs/technical/security-and-compliance.md#jwt-revocation) for the full trade-off discussion before relying on this in production.
 6. **`hmac_secret` is envelope-encrypted**, not plaintext — `merchants.hmac_secret_ciphertext` holds Vault Transit ciphertext (`VaultTransitService`); the app only ever holds the plaintext key briefly, in memory, at creation/rotation/verification time. A database compromise alone yields ciphertext, not usable signing keys. See [`docs/technical/secret-management.md`](docs/technical/secret-management.md) for the design and, importantly, what it doesn't cover — `docker-compose.yml`'s `vault` service is dev-mode only (in-memory storage, a static root token) and is **not** production-ready as deployed here.
-7. **Database migrations**: `synchronize` is `false` in every environment; schema changes go through versioned migrations (`npm run migration:generate`/`migration:run`), applied automatically by the Docker image's startup command and by the e2e suite. See [`docs/technical/database-migrations.md`](docs/technical/database-migrations.md). Still open: no documented policy yet for backward-compatible migrations across a rolling deploy (old and new app versions briefly running against the same schema).
+7. **Database migrations**: `synchronize` is `false` in every environment; schema changes go through versioned migrations (`npm run migration:generate`/`migration:run`), applied automatically by the Docker image's startup command and by the e2e suite. See [`docs/technical/database-migrations.md`](docs/technical/database-migrations.md#backward-compatible-migrations-across-a-rolling-deploy) for the expand/contract policy old and new app versions running against the same schema during a rolling deploy requires — enforced by reviewer discipline, not a CI gate.
 8. **MFA (PCI DSS Req 8.4.2) is opt-in for `MERCHANT`/`OPERATOR`/`READONLY`, mandatory for `ADMIN`** — `RolesGuard` rejects any request from an `ADMIN`-role caller whose merchant doesn't have `mfaEnabled`, on every `@Roles(...)`-gated route. `POST /auth/mfa/enroll`/`confirm` stay reachable without MFA so an `ADMIN` merchant (including the one `npm run seed:admin` creates) can complete enrollment rather than being locked out with no way back in. See [`docs/technical/security-and-compliance.md`](docs/technical/security-and-compliance.md#mfa--whats-covered-and-what-isnt) for what this still doesn't cover.
 
 ### PCI DSS
@@ -436,9 +572,28 @@ write-ups: [`DEV_README.md`](DEV_README.md) (technical/infra framing) and
   available in the session that wired it up) — verify with a real charge
   and confirm the trace shows up at `:16686` before relying on it.
 - **Fee model**: per-merchant flat rates and volume-based tiers are both
-  real and enforced. Still not reconciled against actual PSP interchange
-  cost — the fee-estimation logic used for routing/display and the rate
-  actually booked to the ledger remain two disconnected numbers.
+  real and enforced — this is a separate concept from PSP interchange
+  cost (what Stripe/Adyen charge *this platform*), which is a distinct
+  gap: the smart-routing cost estimate (`PspFeeScheduleService`) is now
+  configurable per-deployment instead of hardcoded, and
+  `POST /admin/psp-cost-reconciliation/run` computes that estimate for
+  real against real settled charges and diffs it, automatically, against
+  a real fee statement fetched via `PSPAdapterPort.fetchFeeStatement()`
+  (an operator-supplied override is still accepted, e.g. to reconcile
+  against a downloaded real PSP statement instead). Against
+  `mock-psp`'s `/statement` endpoints in this environment, that's a
+  deterministic *simulated* real fee — real per-transaction variance
+  (a "premium card" surcharge on a fifth of transactions), not the same
+  flat rate as the estimate — proving the reconciliation math against
+  genuine drift rather than an unrealistic exact match every time.
+- **Multi-region / DR**: today's `k8s/` is one cluster in one region —
+  losing a node/AZ/region takes down Postgres and Redis (the app tier
+  alone scales to multiple replicas; the stateful layer doesn't). A
+  concrete active-passive cross-region design exists, with RTO/RPO
+  targets, a per-component plan, and a failover drill runbook
+  ([`docs/technical/disaster-recovery.md`](docs/technical/disaster-recovery.md)),
+  but it has never been executed against a real second region — no
+  multi-region cloud account was available to build and drill against.
 
 **Business domain — illustrative or uncalibrated, not fully open**
 - **Recurring billing**: the hard-decline code set (which failures skip
@@ -462,8 +617,11 @@ write-ups: [`DEV_README.md`](DEV_README.md) (technical/infra framing) and
 - **Agentic payments**: no "hold for human approval above a threshold"
   step — a charge either fits the delegation's spend policy or is
   rejected outright. Agent-initiated charges are risk-scored identically
-  to human ones, and there's no per-agent request-signing scheme (the
-  delegation JWT's own possession is the authenticity proof).
+  to human ones. Per-agent request signing is implemented — every
+  `POST /delegations` issues its own HMAC signing key alongside the
+  agent JWT, and `HmacSignatureGuard` requires and verifies it on every
+  agent-initiated charge, the same signature scheme merchant requests
+  use, just keyed by the delegation instead of the merchant.
 
 ---
 

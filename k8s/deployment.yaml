@@ -246,7 +246,17 @@ spec:
           # ─── Security Context ─────────────────────────────────────────────
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Consistent with `capabilities: drop: ALL` below — the
+            # Dockerfile already treats everything under /app as read-only
+            # by Unix permission (`chmod -R 550 dist node_modules`, only
+            # `logs` at 770), so this SecurityContext setting just makes
+            # Kubernetes enforce at the mount level what the image already
+            # assumes. `/tmp` is mounted separately below since Node itself
+            # (and any transitive dependency reaching for `os.tmpdir()`)
+            # expects a writable scratch directory even though this app's
+            # own code doesn't write there today — cheaper to provision it
+            # than to find out at 3am that something transitively needed it.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -255,9 +265,13 @@ spec:
           volumeMounts:
             - name: logs
               mountPath: /app/logs
+            - name: tmp
+              mountPath: /tmp
 
       volumes:
         - name: logs
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
 
       # Image pull secrets (if using private registry)

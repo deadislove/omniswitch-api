@@ -5,7 +5,14 @@ trade-offs behind JWT revocation, and an honest assessment of where this
 project stands relative to PCI DSS. Neither section is a substitute for a
 real security audit or a formal PCI assessment — see
 ["If you take this to formal PCI DSS certification"](#if-you-take-this-to-formal-pci-dss-certification)
-for what that actually requires.
+for what that actually requires, and
+[`compliance-certification-roadmap.md`](./compliance-certification-roadmap.md)
+for the SOC 2 path (untouched here) plus a concrete ASV-scan/penetration-test
+budget and cadence for both programs. See
+[`../business-domain/compliance-and-security.md`](../business-domain/compliance-and-security.md)
+for why these requirements shaped specific domain-model decisions
+(tokenization, the KYC payout gate, delegation scope) — written for
+reasoning about the business, not auditing the code.
 
 ---
 

@@ -1,11 +1,4 @@
-import {
-  Entity,
-  PrimaryColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  Index,
-} from 'typeorm';
+import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 import { PaymentStatus } from '../../../domain/value-objects/payment-status.vo';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 

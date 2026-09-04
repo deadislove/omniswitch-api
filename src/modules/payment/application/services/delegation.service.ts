@@ -1,6 +1,13 @@
-import { Injectable, Logger, NotFoundException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ConflictException,
+  ForbiddenException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { DelegationPort, FindDelegationsFilter } from '../../ports/outbound/delegation.port';
 import { Delegation } from '../../domain/aggregates/delegation.aggregate';
 import { SpendPolicy } from '../../domain/value-objects/spend-policy.vo';
@@ -8,6 +15,7 @@ import { Money } from '../../domain/value-objects/money.vo';
 import { JwtPayload } from '../../../../shared/auth/jwt.strategy';
 import { TokenRevocationService } from '../../../../shared/auth/token-revocation.service';
 import { UserRole } from '../../../../shared/decorators/roles.decorator';
+import { VaultTransitService } from '../../../../shared/vault/vault-transit.service';
 
 const DEFAULT_AGENT_TOKEN_TTL_SECONDS = 24 * 3600;
 
@@ -36,10 +44,26 @@ export class DelegationService {
     private readonly delegationPort: DelegationPort,
     private readonly jwtService: JwtService,
     private readonly tokenRevocation: TokenRevocationService,
+    private readonly vaultTransit: VaultTransitService,
   ) {}
 
-  /** Creates the Delegation and, in the same call, issues its one agent JWT — there's no separate "issue credential" step, the same way creating a merchant's initial API key isn't a separate step from onboarding. */
-  async createDelegation(params: CreateDelegationParams): Promise<{ delegation: Delegation; agentToken: string; expiresIn: number }> {
+  /**
+   * Creates the Delegation and, in the same call, issues its one agent JWT
+   * — there's no separate "issue credential" step, the same way creating a
+   * merchant's initial API key isn't a separate step from onboarding.
+   *
+   * Also generates this delegation's own HMAC signing key (`randomBytes(32)`,
+   * same as `MerchantService.createMerchant()`'s `hmacSecret`), envelope-
+   * encrypted via the same `VaultTransitService`/Transit key
+   * `hmacSecretCiphertext` uses before it's persisted — see
+   * `HmacSignatureGuard`'s AGENT branch for where this gets used. The
+   * plaintext key is returned here once, alongside `agentToken`, and never
+   * stored or logged in plaintext again — identical posture to
+   * `apiKeySecret`/`hmacSecret` at merchant creation.
+   */
+  async createDelegation(
+    params: CreateDelegationParams,
+  ): Promise<{ delegation: Delegation; agentToken: string; expiresIn: number; agentSigningKey: string }> {
     const spendPolicy = SpendPolicy.create({
       perTransactionLimit: params.perTransactionLimit,
       monthlyLimit: params.monthlyLimit,
@@ -50,6 +74,7 @@ export class DelegationService {
     const jti = randomUUID();
     const expiresIn = params.tokenTtlSeconds ?? DEFAULT_AGENT_TOKEN_TTL_SECONDS;
     const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
+    const agentSigningKey = randomBytes(32).toString('hex');
 
     const delegation = Delegation.create({
       id,
@@ -58,6 +83,7 @@ export class DelegationService {
       spendPolicy,
       jti,
       tokenExpiresAt,
+      signingKeyCiphertext: await this.vaultTransit.encrypt(agentSigningKey),
     });
     await this.delegationPort.save(delegation);
 
@@ -71,13 +97,17 @@ export class DelegationService {
     const agentToken = this.jwtService.sign(payload, { expiresIn });
 
     this.logger.log(`Delegation ${id} created for merchant ${params.merchantId} (agent "${params.agentName}")`);
-    return { delegation, agentToken, expiresIn };
+    return { delegation, agentToken, expiresIn, agentSigningKey };
   }
 
   async getOrThrow(id: string): Promise<Delegation> {
     const delegation = await this.delegationPort.findById(id);
     if (!delegation) {
-      throw new NotFoundException({ statusCode: 404, error: `Delegation ${id} not found`, code: 'DELEGATION_NOT_FOUND' });
+      throw new NotFoundException({
+        statusCode: 404,
+        error: `Delegation ${id} not found`,
+        code: 'DELEGATION_NOT_FOUND',
+      });
     }
     return delegation;
   }
@@ -90,7 +120,11 @@ export class DelegationService {
   async revoke(id: string): Promise<Delegation> {
     const delegation = await this.getOrThrow(id);
     if (delegation.status === 'REVOKED') {
-      throw new ConflictException({ statusCode: 409, error: `Delegation ${id} is already revoked`, code: 'DELEGATION_ALREADY_REVOKED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Delegation ${id} is already revoked`,
+        code: 'DELEGATION_ALREADY_REVOKED',
+      });
     }
     const now = new Date();
     delegation.revoke(now);
@@ -112,11 +146,20 @@ export class DelegationService {
    * reserved) on any violation; the caller must call releaseReservation()
    * if the charge it went on to attempt subsequently fails.
    */
-  async reserveSpendOrThrow(delegationId: string, amount: Money, category: string | undefined, now: Date): Promise<void> {
+  async reserveSpendOrThrow(
+    delegationId: string,
+    amount: Money,
+    category: string | undefined,
+    now: Date,
+  ): Promise<void> {
     const delegation = await this.getOrThrow(delegationId);
 
     if (delegation.status !== 'ACTIVE') {
-      throw new ForbiddenException({ statusCode: 403, error: `Delegation ${delegationId} has been revoked`, code: 'DELEGATION_REVOKED' });
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: `Delegation ${delegationId} has been revoked`,
+        code: 'DELEGATION_REVOKED',
+      });
     }
     if (amount.currency.code !== delegation.spendPolicy.currency) {
       throw new UnprocessableEntityException({

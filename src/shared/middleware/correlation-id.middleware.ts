@@ -15,9 +15,7 @@ export class CorrelationIdMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
     // Use existing correlation ID from upstream or generate new one
     const correlationId =
-      (req.headers[CORRELATION_ID_HEADER] as string) ||
-      (req.headers[REQUEST_ID_HEADER] as string) ||
-      uuidv4();
+      (req.headers[CORRELATION_ID_HEADER] as string) || (req.headers[REQUEST_ID_HEADER] as string) || uuidv4();
 
     // Attach to request for use in handlers
     (req as any).correlationId = correlationId;

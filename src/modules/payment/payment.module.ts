@@ -15,7 +15,10 @@ import { PayoutSweepRunEntity } from './adapters/persistence/entities/payout-swe
 import { DelegationEntity } from './adapters/persistence/entities/delegation.entity';
 
 // Repositories
-import { PaymentTypeOrmRepository, LedgerOutboxTypeOrmRepository } from './adapters/persistence/repositories/payment-typeorm.repository';
+import {
+  PaymentTypeOrmRepository,
+  LedgerOutboxTypeOrmRepository,
+} from './adapters/persistence/repositories/payment-typeorm.repository';
 import { ReconciliationTypeOrmRepository } from './adapters/persistence/repositories/reconciliation-typeorm.repository';
 import { DisputeTypeOrmRepository } from './adapters/persistence/repositories/dispute-typeorm.repository';
 import { ReserveHoldTypeOrmRepository } from './adapters/persistence/repositories/reserve-hold-typeorm.repository';
@@ -68,6 +71,8 @@ import { DelegationService } from './application/services/delegation.service';
 import { LegalHoldService } from './application/services/legal-hold.service';
 import { AmbiguousPaymentService } from './application/services/ambiguous-payment.service';
 import { AmbiguousRiskMonitoringService } from './application/services/ambiguous-risk-monitoring.service';
+import { PspFeeScheduleService } from './application/services/psp-fee-schedule.service';
+import { PspCostReconciliationService } from './application/services/psp-cost-reconciliation.service';
 
 // Controller
 import { PaymentController } from './application/controllers/payment.controller';
@@ -85,6 +90,7 @@ import { DelegationController } from './application/controllers/delegation.contr
 import { LegalHoldAdminController } from './application/controllers/legal-hold-admin.controller';
 import { AmbiguousPaymentAdminController } from './application/controllers/ambiguous-payment-admin.controller';
 import { AmbiguousRiskAdminController } from './application/controllers/ambiguous-risk-admin.controller';
+import { PspCostReconciliationAdminController } from './application/controllers/psp-cost-reconciliation-admin.controller';
 
 // Webhook Guards
 import { StripeWebhookGuard } from './adapters/psp/stripe/stripe-webhook.guard';
@@ -108,7 +114,18 @@ import { VaultModule } from '../../shared/vault/vault.module';
     AuthModule,
     MerchantModule,
     VaultModule,
-    TypeOrmModule.forFeature([PaymentEntity, LedgerOutboxEntity, ReconciliationRunEntity, DisputeEntity, ReserveHoldEntity, SubscriptionEntity, PlanEntity, PayoutEntity, PayoutSweepRunEntity, DelegationEntity]),
+    TypeOrmModule.forFeature([
+      PaymentEntity,
+      LedgerOutboxEntity,
+      ReconciliationRunEntity,
+      DisputeEntity,
+      ReserveHoldEntity,
+      SubscriptionEntity,
+      PlanEntity,
+      PayoutEntity,
+      PayoutSweepRunEntity,
+      DelegationEntity,
+    ]),
     // No separate ThrottlerModule registration here: @nestjs/throttler's
     // ThrottlerModule is @Global(), so there is exactly one
     // ThrottlerStorageService/THROTTLER_OPTIONS for the whole app regardless
@@ -134,7 +151,24 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // covers the whole app via @Global(); a second one here would be pure
     // duplication that's actively harmful, not just redundant.
   ],
-  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController, LegalHoldAdminController, AmbiguousPaymentAdminController, AmbiguousRiskAdminController],
+  controllers: [
+    PaymentController,
+    WebhookController,
+    OutboxAdminController,
+    ReconciliationAdminController,
+    DisputeAdminController,
+    ReserveAdminController,
+    SubscriptionController,
+    SubscriptionAdminController,
+    RiskTieringAdminController,
+    PlanController,
+    MarketplacePayoutAdminController,
+    DelegationController,
+    LegalHoldAdminController,
+    AmbiguousPaymentAdminController,
+    AmbiguousRiskAdminController,
+    PspCostReconciliationAdminController,
+  ],
   providers: [
     // PSP Adapters
     StripePSPAdapter,
@@ -216,6 +250,8 @@ import { VaultModule } from '../../shared/vault/vault.module';
     LegalHoldService,
     AmbiguousPaymentService,
     AmbiguousRiskMonitoringService,
+    PspFeeScheduleService,
+    PspCostReconciliationService,
 
     // Auth
     JwtAuthGuard,

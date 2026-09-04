@@ -104,7 +104,7 @@ export class MerchantAdminController {
 
   @Post(':merchantId/rotate-api-key')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Rotate a merchant\'s API key secret — the old secret stops working immediately' })
+  @ApiOperation({ summary: "Rotate a merchant's API key secret — the old secret stops working immediately" })
   @ApiResponse({ status: 200, type: RotateApiKeyResponseDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
   async rotateApiKey(@Param('merchantId') merchantId: string): Promise<RotateApiKeyResponseDto> {
@@ -114,7 +114,7 @@ export class MerchantAdminController {
 
   @Post(':merchantId/rotate-hmac-secret')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Rotate a merchant\'s HMAC signing key — the old key stops working immediately' })
+  @ApiOperation({ summary: "Rotate a merchant's HMAC signing key — the old key stops working immediately" })
   @ApiResponse({ status: 200, type: RotateHmacSecretResponseDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
   async rotateHmacSecret(@Param('merchantId') merchantId: string): Promise<RotateHmacSecretResponseDto> {
@@ -126,79 +126,134 @@ export class MerchantAdminController {
   @ApiOperation({ summary: 'Activate or deactivate a merchant (deactivating also revokes all active sessions)' })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async setStatus(@Param('merchantId') merchantId: string, @Body() dto: UpdateMerchantStatusDto): Promise<MerchantSummaryDto> {
+  async setStatus(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateMerchantStatusDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.setActive(merchantId, dto.isActive);
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/fee-rate')
-  @ApiOperation({ summary: 'Change a merchant\'s platform fee rate (basis points) — takes effect on the next charge/capture, does not retroactively change already-booked ledger entries' })
+  @ApiOperation({
+    summary:
+      "Change a merchant's platform fee rate (basis points) — takes effect on the next charge/capture, does not retroactively change already-booked ledger entries",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async updateFeeRate(@Param('merchantId') merchantId: string, @Body() dto: UpdateFeeRateDto): Promise<MerchantSummaryDto> {
+  async updateFeeRate(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateFeeRateDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.updateFeeRate(merchantId, dto.platformFeeBps);
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/fee-tiers')
-  @ApiOperation({ summary: 'Set (or clear, with an empty array) a merchant\'s volume-based fee schedule — supersedes platformFeeBps once this merchant\'s trailing current-month SUCCEEDED charge volume reaches a tier. Takes effect on the next charge; does not retroactively change already-booked ledger entries.' })
+  @ApiOperation({
+    summary:
+      "Set (or clear, with an empty array) a merchant's volume-based fee schedule — supersedes platformFeeBps once this merchant's trailing current-month SUCCEEDED charge volume reaches a tier. Takes effect on the next charge; does not retroactively change already-booked ledger entries.",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  @ApiResponse({ status: 422, description: 'Tiers are not strictly ascending by minVolumeMinorUnits, or contain an invalid threshold' })
-  async updateFeeTiers(@Param('merchantId') merchantId: string, @Body() dto: UpdateFeeTiersDto): Promise<MerchantSummaryDto> {
+  @ApiResponse({
+    status: 422,
+    description: 'Tiers are not strictly ascending by minVolumeMinorUnits, or contain an invalid threshold',
+  })
+  async updateFeeTiers(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateFeeTiersDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.updateFeeTiers(merchantId, dto.tiers);
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/settlement-currency')
-  @ApiOperation({ summary: 'Change a merchant\'s settlement currency — omit/null to settle in whatever currency was charged. Takes effect on the next charge/capture, does not retroactively change already-booked ledger entries' })
+  @ApiOperation({
+    summary:
+      "Change a merchant's settlement currency — omit/null to settle in whatever currency was charged. Takes effect on the next charge/capture, does not retroactively change already-booked ledger entries",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async updateSettlementCurrency(@Param('merchantId') merchantId: string, @Body() dto: UpdateSettlementCurrencyDto): Promise<MerchantSummaryDto> {
+  async updateSettlementCurrency(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateSettlementCurrencyDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.updateSettlementCurrency(merchantId, dto.settlementCurrency ?? null);
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/reserve-policy')
-  @ApiOperation({ summary: 'Change a merchant\'s reserve rate/hold period — takes effect on the next charge/capture, does not retroactively change already-booked reserve holds' })
+  @ApiOperation({
+    summary:
+      "Change a merchant's reserve rate/hold period — takes effect on the next charge/capture, does not retroactively change already-booked reserve holds",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async updateReservePolicy(@Param('merchantId') merchantId: string, @Body() dto: UpdateReservePolicyDto): Promise<MerchantSummaryDto> {
+  async updateReservePolicy(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateReservePolicyDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.updateReservePolicy(merchantId, dto.reserveBps, dto.reserveHoldDays);
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/payout-reserve-policy')
-  @ApiOperation({ summary: 'Change a merchant\'s marketplace payout rolling-reserve rate/hold period — takes effect on the next payout sweep, does not retroactively change already-created payouts' })
+  @ApiOperation({
+    summary:
+      "Change a merchant's marketplace payout rolling-reserve rate/hold period — takes effect on the next payout sweep, does not retroactively change already-created payouts",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async updatePayoutReservePolicy(@Param('merchantId') merchantId: string, @Body() dto: UpdatePayoutReservePolicyDto): Promise<MerchantSummaryDto> {
-    const merchant = await this.merchantService.updatePayoutReservePolicy(merchantId, dto.payoutReserveBps, dto.payoutReserveHoldDays);
+  async updatePayoutReservePolicy(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdatePayoutReservePolicyDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updatePayoutReservePolicy(
+      merchantId,
+      dto.payoutReserveBps,
+      dto.payoutReserveHoldDays,
+    );
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/risk-tier-auto')
-  @ApiOperation({ summary: 'Enable/disable RiskTieringService\'s automatic reserve-policy management for this merchant — a manual reserve-policy change already disables it as a side effect' })
+  @ApiOperation({
+    summary:
+      "Enable/disable RiskTieringService's automatic reserve-policy management for this merchant — a manual reserve-policy change already disables it as a side effect",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async updateRiskTierAuto(@Param('merchantId') merchantId: string, @Body() dto: UpdateRiskTierAutoDto): Promise<MerchantSummaryDto> {
+  async updateRiskTierAuto(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateRiskTierAutoDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.setRiskTierAutoManaged(merchantId, dto.enabled);
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/psp-entitlement')
-  @ApiOperation({ summary: 'Set which PSPs this merchant\'s charges may route through — takes effect on the next charge. A charge that explicitly requests a preferredProvider outside this list is rejected (422), not silently routed elsewhere.' })
+  @ApiOperation({
+    summary:
+      "Set which PSPs this merchant's charges may route through — takes effect on the next charge. A charge that explicitly requests a preferredProvider outside this list is rejected (422), not silently routed elsewhere.",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
   @ApiResponse({ status: 422, description: 'enabledPspProviders is empty' })
-  async updatePspEntitlement(@Param('merchantId') merchantId: string, @Body() dto: UpdatePspEntitlementDto): Promise<MerchantSummaryDto> {
+  async updatePspEntitlement(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdatePspEntitlementDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.updatePspEntitlement(merchantId, dto.enabledPspProviders);
     return toSummary(merchant);
   }
 
   @Post(':merchantId/kyc/submit')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Submit (or re-submit) this merchant\'s KYC application — resolves synchronously against the (mock) KYC provider. Only meaningful for a CONNECTED merchant; gates payouts, not charges.' })
+  @ApiOperation({
+    summary:
+      "Submit (or re-submit) this merchant's KYC application — resolves synchronously against the (mock) KYC provider. Only meaningful for a CONNECTED merchant; gates payouts, not charges.",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
   async submitKyc(@Param('merchantId') merchantId: string, @Body() dto: SubmitKycDto): Promise<MerchantSummaryDto> {

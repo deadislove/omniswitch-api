@@ -13,7 +13,7 @@ drift the first time someone adds a column and forgets this doc.
 |---|---|---|
 | `merchants` | `src/modules/merchant/merchant.entity.ts` | Tenant identity: credentials, MFA, fee/reserve policy, marketplace account type, KYC status |
 | `payments` | `src/modules/payment/adapters/persistence/entities/payment.entity.ts` | The core payment record — one row per charge attempt, its refunds/captures, PSP response, FX/settlement/split data. **Range-partitioned by `created_at`** — see [`architecture.md`](./architecture.md#partitioning) |
-| `ledger_outbox` | `.../entities/ledger-outbox.entity.ts` | Transactional Outbox pattern — double-entry ledger events written atomically with the payment state change that confirms them, relayed asynchronously. **Also partitioned** by `created_at`. See [`../../business-domain/ledger-and-settlement.md`](../../business-domain/ledger-and-settlement.md) |
+| `ledger_outbox` | `.../entities/ledger-outbox.entity.ts` | Transactional Outbox pattern — double-entry ledger events written atomically with the payment state change that confirms them, relayed asynchronously. **Also partitioned** by `created_at`. See [`../../business-domain/ledger-accounting.md`](../../business-domain/ledger-accounting.md) |
 | `disputes` | `.../entities/dispute.entity.ts` | Chargeback/dispute lifecycle (`NEEDS_RESPONSE` → `UNDER_REVIEW` → `WON`/`LOST`), one row per PSP dispute |
 | `reserve_holds` | `.../entities/reserve-hold.entity.ts` | Per-charge risk reserve withholding — released by a sweep or an operator override |
 | `subscriptions` | `.../entities/subscription.entity.ts` | Recurring billing state machine: current period, dunning/retry schedule, optional `plan_id` |

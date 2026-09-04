@@ -32,7 +32,9 @@ export class SubscriptionTypeOrmRepository implements SubscriptionPort {
     entity.description = subscription.description;
     entity.canceledAt = subscription.canceledAt ?? null;
     entity.planId = subscription.planId ?? null;
-    entity.pendingCreditMinorUnits = subscription.pendingCredit ? subscription.pendingCredit.amountMinorUnits.toString() : null;
+    entity.pendingCreditMinorUnits = subscription.pendingCredit
+      ? subscription.pendingCredit.amountMinorUnits.toString()
+      : null;
     entity.nextRetryAt = subscription.nextRetryAt ?? null;
     entity.lastDeclineCode = subscription.lastDeclineCode ?? null;
     await this.repo.save(entity);
@@ -87,7 +89,10 @@ export class SubscriptionTypeOrmRepository implements SubscriptionPort {
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
       planId: entity.planId ?? undefined,
-      pendingCredit: entity.pendingCreditMinorUnits != null ? Money.fromMinorUnits(BigInt(entity.pendingCreditMinorUnits), entity.currencyCode) : undefined,
+      pendingCredit:
+        entity.pendingCreditMinorUnits != null
+          ? Money.fromMinorUnits(BigInt(entity.pendingCreditMinorUnits), entity.currencyCode)
+          : undefined,
       nextRetryAt: entity.nextRetryAt ?? undefined,
       lastDeclineCode: entity.lastDeclineCode ?? undefined,
     });

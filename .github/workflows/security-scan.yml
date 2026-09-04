@@ -31,10 +31,9 @@ jobs:
       # Full findings, for visibility — does not fail the job. CRITICAL is
       # the enforced gate (see below); HIGH-severity findings currently
       # include pre-existing transitive dependency CVEs (js-yaml, lodash,
-      # multer — see package-lock.json) and one k8s hardening
-      # recommendation (missing readOnlyRootFilesystem), none introduced
-      # by this workflow. Fixing those is a separate task, not something
-      # to gate merges on until addressed.
+      # multer — see package-lock.json), none introduced by this workflow.
+      # Fixing those is a separate task, not something to gate merges on
+      # until addressed.
       - name: Full scan (report only)
         run: |
           docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \

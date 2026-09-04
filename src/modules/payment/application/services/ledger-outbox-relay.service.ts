@@ -61,7 +61,7 @@ export class LedgerOutboxRelayService {
       // In production: page on-call / emit a metric an alert is wired to.
       this.logger.error(
         `Ledger outbox event ${event.id} (payment ${event.paymentId}) has been PENDING for ` +
-        `>${STALE_THRESHOLD_MINUTES}min without being relayed — investigate the relay job`,
+          `>${STALE_THRESHOLD_MINUTES}min without being relayed — investigate the relay job`,
       );
     }
   }

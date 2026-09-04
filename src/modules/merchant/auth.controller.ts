@@ -39,7 +39,8 @@ export class TokenResponseDto {
   expiresIn: number;
 
   @ApiPropertyOptional({
-    description: 'If true, accessToken is a short-lived, restricted token only usable against POST /auth/mfa/verify — this merchant has MFA enabled.',
+    description:
+      'If true, accessToken is a short-lived, restricted token only usable against POST /auth/mfa/verify — this merchant has MFA enabled.',
   })
   mfaRequired?: boolean;
 }
@@ -107,7 +108,9 @@ export class AuthController {
   // (or an e2e suite that logs in many times per run) isn't forced to use
   // the same limit as the production default.
   @Throttle({ default: { limit: Number(process.env.AUTH_LOGIN_RATE_LIMIT) || 10, ttl: 60000 } })
-  @ApiOperation({ summary: 'Exchange an API Key ID + Secret for a JWT (or, if MFA is enabled, a short-lived pending token)' })
+  @ApiOperation({
+    summary: 'Exchange an API Key ID + Secret for a JWT (or, if MFA is enabled, a short-lived pending token)',
+  })
   @ApiResponse({ status: 200, type: TokenResponseDto })
   @ApiResponse({ status: 401, description: 'Invalid API credentials' })
   async issueToken(@Body() dto: TokenRequestDto): Promise<TokenResponseDto> {
@@ -195,7 +198,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Disable MFA — requires a valid TOTP/backup code, so a stolen JWT alone can\'t turn it off' })
+  @ApiOperation({ summary: "Disable MFA — requires a valid TOTP/backup code, so a stolen JWT alone can't turn it off" })
   @ApiResponse({ status: 200, type: DisableMfaResponseDto })
   @ApiResponse({ status: 401, description: 'Invalid TOTP/backup code' })
   @ApiResponse({ status: 409, description: 'MFA is not enabled' })

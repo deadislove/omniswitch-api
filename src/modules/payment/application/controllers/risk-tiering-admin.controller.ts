@@ -12,7 +12,11 @@ class TieringSweepResultDto {
   @ApiProperty({ example: 2, description: 'Evaluated merchants whose reserve policy actually changed' })
   changed: number;
 
-  @ApiProperty({ example: 3, description: 'Auto-managed merchants skipped — not enough settled-charge volume in the trailing window to evaluate, or an error' })
+  @ApiProperty({
+    example: 3,
+    description:
+      'Auto-managed merchants skipped — not enough settled-charge volume in the trailing window to evaluate, or an error',
+  })
   skipped: number;
 }
 

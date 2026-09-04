@@ -19,12 +19,11 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('Per-merchant PSP entitlement (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
 
   beforeAll(async () => {
     app = await createTestApp();
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -98,7 +97,7 @@ describe('Per-merchant PSP entitlement (e2e)', () => {
       .expect(422);
   });
 
-  it('a charge with no preferredProvider routes only to the merchant\'s entitled PSP, even when the other PSP would otherwise be viable', async () => {
+  it("a charge with no preferredProvider routes only to the merchant's entitled PSP, even when the other PSP would otherwise be viable", async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('merchant'), enabledPspProviders: ['ADYEN'] });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
@@ -114,7 +113,10 @@ describe('Per-merchant PSP entitlement (e2e)', () => {
   });
 
   it('a charge whose preferredProvider IS within the entitlement succeeds normally', async () => {
-    const merchant = await seedMerchant(app, { merchantId: uniqueId('merchant'), enabledPspProviders: ['STRIPE', 'ADYEN'] });
+    const merchant = await seedMerchant(app, {
+      merchantId: uniqueId('merchant'),
+      enabledPspProviders: ['STRIPE', 'ADYEN'],
+    });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
     const res = await signedCharge(merchant, token, {

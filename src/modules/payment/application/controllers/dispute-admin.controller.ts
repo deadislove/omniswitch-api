@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Param, Query, Body, UseGuards, HttpCode, HttpStatus, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Query,
+  Body,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, MinLength, MaxLength, IsOptional, IsIn } from 'class-validator';
 import { DisputeService } from '../services/dispute.service';
@@ -12,7 +23,7 @@ const DISPUTE_STATUSES: DisputeStatus[] = ['NEEDS_RESPONSE', 'UNDER_REVIEW', 'WO
 const DISPUTE_AUTO_DECISIONS: DisputeAutoDecision[] = ['ACCEPT', 'CONTEST', 'MANUAL_REVIEW'];
 
 class SubmitEvidenceDto {
-  @ApiProperty({ example: 'Tracking number 1Z999 shows delivery confirmed on the customer\'s doorstep.' })
+  @ApiProperty({ example: "Tracking number 1Z999 shows delivery confirmed on the customer's doorstep." })
   @IsString()
   @MinLength(1)
   @MaxLength(5000)
@@ -44,7 +55,10 @@ class DisputeSummaryDto {
   @ApiProperty({ example: 'STRIPE' })
   pspProvider: string;
 
-  @ApiProperty({ example: 'dp_stripe_abc123', description: 'The PSP\'s own id for this dispute — not the original payment\'s transaction id' })
+  @ApiProperty({
+    example: 'dp_stripe_abc123',
+    description: "The PSP's own id for this dispute — not the original payment's transaction id",
+  })
   pspDisputeId: string;
 
   @ApiProperty({ example: 99.99 })
@@ -62,19 +76,25 @@ class DisputeSummaryDto {
   @ApiProperty({ description: 'Deadline to respond — defaults to 7 days after creation' })
   respondBy: string;
 
-  @ApiPropertyOptional({ description: 'Evidence text submitted via POST :id/evidence, if any — either an operator\'s own submission, or an automated one if autoDecision is CONTEST' })
+  @ApiPropertyOptional({
+    description:
+      "Evidence text submitted via POST :id/evidence, if any — either an operator's own submission, or an automated one if autoDecision is CONTEST",
+  })
   evidence?: string;
 
   @ApiPropertyOptional({
     enum: DISPUTE_AUTO_DECISIONS,
     description:
-      'DisputeService\'s policy recommendation, computed once at creation (see dispute-policy.ts): ' +
+      "DisputeService's policy recommendation, computed once at creation (see dispute-policy.ts): " +
       'ACCEPT/MANUAL_REVIEW are advisory only (this system has no PSP "accept" action to call); ' +
       'CONTEST already auto-submitted templated evidence — status will be UNDER_REVIEW, not NEEDS_RESPONSE.',
   })
   autoDecision?: DisputeAutoDecision;
 
-  @ApiProperty({ description: 'What evidence this reason code actually needs to win — shown regardless of autoDecision, since an operator overriding a MANUAL_REVIEW recommendation still needs this' })
+  @ApiProperty({
+    description:
+      'What evidence this reason code actually needs to win — shown regardless of autoDecision, since an operator overriding a MANUAL_REVIEW recommendation still needs this',
+  })
   evidenceGuidance: string;
 
   @ApiProperty()

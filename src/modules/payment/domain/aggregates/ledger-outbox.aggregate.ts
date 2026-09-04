@@ -41,14 +41,7 @@ export class LedgerOutboxEvent {
     eventType: string;
     entries: LedgerEntry[];
   }): LedgerOutboxEvent {
-    return new LedgerOutboxEvent(
-      params.id,
-      params.paymentId,
-      params.eventType,
-      params.entries,
-      'PENDING',
-      new Date(),
-    );
+    return new LedgerOutboxEvent(params.id, params.paymentId, params.eventType, params.entries, 'PENDING', new Date());
   }
 
   static reconstitute(params: {
@@ -97,9 +90,7 @@ export class LedgerOutboxEvent {
 
     for (const [currency, { debits, credits }] of byCurrency) {
       if (debits !== credits) {
-        throw new Error(
-          `Double-entry imbalance for ${currency}: debits=${debits}, credits=${credits}`,
-        );
+        throw new Error(`Double-entry imbalance for ${currency}: debits=${debits}, credits=${credits}`);
       }
     }
   }

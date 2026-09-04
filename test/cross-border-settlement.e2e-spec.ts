@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest, signStripeWebhook } from './utils/signing';
 import { LedgerOutboxEntity } from '../src/modules/payment/adapters/persistence/entities/ledger-outbox.entity';
 
@@ -21,14 +21,11 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET!;
  */
 describe('Cross-border settlement remainder (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
-  let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -89,10 +86,16 @@ describe('Cross-border settlement remainder (e2e)', () => {
       expect(chargeMerchantCredit.currencyCode).toBe('EUR');
       expect(chargeMerchantCredit.amountMinorUnits).toBe('9062');
 
-      const refundRes = await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, {
-        amount: 100,
-        reason: 'requested_by_customer',
-      }).expect(200);
+      const refundRes = await signedRequest(
+        merchant,
+        token,
+        'post',
+        `/api/v1/payments/${chargeRes.body.paymentId}/refund`,
+        {
+          amount: 100,
+          reason: 'requested_by_customer',
+        },
+      ).expect(200);
       expect(refundRes.body.status).toBe('REFUNDED');
 
       const refundEntries = await ledgerEntries(chargeRes.body.paymentId, 'PAYMENT_REFUNDED');
@@ -127,10 +130,16 @@ describe('Cross-border settlement remainder (e2e)', () => {
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
       const chargeRes = await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-        amount: 50, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+        amount: 50,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
       }).expect(201);
 
-      await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, { amount: 50 }).expect(200);
+      await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, {
+        amount: 50,
+      }).expect(200);
 
       const refundEntries = await ledgerEntries(chargeRes.body.paymentId, 'PAYMENT_REFUNDED');
       expect(refundEntries.every((e) => e.accountType !== 'FX_CLEARING')).toBe(true);
@@ -146,7 +155,11 @@ describe('Cross-border settlement remainder (e2e)', () => {
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
       const chargeRes = await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-        amount: 40, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+        amount: 40,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
       }).expect(201);
 
       const disputeId = 'dp_' + uniqueId('fx');

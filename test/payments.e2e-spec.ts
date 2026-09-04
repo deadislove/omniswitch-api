@@ -133,8 +133,19 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       const otherToken = await login(app, otherMerchant.apiKeyId, otherMerchant.apiKeySecret);
       const sharedIdempotencyKey = randomUUID();
 
-      const bodyA = { amount: 10, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN };
-      const { signature: sigA, timestamp: tsA } = signHmacRequest(merchant.hmacSecret, 'post', '/api/v1/payments/charge', JSON.stringify(bodyA));
+      const bodyA = {
+        amount: 10,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+      };
+      const { signature: sigA, timestamp: tsA } = signHmacRequest(
+        merchant.hmacSecret,
+        'post',
+        '/api/v1/payments/charge',
+        JSON.stringify(bodyA),
+      );
       const resA = await request(app.getHttpServer())
         .post('/api/v1/payments/charge')
         .set('Authorization', `Bearer ${token}`)
@@ -146,8 +157,19 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
         .send(bodyA)
         .expect(201);
 
-      const bodyB = { amount: 77, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN };
-      const { signature: sigB, timestamp: tsB } = signHmacRequest(otherMerchant.hmacSecret, 'post', '/api/v1/payments/charge', JSON.stringify(bodyB));
+      const bodyB = {
+        amount: 77,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+      };
+      const { signature: sigB, timestamp: tsB } = signHmacRequest(
+        otherMerchant.hmacSecret,
+        'post',
+        '/api/v1/payments/charge',
+        JSON.stringify(bodyB),
+      );
       const resB = await request(app.getHttpServer())
         .post('/api/v1/payments/charge')
         .set('Authorization', `Bearer ${otherToken}`)
@@ -171,7 +193,7 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       expect(fetchedB.body.amount).toBe(77);
     });
 
-    it('a different merchant cannot read this merchant\'s payment', async () => {
+    it("a different merchant cannot read this merchant's payment", async () => {
       const chargeRes = await signedRequest('post', '/api/v1/payments/charge', {
         amount: 12,
         currency: 'USD',
@@ -207,9 +229,7 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       const payment = await charge({ captureMethod: 'manual' });
       expect(payment.status).toBe('REQUIRES_CAPTURE');
 
-      const captureRes = await signedRequest('post', `/api/v1/payments/${payment.paymentId}/capture`, {}).expect(
-        200,
-      );
+      const captureRes = await signedRequest('post', `/api/v1/payments/${payment.paymentId}/capture`, {}).expect(200);
       expect(captureRes.body.status).toBe('SUCCEEDED');
     });
 
@@ -398,7 +418,9 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       const disputeBody = JSON.stringify({
         id: 'evt_' + uniqueId('test'),
         type: 'charge.dispute.created',
-        data: { object: { id: 'dp_' + uniqueId('test'), payment_intent: payment.pspTransactionId, reason: 'fraudulent' } },
+        data: {
+          object: { id: 'dp_' + uniqueId('test'), payment_intent: payment.pspTransactionId, reason: 'fraudulent' },
+        },
       });
       await request(app.getHttpServer())
         .post('/api/v1/webhooks/stripe')

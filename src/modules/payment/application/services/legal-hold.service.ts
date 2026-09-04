@@ -59,7 +59,11 @@ export class LegalHoldService {
     try {
       const [archivedRow] = await runner.query(`SELECT "id" FROM "archive"."payments" WHERE "id" = $1`, [paymentId]);
       if (!archivedRow) {
-        throw new NotFoundException({ statusCode: 404, error: `Payment ${paymentId} not found`, code: 'PAYMENT_NOT_FOUND' });
+        throw new NotFoundException({
+          statusCode: 404,
+          error: `Payment ${paymentId} not found`,
+          code: 'PAYMENT_NOT_FOUND',
+        });
       }
 
       // "status" needs an explicit cast: archive.payments.status is a

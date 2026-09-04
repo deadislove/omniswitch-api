@@ -172,7 +172,7 @@ Docker healthcheck used `wget http://localhost:8200/...`, which reported
 `localhost` resolves to `::1` first, and Vault's dev-mode listener
 (`0.0.0.0:8200`) doesn't answer on IPv6. Fixed by using `127.0.0.1`
 explicitly, same fix shape as the Postgres/Redis host-port collisions in
-[`infra-verification-status.md`](./infra-verification-status.md) — a
+[`infra-verification-status.md`](./tests/infra-verification-status.md) — a
 different flavor of "`localhost` doesn't mean what you think it means."
 
 ## Verification

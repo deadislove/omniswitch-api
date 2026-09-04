@@ -1,5 +1,4 @@
 import { INestApplication } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
@@ -22,18 +21,15 @@ describe('Dispute resolution policy layer (e2e)', () => {
   let app: INestApplication;
   let merchant: SeededMerchant;
   let token: string;
-  let admin: SeededMerchant;
   let adminToken: string;
-  let dataSource: DataSource;
   let eventEmitter: EventEmitter2;
 
   beforeAll(async () => {
     app = await createTestApp();
-    dataSource = app.get(DataSource);
     eventEmitter = app.get(EventEmitter2);
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -41,7 +37,13 @@ describe('Dispute resolution policy layer (e2e)', () => {
   });
 
   async function chargeImmediate(amount: number) {
-    const bodyObj = { amount, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN };
+    const bodyObj = {
+      amount,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+    };
     const bodyStr = JSON.stringify(bodyObj);
     const { signature, timestamp } = signHmacRequest(merchant.hmacSecret, 'post', '/api/v1/payments/charge', bodyStr);
     const res = await request(app.getHttpServer())

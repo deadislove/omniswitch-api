@@ -5,7 +5,7 @@
 export enum PaymentStatus {
   PENDING = 'PENDING',
   PROCESSING = 'PROCESSING',
-  REQUIRES_ACTION = 'REQUIRES_ACTION',   // 3DS challenge required
+  REQUIRES_ACTION = 'REQUIRES_ACTION', // 3DS challenge required
   REQUIRES_CAPTURE = 'REQUIRES_CAPTURE', // Auth succeeded, awaiting capture
   PARTIALLY_CAPTURED = 'PARTIALLY_CAPTURED', // Some, but not all, of the authorized amount has been captured
   SUCCEEDED = 'SUCCEEDED',
@@ -36,11 +36,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
     PaymentStatus.FAILED,
     PaymentStatus.AMBIGUOUS,
   ],
-  [PaymentStatus.REQUIRES_ACTION]: [
-    PaymentStatus.PROCESSING,
-    PaymentStatus.FAILED,
-    PaymentStatus.CANCELLED,
-  ],
+  [PaymentStatus.REQUIRES_ACTION]: [PaymentStatus.PROCESSING, PaymentStatus.FAILED, PaymentStatus.CANCELLED],
   [PaymentStatus.REQUIRES_CAPTURE]: [
     PaymentStatus.SUCCEEDED,
     PaymentStatus.PARTIALLY_CAPTURED,
@@ -52,11 +48,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   // CANCELLED above) that isn't implemented. Attempting it fails loudly via
   // isValidTransition rather than silently doing nothing.
   [PaymentStatus.PARTIALLY_CAPTURED]: [PaymentStatus.SUCCEEDED],
-  [PaymentStatus.SUCCEEDED]: [
-    PaymentStatus.REFUNDED,
-    PaymentStatus.PARTIALLY_REFUNDED,
-    PaymentStatus.DISPUTED,
-  ],
+  [PaymentStatus.SUCCEEDED]: [PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.DISPUTED],
   [PaymentStatus.FAILED]: [],
   [PaymentStatus.AMBIGUOUS]: [PaymentStatus.SUCCEEDED, PaymentStatus.FAILED],
   [PaymentStatus.CANCELLED]: [],
@@ -85,7 +77,7 @@ export function assertValidTransition(from: PaymentStatus, to: PaymentStatus): v
   if (!isValidTransition(from, to)) {
     throw new Error(
       `Invalid payment status transition: ${from} -> ${to}. ` +
-      `Allowed transitions from ${from}: [${VALID_TRANSITIONS[from]?.join(', ') || 'none'}]`,
+        `Allowed transitions from ${from}: [${VALID_TRANSITIONS[from]?.join(', ') || 'none'}]`,
     );
   }
 }

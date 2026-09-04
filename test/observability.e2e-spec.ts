@@ -53,14 +53,23 @@ describe('Observability: payment-volume metrics (e2e)', () => {
     const res = await request(app.getHttpServer()).get('/metrics').expect(200);
     const line = res.text
       .split('\n')
-      .find((l) => l.startsWith('omniswitch_payments_total{') && l.includes(`status="${status}"`) && l.includes(`provider="${provider}"`));
+      .find(
+        (l) =>
+          l.startsWith('omniswitch_payments_total{') &&
+          l.includes(`status="${status}"`) &&
+          l.includes(`provider="${provider}"`),
+      );
     if (!line) return 0;
     return Number(line.trim().split(' ').pop());
   }
 
   it('reflects a real SUCCEEDED charge, with the correct PSP provider label', async () => {
     const res = await signedCharge({
-      amount: 20, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+      amount: 20,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
     }).expect(201);
     expect(res.body.status).toBe('SUCCEEDED');
 
@@ -70,14 +79,22 @@ describe('Observability: payment-volume metrics (e2e)', () => {
 
   it('is cumulative across repeated scrapes and increments by exactly one per additional charge on the same (status, provider) pair', async () => {
     const charge1 = await signedCharge({
-      amount: 20, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+      amount: 20,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
     }).expect(201);
     const provider = charge1.body.pspProvider;
     const valueAfterFirst = await metricValue('SUCCEEDED', provider);
     expect(valueAfterFirst).toBeGreaterThanOrEqual(1);
 
     const charge2 = await signedCharge({
-      amount: 20, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+      amount: 20,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
     }).expect(201);
     // Identical low-risk US-card inputs route deterministically in this
     // codebase's SmartRoutingStrategy — same provider both times, so the
@@ -95,7 +112,11 @@ describe('Observability: payment-volume metrics (e2e)', () => {
     // — a real PSP-returned decline, so the saga completes normally with
     // status FAILED (HTTP 201), landing a real row the gauge can count.
     const res = await signedCharge({
-      amount: 20, currency: 'USD', paymentMethodId: 'pm_card_carddeclined', orderId: uniqueId('order'), binInfo: USD_BIN,
+      amount: 20,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_carddeclined',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
     }).expect(201);
     expect(res.body.status).toBe('FAILED');
 

@@ -31,6 +31,11 @@ label these manifests all carry.
   `ingress.yaml`/`ingress-nginx-security-headers-configmap.yaml` (TLS
   termination, routing, security headers)
 
+Everything above describes **one cluster in one region** — see
+[`../disaster-recovery.md`](../disaster-recovery.md) for today's
+single-region posture, the target multi-region/cross-AZ failover
+design, and why it hasn't been drilled against real infrastructure yet.
+
 ## What's real vs. what's assumed to already exist
 
 Everything in the table below is a real, tracked manifest in `k8s/`.

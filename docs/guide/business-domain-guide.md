@@ -106,10 +106,14 @@ Two things make this non-trivial:
   same logic; if you're adding a new per-charge financial concern, it
   goes here, once, not in each caller.
 
-Full detail: [`../business-domain/ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md)
-— this is the single densest doc in this repo (fee model, FX,
-reserves, marketplace splits, smart routing, reconciliation) and worth a
-full read once you're past the basics.
+Full detail, split by topic: [`ledger-accounting.md`](../business-domain/ledger-accounting.md)
+(double-entry model, the outbox pattern), [`fee-model.md`](../business-domain/fee-model.md)
+(platform fee rate, PSP-cost reconciliation), [`fx-conversion.md`](../business-domain/fx-conversion.md)
+(cross-currency settlement), [`marketplace-and-payouts.md`](../business-domain/marketplace-and-payouts.md)
+(splits, payouts, KYC gating), and
+[`ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md)
+itself (smart PSP routing, reconciliation, merchant risk tiering &
+reserves) — worth a full read once you're past the basics.
 
 ## 4. Smart PSP routing
 
@@ -189,7 +193,7 @@ deliberately orthogonal, mirroring real Stripe Connect's own
 Only once both gates clear does `PayoutService.initiateTransfer()` send
 money through a (mocked) bank rail.
 
-Full detail: [`../business-domain/ledger-and-settlement.md#marketplace-splits`](../business-domain/ledger-and-settlement.md#marketplace-splits).
+Full detail: [`../business-domain/marketplace-and-payouts.md#marketplace-splits`](../business-domain/marketplace-and-payouts.md#marketplace-splits).
 
 ## 7. Merchant risk tiering & reserves
 
@@ -236,7 +240,7 @@ this system specifically closes. `presentmentCurrency` is a separate,
 purely-cosmetic concept — what the *customer's* statement shows, never
 touching what's actually captured or settled.
 
-Full detail: [`../business-domain/ledger-and-settlement.md#fx-conversion-merchant-settlement-currency`](../business-domain/ledger-and-settlement.md#fx-conversion-merchant-settlement-currency).
+Full detail: [`../business-domain/fx-conversion.md#fx-conversion-merchant-settlement-currency`](../business-domain/fx-conversion.md#fx-conversion-merchant-settlement-currency).
 
 ## 10. Agentic payments: delegation & spend policy
 

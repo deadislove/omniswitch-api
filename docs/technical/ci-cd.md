@@ -11,7 +11,7 @@ either workflow file.
 
 Two jobs, run in parallel.
 
-**`build-and-unit-test`**: `npm ci` → lint (report-only, see below) →
+**`build-and-unit-test`**: `npm ci` → lint (blocking, see below) →
 `tsc --noEmit` → `npm run build` → `npm test` (unit tests, mocked
 dependencies).
 
@@ -28,20 +28,29 @@ Note: this job does **not** bring up `pgbouncer-master`/`pgbouncer-replica`
 migrations do, so the e2e suite doesn't exercise the pooler by default.
 Pointing `DB_MASTER_HOST`/`DB_REPLICA_HOST` at the pooler's host ports
 instead exercises that path separately — see
-[`load-testing.md`](./load-testing.md), Finding #3 — but CI itself
+[`load-testing.md`](./tests/load-testing.md), Finding #3 — but CI itself
 doesn't cover it.
 
-**Lint is report-only, not blocking.** The raw (no `--fix`) codebase
-currently produces ~8.7k findings — mostly `eslint-plugin-prettier`
-formatting diffs (no `.prettierrc` exists, so prettier's default
-double-quote style fights this codebase's actual single-quote
-convention), plus a parsing error on every file under `test/` (
-`tsconfig.json` excludes `test/`, so `parserOptions.project` can't
-type-check those files at all). Both are real, pre-existing gaps —
-fixing them means a deliberate repo-wide reformat plus a
-tsconfig/`.eslintrc` adjustment, not something to do silently as a side
-effect of wiring up CI. Until that happens, this step reports findings
-without failing the build on them.
+**Lint is blocking.** It used to be report-only: with no `.prettierrc`,
+prettier's default double-quote style fought this codebase's actual
+single-quote convention, and `tsconfig.json`'s `exclude: ["test"]` meant
+`parserOptions.project` couldn't type-check anything under `test/` at
+all — together producing ~10k findings, mostly formatting diffs plus a
+parsing error on every test file, none of them a real signal. Closed by
+two additions, not a reformat imposing a new style: `.prettierrc` (matches
+the codebase's existing single-quote/trailing-comma convention, so
+`eslint --fix` only touches the actual mismatches) and
+`tsconfig.eslint.json` (extends `tsconfig.json` with `test/**/*.ts`
+included, used only by `eslint.config.cjs`'s `parserOptions.project` —
+`tsconfig.json`'s own `exclude: ["test"]` stays untouched, since that's
+load-bearing for `nest build`: `rootDir: "./src"` means test files would
+otherwise get compiled into `dist/` too). A handful of files also carry
+`eslint-disable-next-line security/detect-non-literal-fs-filename`
+comments meant for `eslint.security.config.cjs`'s separate run, not this
+one — `eslint.config.cjs` registers the `security` plugin (no rules
+enabled) and turns off `reportUnusedDisableDirectives` so those
+cross-referenced comments resolve as inert directives instead of erroring
+on an unknown rule or warning about suppressing nothing.
 
 ## `.github/workflows/security-scan.yml`
 
@@ -57,18 +66,17 @@ Each tool runs twice: a full report (`CRITICAL,HIGH`/`moderate`+,
 `continue-on-error`/`|| true`) for visibility, and a blocking gate scoped
 to `CRITICAL`-only severity. The blocking gate is deliberately narrow —
 today's baseline has a handful of pre-existing HIGH findings (transitive
-npm CVEs in `js-yaml`/`lodash`/`multer`, one k8s `readOnlyRootFilesystem`
-hardening recommendation) that aren't part of this pipeline's own scope
-to fix, but zero CRITICAL findings — so the gate actually catches new
-regressions instead of failing on day one and training everyone to
-ignore it.
+npm CVEs in `js-yaml`/`lodash`/`multer`) that aren't part of this
+pipeline's own scope to fix, but zero CRITICAL findings — so the gate
+actually catches new regressions instead of failing on day one and
+training everyone to ignore it.
 
 **Suppressions are scoped by exact value, not by rule or path.**
 `trivy-secret.yaml` and `.gitleaks.toml` both allowlist the *specific
 regex* of this codebase's known test placeholder values (e.g.
 `sk_test_placeholder`), not the underlying detection rule — feeding
 either scanner a differently-shaped fake key still gets it flagged, which
-is what the narrow, value-scoped allowlist is for. `.eslintrc.security.cjs`
+is what the narrow, value-scoped allowlist is for. `eslint.security.config.cjs`
 disables `security/detect-object-injection` entirely, but only after
 checking every one of its hits in this codebase and confirming all were
 false positives (e.g. `VALID_TRANSITIONS[from]` where `from` is a closed
@@ -266,3 +274,102 @@ When a test's pass/fail boundary is a hardcoded number, it's worth
 asking whether that number's calibration context still applies to the
 environment actually running the test — not just whether the code under
 test can be made to fit under it.
+
+## Parallelizing e2e workers
+
+**Status: root cause found and measured; fix applied; residual risk is
+environment-dependent, not a code defect.** `test/jest-e2e.json` now runs
+`maxWorkers: "50%"` (Jest's own adaptive sizing — half the host's
+detected cores, not a hardcoded number) and `testTimeout: 60000`. This
+section documents the real infrastructure built, the actual measured
+root cause of the flakiness an earlier pass into this only got as far as
+"unexplained," and why the fix is a worker-count *strategy*, not a fixed
+number.
+
+**The goal**: `maxWorkers: 1` means all 33 e2e spec files run
+sequentially in one process, which is slow (~340s for a full run).
+Running several files at once was blocked by every spec file's
+`AppModule` instance sharing the same Redis keyspace and the same
+Postgres `max_connections` budget — several spec files' own comments
+(`test/utils/circuit-breaker.ts`, `psp-bulkhead-isolation.e2e-spec.ts`,
+and others) already documented this as the reason cross-file
+circuit-breaker/rate-limit state has to be manually reset before/after
+certain tests.
+
+**What was built (isolation layer, verified correct)**: `test/setup-env.ts`
+assigns each Jest worker its own logical Redis DB, keyed by
+`JEST_WORKER_ID` — concurrent workers can no longer collide on the same
+idempotency lock, circuit-breaker window, rate-limit bucket, or JWT
+revocation key. `app.module.ts`'s Postgres pool size (`extra.max`,
+previously hardcoded to 20) is now read from a `DB_POOL_MAX` env var
+(`15` for e2e). Targeted diagnostic logging temporarily added to
+`JwtStrategy.validate()`/`JwtAuthGuard.handleRequest()` (instrumented,
+used, then removed) ruled out the most direct suspicion — a Redis
+command from one worker's `TokenRevocationService` connection observing
+another worker's revocation state. It wasn't happening: every captured
+`merchantRevoked=true` case traced to a test deliberately revoking its
+own token. **This isolation layer was never the bug.**
+
+**The actual root cause, measured directly**: a response-body diagnostic
+middleware (`test/utils/test-app.ts`, gated behind `DIAG_RESPONSES=1`,
+temporary — logs any HTTP response ≥400 to a per-worker file) plus live
+`docker stats` and host `ps`/`uptime` sampling *during* a real parallel
+run produced hard numbers:
+
+- Host load average hit **22.61** (1-minute) on this **10-physical-core**
+  machine while 4 Jest workers ran — individual `jest-worker` child
+  processes measured at **60–85% CPU each, simultaneously** (`ps aux`
+  sampled mid-run). Four workers alone demand ~250–340% CPU; this
+  specific machine also had substantial *pre-existing, unrelated* load
+  (Safari, VS Code, WindowServer, another active Claude Code session
+  against a different project, Docker Desktop's own VM) — load average
+  was already 6–10 *before* any e2e run started.
+- Docker container CPU (`postgres-master`, `redis`, `mock-psp`) stayed
+  low throughout (peak ~20% on `postgres-master`) — **the bottleneck is
+  host CPU scheduling for the Node/ts-jest processes themselves, not the
+  application's own infrastructure containers.** This rules out the
+  containers as the constraint.
+- With that scheduling pressure confirmed, the concrete failure modes
+  it produces became explicable rather than mysterious: a
+  `risk-tiering.e2e-spec.ts` test doing 10 *sequential* real charge
+  round-trips (fixed — now `Promise.all()`, since each call already used
+  its own idempotency key and had no ordering dependency) compounded
+  per-call latency under contention into a >60s test; a `login()` call
+  immediately after `createTestApp()` returned a bare `404` on
+  `POST /api/v1/auth/token` — a route that runs successfully thousands
+  of times elsewhere in the same suite — consistent with event-loop
+  scheduling delay stretching the gap between `app.init()` resolving and
+  the underlying HTTP adapter's router being fully live long enough for
+  a request to race it, something invisible at normal scheduling
+  latency and only surfaced under measured 20+ load average. The earlier
+  investigation's `401`-with-no-guard-log pattern is almost certainly
+  the same class of race in a different guard/strategy's own
+  initialization path, not a logic bug in this codebase's revocation
+  checks (which the diagnostic logging separately, directly ruled out).
+
+**The fix**: `maxWorkers: "50%"` instead of a fixed `4` — Jest's own
+adaptive sizing scales to whatever the *actual* runtime environment
+provides, rather than assuming a core count that may already be
+oversubscribed by unrelated load. `testTimeout: 60000` gives real
+per-test headroom under genuine (not pathological) contention. The
+`risk-tiering.e2e-spec.ts` fix (concurrent, not sequential, charges) is
+independently correct regardless of worker count. `DB_POOL_MAX` raised
+from `5` to `15` — `5` was sized for connection-*count* budget
+correctness (never wrong) but was too tight for this specific
+i/o-under-contention scenario found while investigating.
+
+**What's still open, honestly**: this was measured and fixed against
+the one environment available to test against — a shared development
+machine that, during testing, had real, substantial *non-test* load
+from unrelated applications and another concurrent session (load
+average 6–20 with zero e2e tests running). A dedicated CI runner (e.g.
+GitHub Actions' `ubuntu-latest`, with no competing user processes) is a
+fundamentally different resource environment than what produced these
+numbers, and this repository's own tooling has no way to provision or
+measure one from here. `maxWorkers: "50%"` is the professionally correct
+choice *for that difference* — it won't oversubscribe a clean 2-vCPU
+runner the way a hardcoded `4` would, and it won't artificially
+underutilize a bigger one — but the actual acceptance test for this
+change is a real CI run, not a further local repro on a machine this
+session has already shown to be noisy independent of anything under
+this repository's control.

@@ -1,5 +1,4 @@
 import { INestApplication } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
@@ -22,16 +21,13 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('Marketplace payout scheduling (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
-  let dataSource: DataSource;
   let payoutService: PayoutService;
 
   beforeAll(async () => {
     app = await createTestApp();
-    dataSource = app.get(DataSource);
     payoutService = app.get(PayoutService);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -52,7 +48,10 @@ describe('Marketplace payout scheduling (e2e)', () => {
       .send(body);
   }
 
-  async function platformWithConnected(payoutReserveBps = 0, payoutReserveHoldDays = 0): Promise<{ platform: SeededMerchant; platformToken: string; connected: SeededMerchant }> {
+  async function platformWithConnected(
+    payoutReserveBps = 0,
+    payoutReserveHoldDays = 0,
+  ): Promise<{ platform: SeededMerchant; platformToken: string; connected: SeededMerchant }> {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platform') });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {
@@ -65,7 +64,13 @@ describe('Marketplace payout scheduling (e2e)', () => {
     return { platform, platformToken, connected };
   }
 
-  async function chargeWithSplit(platform: SeededMerchant, platformToken: string, connectedMerchantId: string, amount: number, splitAmount: number) {
+  async function chargeWithSplit(
+    platform: SeededMerchant,
+    platformToken: string,
+    connectedMerchantId: string,
+    amount: number,
+    splitAmount: number,
+  ) {
     return signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
       amount,
       currency: 'USD',
@@ -83,7 +88,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       .send({ legalName, taxId });
   }
 
-  it('a sweep batches a connected merchant\'s split credit into a Payout, withholding the configured rolling reserve', async () => {
+  it("a sweep batches a connected merchant's split credit into a Payout, withholding the configured rolling reserve", async () => {
     const { platform, platformToken, connected } = await platformWithConnected(1000, 90); // 10% rolling reserve, 90-day hold
     await chargeWithSplit(platform, platformToken, connected.merchantId, 100, 40); // connected gets $40
 
@@ -178,11 +183,15 @@ describe('Marketplace payout scheduling (e2e)', () => {
     expect(payouts).toHaveLength(1);
   });
 
-  it('a PLATFORM merchant\'s own charge proceeds are never turned into a Payout', async () => {
+  it("a PLATFORM merchant's own charge proceeds are never turned into a Payout", async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('platformonly') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
     await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-      amount: 25, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+      amount: 25,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
     }).expect(201);
 
     await payoutService.runSweep();
@@ -281,7 +290,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       expect(payouts[0].kycBlocked).toBe(true);
     });
 
-    it('a verified connected merchant\'s payouts are not KYC-blocked, and its transfer can be initiated', async () => {
+    it("a verified connected merchant's payouts are not KYC-blocked, and its transfer can be initiated", async () => {
       const { platform, platformToken, connected } = await platformWithConnected(0, 0);
 
       const kycRes = await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);

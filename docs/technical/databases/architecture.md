@@ -48,7 +48,7 @@ instance, well under the 200 budget, leaving headroom for replication
 streams, migrations, and admin tooling).
 
 **Load-tested, not just configured**: see
-[`../load-testing.md`](../load-testing.md) (Finding #3) for a real
+[`load-testing.md`](../tests/load-testing.md) (Finding #3) for a real
 throughput/latency comparison against the actual production Docker
 image, resource-capped to `k8s/pgbouncer.yaml`'s own 0.5 CPU/128Mi
 limits — PgBouncer matches or beats the pre-PgBouncer baseline, not

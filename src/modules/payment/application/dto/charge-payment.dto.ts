@@ -10,10 +10,8 @@ import {
   ValidateNested,
   MinLength,
   MaxLength,
-  Min,
   Max,
   Matches,
-  IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -22,11 +20,17 @@ import { CardBrand, CardType } from '../../domain/value-objects/bin-info.vo';
 import { IsNotRawCardNumber } from './validators/not-raw-card-number.validator';
 
 export class ChargeSplitDto {
-  @ApiProperty({ example: 'merchant_connected_seller', description: 'A CONNECTED merchant onboarded under the charging (PLATFORM) merchant' })
+  @ApiProperty({
+    example: 'merchant_connected_seller',
+    description: 'A CONNECTED merchant onboarded under the charging (PLATFORM) merchant',
+  })
   @IsString()
   merchantId: string;
 
-  @ApiProperty({ example: 25.0, description: 'Amount routed to this connected merchant, in the same currency as the charge' })
+  @ApiProperty({
+    example: 25.0,
+    description: 'Amount routed to this connected merchant, in the same currency as the charge',
+  })
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
   amount: number;
@@ -74,13 +78,19 @@ export class ChargePaymentDto {
   @MaxLength(3)
   currency: string;
 
-  @ApiPropertyOptional({ example: 'pm_1234567890', description: 'PSP payment method ID (opaque reference from client-side tokenization, never a raw card number)' })
+  @ApiPropertyOptional({
+    example: 'pm_1234567890',
+    description: 'PSP payment method ID (opaque reference from client-side tokenization, never a raw card number)',
+  })
   @IsOptional()
   @IsString()
   @IsNotRawCardNumber()
   paymentMethodId?: string;
 
-  @ApiPropertyOptional({ example: 'tok_visa', description: 'Card token from PSP.js (opaque reference from client-side tokenization, never a raw card number)' })
+  @ApiPropertyOptional({
+    example: 'tok_visa',
+    description: 'Card token from PSP.js (opaque reference from client-side tokenization, never a raw card number)',
+  })
   @IsOptional()
   @IsString()
   @IsNotRawCardNumber()
@@ -123,7 +133,7 @@ export class ChargePaymentDto {
   preferredProvider?: PSPProvider;
 
   @ApiPropertyOptional({
-    example: { 'campaign': 'summer_sale', 'source': 'mobile_app' },
+    example: { campaign: 'summer_sale', source: 'mobile_app' },
     description: 'Custom metadata key-value pairs',
   })
   @IsOptional()
@@ -132,7 +142,8 @@ export class ChargePaymentDto {
 
   @ApiPropertyOptional({
     example: 'groceries',
-    description: 'Purchase category — only enforced when the caller is an agent acting under a Delegation with allowedCategories set (see POST /delegations); ignored for a merchant/admin-authenticated charge.',
+    description:
+      'Purchase category — only enforced when the caller is an agent acting under a Delegation with allowedCategories set (see POST /delegations); ignored for a merchant/admin-authenticated charge.',
   })
   @IsOptional()
   @IsString()
@@ -142,7 +153,8 @@ export class ChargePaymentDto {
   @ApiPropertyOptional({
     enum: ['automatic', 'manual'],
     default: 'automatic',
-    description: '"manual" authorizes funds without capturing them; call POST /:id/capture separately to complete the charge.',
+    description:
+      '"manual" authorizes funds without capturing them; call POST /:id/capture separately to complete the charge.',
   })
   @IsOptional()
   @IsEnum(['automatic', 'manual'])
@@ -164,7 +176,7 @@ export class ChargePaymentDto {
   @ApiPropertyOptional({
     type: [ChargeSplitDto],
     description:
-      'Route part of this charge\'s net proceeds directly to one or more of your CONNECTED merchants (marketplace splits). ' +
+      "Route part of this charge's net proceeds directly to one or more of your CONNECTED merchants (marketplace splits). " +
       'Whatever is left after all splits still goes to your own account — a split does not have to add up to the full amount. ' +
       'Requires captureMethod "automatic" (the default) and is not supported together with a settlement-currency conversion.',
   })
@@ -212,7 +224,11 @@ export class ChargePaymentResponseDto {
   @ApiPropertyOptional({ type: EstimatedFeeDto })
   estimatedFee?: EstimatedFeeDto;
 
-  @ApiPropertyOptional({ example: 91.23, description: 'Only present if the request included presentmentCurrency — the charge amount converted for display, informational only' })
+  @ApiPropertyOptional({
+    example: 91.23,
+    description:
+      'Only present if the request included presentmentCurrency — the charge amount converted for display, informational only',
+  })
   presentmentAmount?: number;
 
   @ApiPropertyOptional({ example: 'EUR' })
@@ -229,7 +245,10 @@ export class RefundRecordDto {
   @ApiProperty({ example: 49.99 })
   amount: number;
 
-  @ApiPropertyOptional({ example: 'USD', description: 'Only present on GET /payments/:id — POST /:id/refund reports currency once at the top level instead' })
+  @ApiPropertyOptional({
+    example: 'USD',
+    description: 'Only present on GET /payments/:id — POST /:id/refund reports currency once at the top level instead',
+  })
   currency?: string;
 
   @ApiPropertyOptional({ example: 'requested_by_customer' })

@@ -21,8 +21,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiHeader, ApiResponse } from '@nestjs/swagger';
-import { Observable, Subject, fromEvent } from 'rxjs';
-import { map, filter } from 'rxjs/operators';
+import { Observable } from 'rxjs';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { randomUUID as uuidv4 } from 'crypto';
 import { Throttle } from '@nestjs/throttler';
@@ -121,12 +120,13 @@ export class PaymentController {
   /**
    * POST /api/v1/payments/charge
    * Initiates a payment charge with smart PSP routing.
-   * Requires: JWT Auth + HMAC Signature + Idempotency-Key — except an
+   * Requires: JWT Auth + HMAC Signature + Idempotency-Key. An
    * AGENT-authenticated caller (a Delegation's own token, see
-   * DelegationController), which is exempt from the HMAC requirement (see
-   * HmacSignatureGuard's docblock) but instead has its charge amount/
-   * category checked against, and reserved from, its delegation's spend
-   * policy before the saga ever runs.
+   * DelegationController) signs with its own delegation-scoped signing key
+   * instead of the merchant's HMAC secret (see HmacSignatureGuard's AGENT
+   * branch), and additionally has its charge amount/category checked
+   * against, and reserved from, its delegation's spend policy before the
+   * saga ever runs.
    */
   @Post('charge')
   @HttpCode(HttpStatus.CREATED)
@@ -134,16 +134,39 @@ export class PaymentController {
   @UseGuards(HmacSignatureGuard)
   @UseInterceptors(IdempotencyInterceptor)
   @Throttle({ default: { limit: CHARGE_RATE_LIMIT_MAX, ttl: CHARGE_RATE_LIMIT_TTL } })
-  @ApiOperation({ summary: 'Charge a payment with smart PSP routing — also usable by an AGENT token (see POST /delegations), whose charge is checked against its delegation\'s spend policy instead of requiring HMAC signature headers' })
+  @ApiOperation({
+    summary:
+      "Charge a payment with smart PSP routing — also usable by an AGENT token (see POST /delegations), whose charge is checked against its delegation's spend policy instead of requiring HMAC signature headers",
+  })
   @ApiResponse({ status: 201, type: ChargePaymentResponseDto })
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
-  @ApiResponse({ status: 403, description: 'The caller\'s Delegation has been revoked' })
-  @ApiResponse({ status: 409, description: 'splits requested with captureMethod "manual", or a split recipient has an incompatible settlement-currency conversion' })
-  @ApiResponse({ status: 422, description: 'Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, preferredProvider is outside the merchant\'s PSP entitlement, or (AGENT callers only) the charge violates the delegation\'s spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)' })
+  @ApiResponse({ status: 403, description: "The caller's Delegation has been revoked" })
+  @ApiResponse({
+    status: 409,
+    description:
+      'splits requested with captureMethod "manual", or a split recipient has an incompatible settlement-currency conversion',
+  })
+  @ApiResponse({
+    status: 422,
+    description:
+      "Card reference looks like a raw card number, the request body fails validation, a split recipient is not a valid connected account / the split total exceeds the net payout, preferredProvider is outside the merchant's PSP entitlement, or (AGENT callers only) the charge violates the delegation's spend policy (per-transaction/monthly limit, disallowed category, currency mismatch)",
+  })
   @ApiHeader({ name: 'Idempotency-Key', description: 'UUID v4 for idempotent requests', required: true })
-  @ApiHeader({ name: 'X-Signature', description: 'HMAC-SHA256 signature (not required for an AGENT-authenticated call)', required: false })
-  @ApiHeader({ name: 'X-Timestamp', description: 'Unix timestamp (not required for an AGENT-authenticated call)', required: false })
-  @ApiHeader({ name: 'X-Merchant-Id', description: 'Merchant identifier (not required for an AGENT-authenticated call)', required: false })
+  @ApiHeader({
+    name: 'X-Signature',
+    description: 'HMAC-SHA256 signature (not required for an AGENT-authenticated call)',
+    required: false,
+  })
+  @ApiHeader({
+    name: 'X-Timestamp',
+    description: 'Unix timestamp (not required for an AGENT-authenticated call)',
+    required: false,
+  })
+  @ApiHeader({
+    name: 'X-Merchant-Id',
+    description: 'Merchant identifier (not required for an AGENT-authenticated call)',
+    required: false,
+  })
   async charge(
     @Body() dto: ChargePaymentDto,
     @Headers('idempotency-key') idempotencyKey: string,
@@ -162,7 +185,7 @@ export class PaymentController {
 
     this.logger.log(
       `Charge request: paymentId=${paymentId}, merchant=${merchantId}, ` +
-      `amount=${dto.amount} ${dto.currency}, idempotencyKey=${idempotencyKey}`,
+        `amount=${dto.amount} ${dto.currency}, idempotencyKey=${idempotencyKey}`,
     );
 
     const amount = Money.of(dto.amount, dto.currency);
@@ -210,7 +233,9 @@ export class PaymentController {
         presentment = { amount: converted.amount, currency: converted.currency.code, rate, provider };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger.warn(`Presentment currency conversion to ${dto.presentmentCurrency} failed for payment ${paymentId}, omitting from response: ${msg}`);
+        this.logger.warn(
+          `Presentment currency conversion to ${dto.presentmentCurrency} failed for payment ${paymentId}, omitting from response: ${msg}`,
+        );
       }
     }
 
@@ -227,7 +252,11 @@ export class PaymentController {
     if (req.user?.roles?.includes(UserRole.AGENT)) {
       const delegationId = req.user?.delegationId;
       if (!delegationId) {
-        throw new ForbiddenException({ statusCode: 403, error: 'Agent token is missing its delegation reference', code: 'DELEGATION_MISSING' });
+        throw new ForbiddenException({
+          statusCode: 403,
+          error: 'Agent token is missing its delegation reference',
+          code: 'DELEGATION_MISSING',
+        });
       }
       await this.delegationService.reserveSpendOrThrow(delegationId, amount, dto.category, new Date());
       reservedDelegationId = delegationId;
@@ -249,7 +278,9 @@ export class PaymentController {
         preferredProvider: dto.preferredProvider,
         captureMethod: dto.captureMethod,
         splits,
-        initiatorMetadata: reservedDelegationId ? { delegationId: reservedDelegationId, initiatedBy: 'agent' } : undefined,
+        initiatorMetadata: reservedDelegationId
+          ? { delegationId: reservedDelegationId, initiatedBy: 'agent' }
+          : undefined,
       });
     } catch (err: unknown) {
       if (reservedDelegationId) {
@@ -292,12 +323,13 @@ export class PaymentController {
   @Sse(':id/status/stream')
   @Roles(UserRole.MERCHANT, UserRole.ADMIN, UserRole.READONLY)
   @ApiOperation({ summary: 'SSE stream for real-time payment status updates' })
-  @ApiResponse({ status: 200, description: 'text/event-stream — not representable as a JSON schema; each event is a payment.status.* domain event serialized as { paymentId, status, timestamp, type }' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'text/event-stream — not representable as a JSON schema; each event is a payment.status.* domain event serialized as { paymentId, status, timestamp, type }',
+  })
   @ApiResponse({ status: 404, description: 'Payment not found' })
-  async streamPaymentStatus(
-    @Param('id') paymentId: string,
-    @Req() req: any,
-  ): Promise<Observable<MessageEvent>> {
+  async streamPaymentStatus(@Param('id') paymentId: string, @Req() req: any): Promise<Observable<MessageEvent>> {
     // Unlike getPayment(), this endpoint previously had no ownership check at
     // all: any authenticated MERCHANT/READONLY user could subscribe to any
     // other merchant's payment stream (status, risk score, PSP transaction
@@ -432,7 +464,10 @@ export class PaymentController {
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
   @ApiResponse({ status: 403, description: 'This payment belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Payment not found' })
-  @ApiResponse({ status: 409, description: 'Refund amount exceeds the remaining refundable balance, or the payment is not in a refundable status' })
+  @ApiResponse({
+    status: 409,
+    description: 'Refund amount exceeds the remaining refundable balance, or the payment is not in a refundable status',
+  })
   @ApiResponse({ status: 422, description: 'PSP declined the refund' })
   async refundPayment(
     @Param('id') id: string,
@@ -441,7 +476,11 @@ export class PaymentController {
     @Req() req: any,
   ): Promise<RefundPaymentResponseDto> {
     if (!idempotencyKey) {
-      throw new BadRequestException({ statusCode: 400, error: 'Idempotency-Key header is required', code: 'MISSING_IDEMPOTENCY_KEY' });
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Idempotency-Key header is required',
+        code: 'MISSING_IDEMPOTENCY_KEY',
+      });
     }
     const payment = await this.paymentLifecycle.getOwnedPayment(id);
     this.assertOwnership(payment, req);
@@ -483,7 +522,11 @@ export class PaymentController {
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
   @ApiResponse({ status: 403, description: 'This payment belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Payment not found' })
-  @ApiResponse({ status: 409, description: 'Payment is not REQUIRES_CAPTURE/PARTIALLY_CAPTURED, or the capture amount exceeds the remaining authorized amount' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Payment is not REQUIRES_CAPTURE/PARTIALLY_CAPTURED, or the capture amount exceeds the remaining authorized amount',
+  })
   @ApiResponse({ status: 422, description: 'PSP declined the capture' })
   async capturePayment(
     @Param('id') id: string,
@@ -492,7 +535,11 @@ export class PaymentController {
     @Req() req: any,
   ): Promise<CapturePaymentResponseDto> {
     if (!idempotencyKey) {
-      throw new BadRequestException({ statusCode: 400, error: 'Idempotency-Key header is required', code: 'MISSING_IDEMPOTENCY_KEY' });
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Idempotency-Key header is required',
+        code: 'MISSING_IDEMPOTENCY_KEY',
+      });
     }
     const payment = await this.paymentLifecycle.getOwnedPayment(id);
     this.assertOwnership(payment, req);
@@ -530,7 +577,11 @@ export class PaymentController {
   @UseInterceptors(IdempotencyInterceptor)
   @ApiOperation({ summary: 'Cancel a payment before capture' })
   @ApiHeader({ name: 'Idempotency-Key', description: 'UUID v4 for idempotent requests', required: true })
-  @ApiResponse({ status: 200, type: CancelPaymentResponseDto, description: 'Also returned on a repeat call against an already-CANCELLED payment — cancel is idempotent' })
+  @ApiResponse({
+    status: 200,
+    type: CancelPaymentResponseDto,
+    description: 'Also returned on a repeat call against an already-CANCELLED payment — cancel is idempotent',
+  })
   @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
   @ApiResponse({ status: 403, description: 'This payment belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Payment not found' })
@@ -542,7 +593,11 @@ export class PaymentController {
     @Req() req: any,
   ): Promise<CancelPaymentResponseDto> {
     if (!idempotencyKey) {
-      throw new BadRequestException({ statusCode: 400, error: 'Idempotency-Key header is required', code: 'MISSING_IDEMPOTENCY_KEY' });
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Idempotency-Key header is required',
+        code: 'MISSING_IDEMPOTENCY_KEY',
+      });
     }
     const payment = await this.paymentLifecycle.getOwnedPayment(id);
     this.assertOwnership(payment, req);
@@ -562,20 +617,24 @@ export class PaymentController {
    */
   @Post('bulk-upload')
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
-  @UseInterceptors(FileInterceptor('file', {
-    // FileInterceptor has no size limit by default, so an unbounded upload
-    // is buffered entirely into memory (MemoryStorage) — a single request
-    // could exhaust process memory. Cap it well above any real CSV batch.
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  }))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      // FileInterceptor has no size limit by default, so an unbounded upload
+      // is buffered entirely into memory (MemoryStorage) — a single request
+      // could exhaust process memory. Cap it well above any real CSV batch.
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    }),
+  )
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Bulk invoice upload for batch payment processing' })
-  @ApiResponse({ status: 201, type: BulkUploadResponseDto, description: 'Rows are queued, not charged synchronously — a 201 here means parsing succeeded, not that every payment succeeded' })
+  @ApiResponse({
+    status: 201,
+    type: BulkUploadResponseDto,
+    description:
+      'Rows are queued, not charged synchronously — a 201 here means parsing succeeded, not that every payment succeeded',
+  })
   @ApiResponse({ status: 400, description: 'No file was attached' })
-  async bulkUpload(
-    @UploadedFile() file: Express.Multer.File,
-    @Req() req: any,
-  ): Promise<BulkUploadResponseDto> {
+  async bulkUpload(@UploadedFile() file: Express.Multer.File, @Req() req: any): Promise<BulkUploadResponseDto> {
     if (!file) {
       throw new BadRequestException('CSV file is required');
     }
@@ -614,9 +673,7 @@ export class PaymentController {
         .on('error', reject);
     });
 
-    this.logger.log(
-      `Bulk upload: merchant=${merchantId}, queued=${results.length}, errors=${errors.length}`,
-    );
+    this.logger.log(`Bulk upload: merchant=${merchantId}, queued=${results.length}, errors=${errors.length}`);
 
     return {
       totalRows: results.length + errors.length,
@@ -638,7 +695,8 @@ export class PaymentController {
   @ApiOperation({ summary: 'Get PSP routing health status' })
   @ApiResponse({
     status: 200,
-    description: 'Keyed by PSP provider name (e.g. "STRIPE", "ADYEN") — the key set depends on which adapters are configured, so this is documented as a free-form map rather than a fixed schema',
+    description:
+      'Keyed by PSP provider name (e.g. "STRIPE", "ADYEN") — the key set depends on which adapters are configured, so this is documented as a free-form map rather than a fixed schema',
     schema: {
       type: 'object',
       additionalProperties: {

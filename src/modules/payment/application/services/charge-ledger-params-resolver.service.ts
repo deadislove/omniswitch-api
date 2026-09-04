@@ -77,7 +77,11 @@ export class ChargeLedgerParamsResolverService {
 
     const now = new Date();
     const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const volume = await this.paymentRepository.sumSucceededVolumeSince(merchant.merchantId, startOfMonth, amount.currency.code);
+    const volume = await this.paymentRepository.sumSucceededVolumeSince(
+      merchant.merchantId,
+      startOfMonth,
+      amount.currency.code,
+    );
 
     let bps = baseBps;
     for (const tier of merchant.feeTiers) {
@@ -99,7 +103,11 @@ export class ChargeLedgerParamsResolverService {
    * payout, or a merchant with an active settlement-currency conversion)
    * throws here rather than leaving a charged-but-unbooked payment behind.
    */
-  async resolve(merchantId: string, amount: Money, requestedSplits?: { merchantId: string; amount: Money }[]): Promise<ChargeLedgerParams> {
+  async resolve(
+    merchantId: string,
+    amount: Money,
+    requestedSplits?: { merchantId: string; amount: Money }[],
+  ): Promise<ChargeLedgerParams> {
     const merchant = await this.merchantService.findByMerchantId(merchantId);
     const enabledPspProviders = merchant?.enabledPspProviders as PSPProvider[] | undefined;
     const platformFeeBps = await this.resolvePlatformFeeBps(merchant, amount);
@@ -153,7 +161,12 @@ export class ChargeLedgerParamsResolverService {
     try {
       const { rate, provider } = await this.fxRateProvider.getRate(amount.currency.code, settlementCurrency);
       const convertedNetAmount = payoutAmount.convertTo(settlementCurrency, rate, provider);
-      return { platformFee, reserveHold, settlementConversion: { convertedNetAmount, rate, provider }, enabledPspProviders };
+      return {
+        platformFee,
+        reserveHold,
+        settlementConversion: { convertedNetAmount, rate, provider },
+        enabledPspProviders,
+      };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(

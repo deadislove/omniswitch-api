@@ -61,7 +61,8 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
     preferredProvider: 'STRIPE',
   };
 
-  const timeoutError = () => Object.assign(new Error('Stripe request failed with no response: timeout'), { isAmbiguousOutcome: true });
+  const timeoutError = () =>
+    Object.assign(new Error('Stripe request failed with no response: timeout'), { isAmbiguousOutcome: true });
   const declineError = () => Object.assign(new Error('card_declined'), { code: 'card_declined', statusCode: 402 });
   const serverError = () => Object.assign(new Error('internal_server_error'), { statusCode: 500 });
 
@@ -84,9 +85,7 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
     const adyen = makeFakeAdapter('ADYEN');
     const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
-    const operation = jest.fn()
-      .mockRejectedValueOnce(timeoutError())
-      .mockResolvedValueOnce({ ok: true });
+    const operation = jest.fn().mockRejectedValueOnce(timeoutError()).mockResolvedValueOnce({ ok: true });
 
     const result = await factory.executeWithFallback(context, operation);
 
@@ -115,7 +114,8 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
     const adyen = makeFakeAdapter('ADYEN');
     const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
-    const operation = jest.fn()
+    const operation = jest
+      .fn()
       .mockRejectedValueOnce(timeoutError()) // primary attempt
       .mockRejectedValueOnce(declineError()) // same-provider retry
       .mockResolvedValueOnce({ ok: true }); // fallback
@@ -131,9 +131,7 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
     const adyen = makeFakeAdapter('ADYEN');
     const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
-    const operation = jest.fn()
-      .mockRejectedValueOnce(serverError())
-      .mockResolvedValueOnce({ ok: true });
+    const operation = jest.fn().mockRejectedValueOnce(serverError()).mockResolvedValueOnce({ ok: true });
 
     const result = await factory.executeWithFallback(context, operation);
 
@@ -147,7 +145,8 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
     const adyen = makeFakeAdapter('ADYEN');
     const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
-    const operation = jest.fn()
+    const operation = jest
+      .fn()
       .mockRejectedValueOnce(serverError()) // primary attempt
       .mockRejectedValueOnce(serverError()) // same-provider retry
       .mockResolvedValueOnce({ ok: true }); // fallback
@@ -163,7 +162,8 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
     const adyen = makeFakeAdapter('ADYEN');
     const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
-    const operation = jest.fn()
+    const operation = jest
+      .fn()
       .mockRejectedValueOnce(serverError()) // primary attempt — transient 5xx
       .mockRejectedValueOnce(timeoutError()); // same-provider retry — no response at all
 
@@ -194,7 +194,8 @@ describe('PaymentProcessorFactory.executeWithFallback', () => {
     const adyen = makeFakeAdapter('ADYEN');
     const factory = new PaymentProcessorFactory(stripe as any, adyen as any);
 
-    const operation = jest.fn()
+    const operation = jest
+      .fn()
       .mockRejectedValueOnce(declineError()) // primary (STRIPE) — explicit decline, no retry triggered
       .mockRejectedValueOnce(timeoutError()); // fallback (ADYEN) — ambiguous
 

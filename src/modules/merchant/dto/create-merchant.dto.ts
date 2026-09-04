@@ -1,4 +1,20 @@
-import { IsString, MinLength, MaxLength, Matches, IsArray, ArrayNotEmpty, ArrayMaxSize, IsIn, IsBoolean, IsInt, IsOptional, IsNumberString, ValidateNested, Min, Max } from 'class-validator';
+import {
+  IsString,
+  MinLength,
+  MaxLength,
+  Matches,
+  IsArray,
+  ArrayNotEmpty,
+  ArrayMaxSize,
+  IsIn,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsNumberString,
+  ValidateNested,
+  Min,
+  Max,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -41,7 +57,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 'EUR',
-    description: 'Currency to pay this merchant out in, if different from whatever currency a charge was made in. Omit to settle in whatever currency was charged (the default).',
+    description:
+      'Currency to pay this merchant out in, if different from whatever currency a charge was made in. Omit to settle in whatever currency was charged (the default).',
   })
   @IsOptional()
   @IsString()
@@ -51,7 +68,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 1000,
-    description: 'Reserve rate in basis points of each charge\'s net amount (1000 = 10%) withheld into a per-merchant reserve instead of paid out immediately. Omit for no reserve (the default).',
+    description:
+      "Reserve rate in basis points of each charge's net amount (1000 = 10%) withheld into a per-merchant reserve instead of paid out immediately. Omit for no reserve (the default).",
   })
   @IsOptional()
   @IsInt()
@@ -72,7 +90,8 @@ export class CreateMerchantDto {
   @ApiPropertyOptional({
     example: 'PLATFORM',
     enum: ['PLATFORM', 'CONNECTED'],
-    description: 'Marketplace role. Omit for the default, PLATFORM (a flat peer, unchanged from before this existed). CONNECTED requires platformMerchantId.',
+    description:
+      'Marketplace role. Omit for the default, PLATFORM (a flat peer, unchanged from before this existed). CONNECTED requires platformMerchantId.',
   })
   @IsOptional()
   @IsIn(['PLATFORM', 'CONNECTED'])
@@ -80,7 +99,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 'merchant_acme_platform',
-    description: 'Required, and only allowed, when accountType is CONNECTED — the parent platform merchant this account is onboarded under.',
+    description:
+      'Required, and only allowed, when accountType is CONNECTED — the parent platform merchant this account is onboarded under.',
   })
   @IsOptional()
   @IsString()
@@ -89,7 +109,7 @@ export class CreateMerchantDto {
   @ApiPropertyOptional({
     example: 1000,
     description:
-      'Rolling reserve in basis points (1000 = 10%) withheld from this merchant\'s share of each marketplace payout sweep. Only meaningful for a CONNECTED merchant. Omit for no rolling reserve (the default).',
+      "Rolling reserve in basis points (1000 = 10%) withheld from this merchant's share of each marketplace payout sweep. Only meaningful for a CONNECTED merchant. Omit for no rolling reserve (the default).",
   })
   @IsOptional()
   @IsInt()
@@ -99,7 +119,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 90,
-    description: 'Days a payout\'s withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0/omitted.',
+    description:
+      "Days a payout's withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0/omitted.",
   })
   @IsOptional()
   @IsInt()
@@ -111,7 +132,8 @@ export class CreateMerchantDto {
     example: ['STRIPE', 'ADYEN'],
     enum: VALID_PSP_PROVIDERS,
     isArray: true,
-    description: 'PSPs this merchant\'s charges may route through. Omit for the default: every PSP this system has an adapter for (currently STRIPE and ADYEN).',
+    description:
+      "PSPs this merchant's charges may route through. Omit for the default: every PSP this system has an adapter for (currently STRIPE and ADYEN).",
   })
   @IsOptional()
   @IsArray()
@@ -135,7 +157,11 @@ export class UpdateFeeRateDto {
 }
 
 export class FeeTierDto {
-  @ApiProperty({ example: '10000000', description: 'This tier applies once the merchant\'s trailing current-calendar-month SUCCEEDED charge volume (in minor units, same currency as the charge being priced) reaches this amount' })
+  @ApiProperty({
+    example: '10000000',
+    description:
+      "This tier applies once the merchant's trailing current-calendar-month SUCCEEDED charge volume (in minor units, same currency as the charge being priced) reaches this amount",
+  })
   @IsNumberString()
   minVolumeMinorUnits: string;
 
@@ -149,7 +175,8 @@ export class FeeTierDto {
 export class UpdateFeeTiersDto {
   @ApiProperty({
     type: [FeeTierDto],
-    description: 'Volume-based fee schedule, sorted ascending by minVolumeMinorUnits (strictly increasing, no duplicates) — supersedes platformFeeBps once a threshold is reached. Send an empty array to clear it and fall back to the flat platformFeeBps rate for every charge.',
+    description:
+      'Volume-based fee schedule, sorted ascending by minVolumeMinorUnits (strictly increasing, no duplicates) — supersedes platformFeeBps once a threshold is reached. Send an empty array to clear it and fall back to the flat platformFeeBps rate for every charge.',
   })
   @IsArray()
   @ArrayMaxSize(20)
@@ -171,13 +198,19 @@ export class UpdateSettlementCurrencyDto {
 }
 
 export class UpdateReservePolicyDto {
-  @ApiProperty({ example: 1000, description: 'Reserve rate in basis points of each charge\'s net amount (1000 = 10%). 0 disables the reserve.' })
+  @ApiProperty({
+    example: 1000,
+    description: "Reserve rate in basis points of each charge's net amount (1000 = 10%). 0 disables the reserve.",
+  })
   @IsInt()
   @Min(0)
   @Max(10_000)
   reserveBps: number;
 
-  @ApiProperty({ example: 90, description: 'Days a reserve hold sits before it becomes releasable. Ignored if reserveBps is 0.' })
+  @ApiProperty({
+    example: 90,
+    description: 'Days a reserve hold sits before it becomes releasable. Ignored if reserveBps is 0.',
+  })
   @IsInt()
   @Min(0)
   @Max(3650)
@@ -185,13 +218,21 @@ export class UpdateReservePolicyDto {
 }
 
 export class UpdatePayoutReservePolicyDto {
-  @ApiProperty({ example: 1000, description: 'Rolling reserve in basis points withheld from each marketplace payout sweep (1000 = 10%). 0 disables it.' })
+  @ApiProperty({
+    example: 1000,
+    description:
+      'Rolling reserve in basis points withheld from each marketplace payout sweep (1000 = 10%). 0 disables it.',
+  })
   @IsInt()
   @Min(0)
   @Max(10_000)
   payoutReserveBps: number;
 
-  @ApiProperty({ example: 90, description: 'Days a payout\'s withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0.' })
+  @ApiProperty({
+    example: 90,
+    description:
+      "Days a payout's withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0.",
+  })
   @IsInt()
   @Min(0)
   @Max(3650)
@@ -203,7 +244,8 @@ export class UpdatePspEntitlementDto {
     example: ['STRIPE', 'ADYEN'],
     enum: VALID_PSP_PROVIDERS,
     isArray: true,
-    description: 'PSPs this merchant\'s charges may route through. Must be non-empty. Omitting a PSP here does not affect its liveness for other merchants — this is a per-merchant allowlist, not a global kill switch (use the routing health endpoint / circuit breaker for that).',
+    description:
+      "PSPs this merchant's charges may route through. Must be non-empty. Omitting a PSP here does not affect its liveness for other merchants — this is a per-merchant allowlist, not a global kill switch (use the routing health endpoint / circuit breaker for that).",
   })
   @IsArray()
   @ArrayNotEmpty()
@@ -212,7 +254,11 @@ export class UpdatePspEntitlementDto {
 }
 
 export class UpdateRiskTierAutoDto {
-  @ApiProperty({ example: true, description: 'true: RiskTieringService\'s daily sweep may adjust this merchant\'s reserve policy automatically. false: leave it exactly as set (an operator\'s manual reserve-policy change already sets this to false as a side effect).' })
+  @ApiProperty({
+    example: true,
+    description:
+      "true: RiskTieringService's daily sweep may adjust this merchant's reserve policy automatically. false: leave it exactly as set (an operator's manual reserve-policy change already sets this to false as a side effect).",
+  })
   @IsBoolean()
   enabled: boolean;
 }
@@ -224,7 +270,8 @@ export class UpdateAmbiguousRiskFlagDto {
 
   @ApiProperty({
     example: 'Manually flagging after 3 customer complaints about failed charges this week',
-    description: 'Required — always needs a stated justification, same posture as AmbiguousPaymentService\'s manual resolution audit trail. Setting this also disables ambiguousRiskAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../ambiguous-risk-auto.',
+    description:
+      "Required — always needs a stated justification, same posture as AmbiguousPaymentService's manual resolution audit trail. Setting this also disables ambiguousRiskAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../ambiguous-risk-auto.",
   })
   @IsString()
   @MinLength(1)
@@ -233,7 +280,11 @@ export class UpdateAmbiguousRiskFlagDto {
 }
 
 export class UpdateAmbiguousRiskAutoDto {
-  @ApiProperty({ example: true, description: 'true: AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).' })
+  @ApiProperty({
+    example: true,
+    description:
+      "true: AmbiguousRiskMonitoringService's automated flag/auto-clear logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).",
+  })
   @IsBoolean()
   enabled: boolean;
 }
@@ -245,7 +296,11 @@ export class SubmitKycDto {
   @MaxLength(255)
   legalName: string;
 
-  @ApiProperty({ example: '12-3456789', description: 'Tax identification number (EIN, VAT number, etc.) — not validated against any real registry by this mock' })
+  @ApiProperty({
+    example: '12-3456789',
+    description:
+      'Tax identification number (EIN, VAT number, etc.) — not validated against any real registry by this mock',
+  })
   @IsString()
   @MinLength(1)
   @MaxLength(64)
@@ -268,55 +323,107 @@ export class MerchantSummaryDto {
   @ApiProperty({ example: true })
   isActive: boolean;
 
-  @ApiProperty({ example: 150, description: 'Basis points — 150 = 1.5%. The rate actually used for any given charge may be lower if feeTiers is set and this merchant\'s trailing monthly volume has reached a tier.' })
+  @ApiProperty({
+    example: 150,
+    description:
+      "Basis points — 150 = 1.5%. The rate actually used for any given charge may be lower if feeTiers is set and this merchant's trailing monthly volume has reached a tier.",
+  })
   platformFeeBps: number;
 
-  @ApiPropertyOptional({ type: [FeeTierDto], description: 'Volume-based fee schedule, if configured — absent/empty means every charge uses the flat platformFeeBps rate' })
+  @ApiPropertyOptional({
+    type: [FeeTierDto],
+    description:
+      'Volume-based fee schedule, if configured — absent/empty means every charge uses the flat platformFeeBps rate',
+  })
   feeTiers?: FeeTierDto[];
 
   @ApiProperty({ example: 'EUR', nullable: true, description: 'null means "settle in whatever currency was charged"' })
   settlementCurrency: string | null;
 
-  @ApiProperty({ example: 1000, description: 'Basis points of net amount withheld per charge into a reserve — 0 means no reserve' })
+  @ApiProperty({
+    example: 1000,
+    description: 'Basis points of net amount withheld per charge into a reserve — 0 means no reserve',
+  })
   reserveBps: number;
 
   @ApiProperty({ example: 90, description: 'Days a reserve hold sits before it becomes releasable' })
   reserveHoldDays: number;
 
-  @ApiProperty({ example: true, description: 'Whether RiskTieringService\'s daily sweep may adjust reserveBps/reserveHoldDays automatically for this merchant' })
+  @ApiProperty({
+    example: true,
+    description:
+      "Whether RiskTieringService's daily sweep may adjust reserveBps/reserveHoldDays automatically for this merchant",
+  })
   riskTierAutoManaged: boolean;
 
   @ApiProperty({ example: 'PLATFORM', enum: ['PLATFORM', 'CONNECTED'] })
   accountType: 'PLATFORM' | 'CONNECTED';
 
-  @ApiProperty({ example: null, nullable: true, description: 'The parent platform merchant\'s merchantId — only set when accountType is CONNECTED' })
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: "The parent platform merchant's merchantId — only set when accountType is CONNECTED",
+  })
   platformMerchantId: string | null;
 
-  @ApiProperty({ example: 1000, description: 'Basis points withheld from each marketplace payout sweep as a rolling reserve — 0 means none. Only meaningful for a CONNECTED merchant' })
+  @ApiProperty({
+    example: 1000,
+    description:
+      'Basis points withheld from each marketplace payout sweep as a rolling reserve — 0 means none. Only meaningful for a CONNECTED merchant',
+  })
   payoutReserveBps: number;
 
-  @ApiProperty({ example: 90, description: 'Days a payout\'s withheld rolling reserve sits before it becomes releasable' })
+  @ApiProperty({
+    example: 90,
+    description: "Days a payout's withheld rolling reserve sits before it becomes releasable",
+  })
   payoutReserveHoldDays: number;
 
-  @ApiProperty({ example: 'NOT_STARTED', enum: ['NOT_STARTED', 'VERIFIED', 'REJECTED'], description: 'Onboarding/KYC review status — only meaningful for a CONNECTED merchant, gates payouts (not charges)' })
+  @ApiProperty({
+    example: 'NOT_STARTED',
+    enum: ['NOT_STARTED', 'VERIFIED', 'REJECTED'],
+    description: 'Onboarding/KYC review status — only meaningful for a CONNECTED merchant, gates payouts (not charges)',
+  })
   kycStatus: 'NOT_STARTED' | 'VERIFIED' | 'REJECTED';
 
-  @ApiProperty({ example: ['STRIPE', 'ADYEN'], enum: VALID_PSP_PROVIDERS, isArray: true, description: 'PSPs this merchant\'s charges may route through' })
+  @ApiProperty({
+    example: ['STRIPE', 'ADYEN'],
+    enum: VALID_PSP_PROVIDERS,
+    isArray: true,
+    description: "PSPs this merchant's charges may route through",
+  })
   enabledPspProviders: string[];
 
-  @ApiProperty({ example: false, description: 'Passive risk-observation flag — set when this merchant\'s AMBIGUOUS payment incidents cross a volume or streak threshold. Does not affect how charges are processed; visibility only.' })
+  @ApiProperty({
+    example: false,
+    description:
+      "Passive risk-observation flag — set when this merchant's AMBIGUOUS payment incidents cross a volume or streak threshold. Does not affect how charges are processed; visibility only.",
+  })
   ambiguousRiskFlagged: boolean;
 
   @ApiProperty({ example: null, nullable: true })
   ambiguousRiskFlaggedAt: string | null;
 
-  @ApiProperty({ example: null, nullable: true, description: 'Why this merchant is flagged — automated summary or an operator\'s own stated reason' })
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: "Why this merchant is flagged — automated summary or an operator's own stated reason",
+  })
   ambiguousRiskFlagReason: string | null;
 
-  @ApiProperty({ example: null, nullable: true, description: 'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically' })
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically',
+  })
   ambiguousRiskFlaggedBy: string | null;
 
-  @ApiProperty({ example: true, description: 'Whether AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant\'s ambiguousRiskFlagged' })
+  @ApiProperty({
+    example: true,
+    description:
+      "Whether AmbiguousRiskMonitoringService's automated flag/auto-clear logic may manage this merchant's ambiguousRiskFlagged",
+  })
   ambiguousRiskAutoManaged: boolean;
 
   @ApiProperty()

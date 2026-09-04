@@ -90,7 +90,7 @@ it sits in `application/services/` depending only on ports, not on
 which adapter happens to be booking at that moment. Before it was
 extracted, an identical fee-lookup snippet was copy-pasted into all
 three sites and drifted (see
-[`../business-domain/ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md#fee-model))
+[`../business-domain/fee-model.md`](../business-domain/fee-model.md))
 — the layering made "extract to `application/`, depend on the port"
 the obvious fix rather than "extract to wherever's convenient."
 

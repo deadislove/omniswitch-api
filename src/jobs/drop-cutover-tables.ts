@@ -85,7 +85,9 @@ async function main(): Promise<void> {
     const results = await dropCutoverTables();
     for (const r of results) {
       if (r.dropped) {
-        console.log(`Dropped "${r.tableName}" (${r.daysSinceCutover} days since cutover, retention window ${CUTOVER_OLD_TABLE_RETENTION_DAYS} days).`);
+        console.log(
+          `Dropped "${r.tableName}" (${r.daysSinceCutover} days since cutover, retention window ${CUTOVER_OLD_TABLE_RETENTION_DAYS} days).`,
+        );
       } else {
         console.log(
           `"${r.tableName}" not eligible yet — ${r.daysSinceCutover}/${CUTOVER_OLD_TABLE_RETENTION_DAYS} days since cutover (${CUTOVER_OLD_TABLE_RETENTION_DAYS - r.daysSinceCutover} day(s) remaining).`,
@@ -93,7 +95,9 @@ async function main(): Promise<void> {
       }
     }
     if (results.length === 0) {
-      console.log('No cutover tables tracked (already dropped, or this project never went through a partitioning cutover).');
+      console.log(
+        'No cutover tables tracked (already dropped, or this project never went through a partitioning cutover).',
+      );
     }
   } finally {
     await AppDataSource.destroy();

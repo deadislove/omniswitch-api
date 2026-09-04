@@ -1,14 +1,9 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  UnauthorizedException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Reflector } from '@nestjs/core';
 import { MerchantService } from '../../modules/merchant/merchant.service';
+import { DelegationPort } from '../../modules/payment/ports/outbound/delegation.port';
 import { VaultTransitService } from '../vault/vault-transit.service';
 import { UserRole } from '../decorators/roles.decorator';
 
@@ -21,7 +16,7 @@ export const SKIP_HMAC_KEY = 'skipHmac';
  * Expected headers:
  * - X-Signature: HMAC-SHA256 hex digest of request body
  * - X-Timestamp: Unix timestamp (prevents replay attacks, max 5 min drift)
- * - X-Merchant-Id: Merchant identifier for key lookup
+ * - X-Merchant-Id: Merchant identifier for key lookup (merchant callers only — see the AGENT branch below)
  */
 @Injectable()
 export class HmacSignatureGuard implements CanActivate {
@@ -32,6 +27,7 @@ export class HmacSignatureGuard implements CanActivate {
     private readonly configService: ConfigService,
     private readonly reflector: Reflector,
     private readonly merchantService: MerchantService,
+    private readonly delegationPort: DelegationPort,
     private readonly vaultTransit: VaultTransitService,
   ) {
     // Same fail-fast bar as JWT_SECRET (jwt.strategy.ts) — HMAC_SECRET is
@@ -63,35 +59,73 @@ export class HmacSignatureGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest();
-
-    // An agent acting under a Delegation has no business holding the
-    // merchant's own HMAC secret — handing it out would defeat the whole
-    // point of a narrow, revocable credential (see delegation.aggregate.ts
-    // and docs/business-domain/future-directions.md#agentic-payments).
-    // This guard runs after JwtAuthGuard/RolesGuard at the controller level
-    // (see PaymentController's @UseGuards order), so request.user is
-    // already populated. For this MVP, the delegation JWT's own possession
-    // plus its real-time jti-revocation check (JwtStrategy) is the
-    // authenticity proof for an agent-initiated request; a per-request
-    // agent signing scheme is real, documented future work, not something
-    // silently skipped by accident.
-    if (request.user?.roles?.includes(UserRole.AGENT)) {
-      return true;
-    }
+    const isAgent = Boolean(request.user?.roles?.includes(UserRole.AGENT));
 
     const signature = request.headers['x-signature'];
     const timestamp = request.headers['x-timestamp'];
+    // Only a merchant caller needs to send this — an agent's identity
+    // (and therefore which key to verify against) comes from its JWT's
+    // own delegationId claim, already authenticated by JwtAuthGuard
+    // upstream, not from a client-supplied header.
     const merchantId = request.headers['x-merchant-id'];
 
-    if (!signature || !timestamp || !merchantId) {
+    if (!signature || !timestamp || (!isAgent && !merchantId)) {
       throw new UnauthorizedException({
         statusCode: 401,
         error: 'Missing HMAC signature headers',
         code: 'MISSING_SIGNATURE_HEADERS',
-        required: ['X-Signature', 'X-Timestamp', 'X-Merchant-Id'],
+        required: isAgent ? ['X-Signature', 'X-Timestamp'] : ['X-Signature', 'X-Timestamp', 'X-Merchant-Id'],
       });
     }
 
+    this.assertTimestampFresh(timestamp, merchantId);
+
+    const secret = isAgent
+      ? await this.getAgentSigningKey(request.user.delegationId)
+      : await this.getMerchantHmacSecret(merchantId);
+
+    if (!secret) {
+      throw new UnauthorizedException({
+        statusCode: 401,
+        error: isAgent ? 'This delegation has no signing key — revoke it and create a new one' : 'Unknown merchant',
+        code: isAgent ? 'DELEGATION_SIGNING_KEY_MISSING' : 'UNKNOWN_MERCHANT',
+      });
+    }
+    if (secret.length < 32) {
+      // Matches the constructor's HMAC_SECRET boot check — this is the
+      // only enforcement point for the *per-merchant* env fallback
+      // (HMAC_SECRET_<merchantId>), which can't be validated at boot the
+      // way the single global HMAC_SECRET can (merchant IDs aren't known
+      // ahead of time). A short/placeholder secret (e.g. a "CHANGE_ME"
+      // value left over from a template) is brute-forceable; treat it as
+      // misconfiguration and fail closed rather than verifying signatures
+      // against a weak key. Real per-merchant secrets are always
+      // randomBytes(32).toString('hex') (64 chars, see
+      // MerchantService.rotateHmacSecret()) — same length agent signing
+      // keys use (DelegationService.createDelegation()) — and never hit
+      // this bar.
+      this.logger.error(
+        `HMAC secret for ${isAgent ? `delegation ${request.user.delegationId}` : `merchant ${merchantId}`} is shorter than 32 chars — treating as misconfigured`,
+      );
+      throw new UnauthorizedException({
+        statusCode: 401,
+        error: 'Signing key is misconfigured',
+        code: 'HMAC_KEY_MISCONFIGURED',
+      });
+    }
+
+    this.assertSignatureMatches(
+      request,
+      signature,
+      timestamp,
+      secret,
+      isAgent ? request.user.delegationId : merchantId,
+    );
+
+    return true;
+  }
+
+  private assertTimestampFresh(timestamp: string, identifierForLogging: string): void {
     // Validate timestamp to prevent replay attacks
     const requestTime = parseInt(timestamp, 10) * 1000;
     if (!Number.isFinite(requestTime)) {
@@ -108,7 +142,7 @@ export class HmacSignatureGuard implements CanActivate {
     const drift = Math.abs(now - requestTime);
 
     if (drift > this.maxTimestampDriftMs) {
-      this.logger.warn(`HMAC timestamp drift too large: ${drift}ms for merchant ${merchantId}`);
+      this.logger.warn(`HMAC timestamp drift too large: ${drift}ms for ${identifierForLogging}`);
       throw new UnauthorizedException({
         statusCode: 401,
         error: 'Request timestamp is too old or too far in the future',
@@ -116,35 +150,21 @@ export class HmacSignatureGuard implements CanActivate {
         maxDriftSeconds: this.maxTimestampDriftMs / 1000,
       });
     }
+  }
 
-    // Get merchant's HMAC secret
-    const hmacSecret = await this.getMerchantHmacSecret(merchantId);
-    if (!hmacSecret) {
-      throw new UnauthorizedException({
-        statusCode: 401,
-        error: 'Unknown merchant',
-        code: 'UNKNOWN_MERCHANT',
-      });
-    }
-    if (hmacSecret.length < 32) {
-      // Matches the constructor's HMAC_SECRET boot check — this is the
-      // only enforcement point for the *per-merchant* env fallback
-      // (HMAC_SECRET_<merchantId>), which can't be validated at boot the
-      // way the single global HMAC_SECRET can (merchant IDs aren't known
-      // ahead of time). A short/placeholder secret (e.g. a "CHANGE_ME"
-      // value left over from a template) is brute-forceable; treat it as
-      // misconfiguration and fail closed rather than verifying signatures
-      // against a weak key. Real per-merchant secrets are always
-      // randomBytes(32).toString('hex') (64 chars, see
-      // MerchantService.rotateHmacSecret()) and never hit this bar.
-      this.logger.error(`HMAC secret for merchant ${merchantId} is shorter than 32 chars — treating as misconfigured`);
-      throw new UnauthorizedException({
-        statusCode: 401,
-        error: 'Merchant HMAC key is misconfigured',
-        code: 'HMAC_KEY_MISCONFIGURED',
-      });
-    }
-
+  /**
+   * Shared by both the merchant and AGENT branches — the signing scheme
+   * itself (timestamp + method + path + raw body, HMAC-SHA256, timing-safe
+   * compare) doesn't change based on whose key is being checked, only
+   * which key that is.
+   */
+  private assertSignatureMatches(
+    request: any,
+    signature: string,
+    timestamp: string,
+    secret: string,
+    identifierForLogging: string,
+  ): void {
     // Build the signed payload: timestamp + method + path + body.
     // Uses the untouched wire bytes captured via NestFactory's `rawBody: true`
     // option (see main.ts) — signing a re-serialized JSON.stringify(req.body)
@@ -156,10 +176,7 @@ export class HmacSignatureGuard implements CanActivate {
     const path = request.originalUrl || request.url;
     const signedPayload = `${timestamp}.${method}.${path}.${body}`;
 
-    // Compute expected signature
-    const expectedSignature = createHmac('sha256', hmacSecret)
-      .update(signedPayload)
-      .digest('hex');
+    const expectedSignature = createHmac('sha256', secret).update(signedPayload).digest('hex');
 
     // Timing-safe comparison to prevent timing attacks
     try {
@@ -174,7 +191,7 @@ export class HmacSignatureGuard implements CanActivate {
         throw new Error('Signature mismatch');
       }
     } catch {
-      this.logger.warn(`HMAC signature verification failed for merchant ${merchantId}`);
+      this.logger.warn(`HMAC signature verification failed for ${identifierForLogging}`);
       throw new UnauthorizedException({
         statusCode: 401,
         error: 'Invalid request signature',
@@ -182,8 +199,7 @@ export class HmacSignatureGuard implements CanActivate {
       });
     }
 
-    this.logger.debug(`HMAC signature verified for merchant ${merchantId}`);
-    return true;
+    this.logger.debug(`HMAC signature verified for ${identifierForLogging}`);
   }
 
   private async getMerchantHmacSecret(merchantId: string): Promise<string | null> {
@@ -205,5 +221,31 @@ export class HmacSignatureGuard implements CanActivate {
     if (envSecret) return envSecret;
 
     return this.configService.get<string>('HMAC_SECRET') ?? null;
+  }
+
+  /**
+   * An agent acting under a Delegation never holds the merchant's own HMAC
+   * secret — handing it out would defeat the whole point of a narrow,
+   * revocable credential (see delegation.aggregate.ts and
+   * docs/business-domain/future-directions.md#agentic-payments). Instead,
+   * DelegationService.createDelegation() generates a signing key scoped to
+   * this one delegation, encrypted the same way (Vault Transit) as a
+   * merchant's own hmacSecretCiphertext. `delegationId` comes from the
+   * caller's own JWT (`request.user.delegationId`, set by JwtStrategy),
+   * not a client-supplied header — there's no reason to trust a header over
+   * the token that was already cryptographically verified to get this far.
+   *
+   * Returns null for a delegation with no signing key at all — either one
+   * created before this column existed, or (defensively) a delegationId
+   * that doesn't resolve to a real row — fails closed via the
+   * DELEGATION_SIGNING_KEY_MISSING check in canActivate() rather than
+   * falling back to unconditionally trusting the token's own possession,
+   * which is what this guard used to do for every AGENT request.
+   */
+  private async getAgentSigningKey(delegationId: string | undefined): Promise<string | null> {
+    if (!delegationId) return null;
+    const delegation = await this.delegationPort.findById(delegationId);
+    if (!delegation?.signingKeyCiphertext) return null;
+    return this.vaultTransit.decrypt(delegation.signingKeyCiphertext);
   }
 }

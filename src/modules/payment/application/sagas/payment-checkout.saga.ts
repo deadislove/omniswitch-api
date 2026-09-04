@@ -12,7 +12,10 @@ import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
 import { PaymentEntity } from '../../adapters/persistence/entities/payment.entity';
-import { ChargeLedgerParamsResolverService, ChargeLedgerParams } from '../services/charge-ledger-params-resolver.service';
+import {
+  ChargeLedgerParamsResolverService,
+  ChargeLedgerParams,
+} from '../services/charge-ledger-params-resolver.service';
 import { ReserveService } from '../services/reserve.service';
 import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
 import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
@@ -225,7 +228,11 @@ export class PaymentCheckoutSaga {
     let finalProvider = routingDecision.selectedProvider;
 
     try {
-      const { result, provider, usedFallback: fb } = await traced(
+      const {
+        result,
+        provider,
+        usedFallback: fb,
+      } = await traced(
         'saga.charge',
         () =>
           this.acquirerRouting.executeWithSmartRouting(
@@ -236,19 +243,20 @@ export class PaymentCheckoutSaga {
               preferredProvider: input.preferredProvider,
               entitledProviders: chargeLedgerParams.enabledPspProviders,
             },
-            (adapter) => adapter.charge({
-              paymentId: input.paymentId,
-              idempotencyKey: input.idempotencyKey,
-              amount: input.amount,
-              currency: input.amount.currency.code,
-              merchantId: input.merchantId,
-              customerId: input.customerId,
-              description: input.description,
-              paymentMethodId: input.paymentMethodId,
-              cardToken: input.cardToken,
-              captureMethod: input.captureMethod,
-              binCountry: input.binInfo?.country,
-            }),
+            (adapter) =>
+              adapter.charge({
+                paymentId: input.paymentId,
+                idempotencyKey: input.idempotencyKey,
+                amount: input.amount,
+                currency: input.amount.currency.code,
+                merchantId: input.merchantId,
+                customerId: input.customerId,
+                description: input.description,
+                paymentMethodId: input.paymentMethodId,
+                cardToken: input.cardToken,
+                captureMethod: input.captureMethod,
+                binCountry: input.binInfo?.country,
+              }),
           ),
         { 'payment.id': input.paymentId, 'payment.amount': input.amount.toString() },
       );
@@ -314,7 +322,12 @@ export class PaymentCheckoutSaga {
         await this.ledgerOutbox.saveWithPayment(input.paymentId, outboxEvent, manager);
         if (reserveHold) {
           await this.reserveService.recordHold(
-            { paymentId: input.paymentId, merchantId: input.merchantId, amount: reserveHold.amount, holdDays: reserveHold.holdDays },
+            {
+              paymentId: input.paymentId,
+              merchantId: input.merchantId,
+              amount: reserveHold.amount,
+              holdDays: reserveHold.holdDays,
+            },
             manager,
           );
         }
@@ -374,11 +387,7 @@ export class PaymentCheckoutSaga {
     }
 
     // PSP returned FAILED
-    await this.compensate_markFailed(
-      payment,
-      chargeResult.errorMessage || 'PSP declined',
-      chargeResult.errorCode,
-    );
+    await this.compensate_markFailed(payment, chargeResult.errorMessage || 'PSP declined', chargeResult.errorCode);
 
     return {
       paymentId: input.paymentId,
@@ -397,11 +406,7 @@ export class PaymentCheckoutSaga {
    * Compensating transaction: Mark payment as failed and persist.
    * Called when any step in the saga fails.
    */
-  private async compensate_markFailed(
-    payment: PaymentAggregate,
-    reason: string,
-    errorCode?: string,
-  ): Promise<void> {
+  private async compensate_markFailed(payment: PaymentAggregate, reason: string, errorCode?: string): Promise<void> {
     try {
       payment.markFailed(reason, errorCode);
       await this.paymentRepository.update(payment);
@@ -414,10 +419,7 @@ export class PaymentCheckoutSaga {
     }
   }
 
-  private async compensate_markAmbiguous(
-    payment: PaymentAggregate,
-    reason: string,
-  ): Promise<void> {
+  private async compensate_markAmbiguous(payment: PaymentAggregate, reason: string): Promise<void> {
     try {
       payment.markAmbiguous(reason, 'PSP_TIMEOUT_AMBIGUOUS');
       await this.paymentRepository.update(payment);
@@ -432,7 +434,9 @@ export class PaymentCheckoutSaga {
         await this.ambiguousRiskMonitoring.evaluate(payment.metadata.merchantId);
       } catch (monitoringError: unknown) {
         const msg = monitoringError instanceof Error ? monitoringError.message : String(monitoringError);
-        this.logger.error(`[Saga] Ambiguous-risk evaluation failed for merchant ${payment.metadata.merchantId} (payment ${payment.id} still correctly marked AMBIGUOUS): ${msg}`);
+        this.logger.error(
+          `[Saga] Ambiguous-risk evaluation failed for merchant ${payment.metadata.merchantId} (payment ${payment.id} still correctly marked AMBIGUOUS): ${msg}`,
+        );
       }
     } catch (compensationError: unknown) {
       const msg = compensationError instanceof Error ? compensationError.message : String(compensationError);

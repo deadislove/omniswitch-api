@@ -67,13 +67,8 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return PaymentMapper.toDomain(entity);
   }
 
-  async findByMerchantId(
-    merchantId: string,
-    filter?: FindPaymentsFilter,
-  ): Promise<PaymentAggregate[]> {
-    const qb = this.paymentRepo
-      .createQueryBuilder('p')
-      .where('p.merchantId = :merchantId', { merchantId });
+  async findByMerchantId(merchantId: string, filter?: FindPaymentsFilter): Promise<PaymentAggregate[]> {
+    const qb = this.paymentRepo.createQueryBuilder('p').where('p.merchantId = :merchantId', { merchantId });
 
     if (filter?.status) {
       qb.andWhere('p.status = :status', { status: filter.status });
@@ -136,7 +131,9 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return qb.getCount();
   }
 
-  async countByStatusAndProvider(): Promise<{ status: PaymentStatus; pspProvider: PSPProvider | null; count: number }[]> {
+  async countByStatusAndProvider(): Promise<
+    { status: PaymentStatus; pspProvider: PSPProvider | null; count: number }[]
+  > {
     const rows = await this.paymentRepo
       .createQueryBuilder('p')
       .select('p.status', 'status')
@@ -261,7 +258,10 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return entities.map((e) => e.status === 'AMBIGUOUS' || e.ambiguousResolvedAt != null);
   }
 
-  async findAmbiguousEligibleForAutoResolution(maxAttempts: number, minAgeMinutes: number): Promise<PaymentAggregate[]> {
+  async findAmbiguousEligibleForAutoResolution(
+    maxAttempts: number,
+    minAgeMinutes: number,
+  ): Promise<PaymentAggregate[]> {
     // Forced onto master — same reasoning as findAmbiguousOlderThan(): this
     // backs an automated sweep that can also be triggered on demand right
     // after another write in the same request (the admin run-now endpoint),

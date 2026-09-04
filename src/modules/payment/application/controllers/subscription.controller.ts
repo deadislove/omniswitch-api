@@ -1,4 +1,17 @@
-import { Controller, Post, Get, Body, Param, Query, Req, UseGuards, UseInterceptors, HttpCode, HttpStatus, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+  UseInterceptors,
+  HttpCode,
+  HttpStatus,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsIn, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
@@ -8,14 +21,23 @@ import { MerchantThrottlerGuard } from '../../../../shared/guards/merchant-throt
 import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
 import { IdempotencyInterceptor } from '../interceptors/idempotency.interceptor';
 import { SubscriptionService } from '../services/subscription.service';
-import { CreateSubscriptionDto, CancelSubscriptionDto, ChangePlanDto, ChangePlanResponseDto, SubscriptionResponseDto } from '../dto/subscription.dto';
+import {
+  CreateSubscriptionDto,
+  CancelSubscriptionDto,
+  ChangePlanDto,
+  ChangePlanResponseDto,
+  SubscriptionResponseDto,
+} from '../dto/subscription.dto';
 import { Money } from '../../domain/value-objects/money.vo';
 import { Subscription, SubscriptionStatus } from '../../domain/aggregates/subscription.aggregate';
 
 const SUBSCRIPTION_STATUSES: SubscriptionStatus[] = ['TRIALING', 'ACTIVE', 'PAST_DUE', 'CANCELED'];
 
 class ListSubscriptionsQuery {
-  @ApiPropertyOptional({ description: 'ADMIN/OPERATOR/READONLY only — a MERCHANT is always scoped to their own subscriptions regardless of this param' })
+  @ApiPropertyOptional({
+    description:
+      'ADMIN/OPERATOR/READONLY only — a MERCHANT is always scoped to their own subscriptions regardless of this param',
+  })
   @IsOptional()
   @IsString()
   merchantId?: string;
@@ -84,9 +106,16 @@ export class SubscriptionController {
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   @UseGuards(HmacSignatureGuard)
   @UseInterceptors(IdempotencyInterceptor)
-  @ApiOperation({ summary: 'Create a subscription — from a Plan (planId) or a direct amount/currency/interval — charges the first period immediately unless trialDays is set' })
+  @ApiOperation({
+    summary:
+      'Create a subscription — from a Plan (planId) or a direct amount/currency/interval — charges the first period immediately unless trialDays is set',
+  })
   @ApiResponse({ status: 201, type: SubscriptionResponseDto })
-  @ApiResponse({ status: 422, description: 'Neither planId nor amount/currency/interval were provided, or the first charge did not succeed (no subscription was created) — only possible when trialDays is 0/omitted' })
+  @ApiResponse({
+    status: 422,
+    description:
+      'Neither planId nor amount/currency/interval were provided, or the first charge did not succeed (no subscription was created) — only possible when trialDays is 0/omitted',
+  })
   async create(@Body() dto: CreateSubscriptionDto, @Req() req: any): Promise<SubscriptionResponseDto> {
     const merchantId = req.user?.merchantId;
     const subscription = await this.subscriptionService.createSubscription({
@@ -118,12 +147,19 @@ export class SubscriptionController {
 
   @Get()
   @Roles(UserRole.MERCHANT, UserRole.ADMIN, UserRole.OPERATOR, UserRole.READONLY)
-  @ApiOperation({ summary: 'List subscriptions — a MERCHANT always sees only their own; ADMIN/OPERATOR/READONLY may filter by merchantId' })
+  @ApiOperation({
+    summary:
+      'List subscriptions — a MERCHANT always sees only their own; ADMIN/OPERATOR/READONLY may filter by merchantId',
+  })
   @ApiResponse({ status: 200, type: [SubscriptionResponseDto] })
   async list(@Query() query: ListSubscriptionsQuery, @Req() req: any): Promise<SubscriptionResponseDto[]> {
     const isMerchantRole = req.user?.roles?.includes(UserRole.MERCHANT);
     const merchantId = isMerchantRole ? req.user.merchantId : query.merchantId;
-    const subscriptions = await this.subscriptionService.findMany({ merchantId, customerId: query.customerId, status: query.status });
+    const subscriptions = await this.subscriptionService.findMany({
+      merchantId,
+      customerId: query.customerId,
+      status: query.status,
+    });
     return subscriptions.map(toResponseDto);
   }
 
@@ -136,7 +172,11 @@ export class SubscriptionController {
   @ApiResponse({ status: 200, type: SubscriptionResponseDto })
   @ApiResponse({ status: 403, description: 'This subscription belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Subscription not found' })
-  async cancel(@Param('id') id: string, @Body() dto: CancelSubscriptionDto, @Req() req: any): Promise<SubscriptionResponseDto> {
+  async cancel(
+    @Param('id') id: string,
+    @Body() dto: CancelSubscriptionDto,
+    @Req() req: any,
+  ): Promise<SubscriptionResponseDto> {
     const subscription = await this.subscriptionService.getOrThrow(id);
     this.assertOwnership(subscription, req);
     const updated = await this.subscriptionService.cancel(id, dto.atPeriodEnd ?? false);
@@ -148,16 +188,33 @@ export class SubscriptionController {
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   @UseGuards(HmacSignatureGuard)
   @UseInterceptors(IdempotencyInterceptor)
-  @ApiOperation({ summary: 'Switch an ACTIVE subscription to a different plan — charges the prorated difference immediately if it\'s an upgrade; a downgrade issues a credit for the unused portion, applied against a future period' })
+  @ApiOperation({
+    summary:
+      "Switch an ACTIVE subscription to a different plan — charges the prorated difference immediately if it's an upgrade; a downgrade issues a credit for the unused portion, applied against a future period",
+  })
   @ApiResponse({ status: 200, type: ChangePlanResponseDto })
   @ApiResponse({ status: 403, description: 'This subscription (or the target plan) belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Subscription or plan not found (or the plan is deactivated)' })
-  @ApiResponse({ status: 409, description: 'The subscription is not ACTIVE, or the target plan is in a different currency' })
-  @ApiResponse({ status: 422, description: 'A proration charge was owed and the PSP declined it — the plan was not changed' })
-  async changePlan(@Param('id') id: string, @Body() dto: ChangePlanDto, @Req() req: any): Promise<ChangePlanResponseDto> {
+  @ApiResponse({
+    status: 409,
+    description: 'The subscription is not ACTIVE, or the target plan is in a different currency',
+  })
+  @ApiResponse({
+    status: 422,
+    description: 'A proration charge was owed and the PSP declined it — the plan was not changed',
+  })
+  async changePlan(
+    @Param('id') id: string,
+    @Body() dto: ChangePlanDto,
+    @Req() req: any,
+  ): Promise<ChangePlanResponseDto> {
     const subscription = await this.subscriptionService.getOrThrow(id);
     this.assertOwnership(subscription, req);
-    const { subscription: updated, prorationCharged, creditIssued } = await this.subscriptionService.changePlan(id, dto.planId);
+    const {
+      subscription: updated,
+      prorationCharged,
+      creditIssued,
+    } = await this.subscriptionService.changePlan(id, dto.planId);
     return {
       subscription: toResponseDto(updated),
       prorationCharged: prorationCharged?.amount,

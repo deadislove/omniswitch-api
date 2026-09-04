@@ -3,7 +3,7 @@
 // import above this one would load unpatched).
 import './tracing';
 
-import { NestFactory, Reflector } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -104,16 +104,16 @@ async function bootstrap() {
       .setTitle('OmniSwitch Payment Gateway API')
       .setDescription(
         'Enterprise-grade Payment Gateway API Service\n\n' +
-        '## Architecture\n' +
-        '- **Modular Monolith** + **Hexagonal Architecture** (Ports & Adapters)\n' +
-        '- **Domain-Driven Design** with Aggregates, Value Objects, Domain Events\n' +
-        '- **Saga Pattern** for multi-step checkout with compensating transactions\n\n' +
-        '## Security\n' +
-        '- JWT Bearer Authentication\n' +
-        '- RBAC (Role-Based Access Control)\n' +
-        '- HMAC-SHA256 Request Signature Verification\n' +
-        '- Idempotency-Key for duplicate prevention\n' +
-        '- Distributed Rate Limiting (100 req/min per merchant)',
+          '## Architecture\n' +
+          '- **Modular Monolith** + **Hexagonal Architecture** (Ports & Adapters)\n' +
+          '- **Domain-Driven Design** with Aggregates, Value Objects, Domain Events\n' +
+          '- **Saga Pattern** for multi-step checkout with compensating transactions\n\n' +
+          '## Security\n' +
+          '- JWT Bearer Authentication\n' +
+          '- RBAC (Role-Based Access Control)\n' +
+          '- HMAC-SHA256 Request Signature Verification\n' +
+          '- Idempotency-Key for duplicate prevention\n' +
+          '- Distributed Rate Limiting (100 req/min per merchant)',
       )
       .setVersion('1.0.0')
       .addBearerAuth()

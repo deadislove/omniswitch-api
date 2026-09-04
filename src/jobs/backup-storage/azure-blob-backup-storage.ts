@@ -18,7 +18,10 @@ import { BackupStorage } from './backup-storage.interface';
 export class AzureBlobBackupStorage implements BackupStorage {
   private readonly client: BlobServiceClient;
 
-  constructor(connectionString: string, private readonly container: string) {
+  constructor(
+    connectionString: string,
+    private readonly container: string,
+  ) {
     this.client = BlobServiceClient.fromConnectionString(connectionString);
   }
 

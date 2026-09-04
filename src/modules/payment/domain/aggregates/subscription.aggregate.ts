@@ -66,7 +66,12 @@ const RETRY_SCHEDULE_DAYS = [1, 3, 7];
  * auto-decision reason-code table).
  */
 const HARD_DECLINE_CODES = new Set([
-  'stolen_card', 'lost_card', 'fraudulent', 'pickup_card', 'restricted_card', 'expired_card',
+  'stolen_card',
+  'lost_card',
+  'fraudulent',
+  'pickup_card',
+  'restricted_card',
+  'expired_card',
 ]);
 
 export type DeclineCategory = 'RETRYABLE' | 'HARD_DECLINE';
@@ -137,11 +142,27 @@ export class Subscription {
     const now = new Date();
     const currentPeriodEnd = new Date(now.getTime() + params.trialDays * 24 * 60 * 60 * 1000);
     return new Subscription(
-      params.id, params.merchantId, params.customerId, params.amount,
-      params.interval, params.intervalCount, params.paymentMethodId,
-      'TRIALING', now, currentPeriodEnd, false, 0,
-      params.orderId, params.description, undefined, now, now, params.planId,
-      undefined, undefined, undefined,
+      params.id,
+      params.merchantId,
+      params.customerId,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      params.paymentMethodId,
+      'TRIALING',
+      now,
+      currentPeriodEnd,
+      false,
+      0,
+      params.orderId,
+      params.description,
+      undefined,
+      now,
+      now,
+      params.planId,
+      undefined,
+      undefined,
+      undefined,
     );
   }
 
@@ -161,11 +182,27 @@ export class Subscription {
     const now = new Date();
     const currentPeriodEnd = addBillingInterval(now, params.interval, params.intervalCount);
     return new Subscription(
-      params.id, params.merchantId, params.customerId, params.amount,
-      params.interval, params.intervalCount, params.paymentMethodId,
-      'ACTIVE', now, currentPeriodEnd, false, 0,
-      params.orderId, params.description, undefined, now, now, params.planId,
-      undefined, undefined, undefined,
+      params.id,
+      params.merchantId,
+      params.customerId,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      params.paymentMethodId,
+      'ACTIVE',
+      now,
+      currentPeriodEnd,
+      false,
+      0,
+      params.orderId,
+      params.description,
+      undefined,
+      now,
+      now,
+      params.planId,
+      undefined,
+      undefined,
+      undefined,
     );
   }
 
@@ -193,12 +230,27 @@ export class Subscription {
     lastDeclineCode?: string;
   }): Subscription {
     return new Subscription(
-      params.id, params.merchantId, params.customerId, params.amount,
-      params.interval, params.intervalCount, params.paymentMethodId,
-      params.status, params.currentPeriodStart, params.currentPeriodEnd,
-      params.cancelAtPeriodEnd, params.failedAttempts, params.orderId,
-      params.description, params.canceledAt, params.createdAt, params.updatedAt,
-      params.planId, params.pendingCredit, params.nextRetryAt, params.lastDeclineCode,
+      params.id,
+      params.merchantId,
+      params.customerId,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      params.paymentMethodId,
+      params.status,
+      params.currentPeriodStart,
+      params.currentPeriodEnd,
+      params.cancelAtPeriodEnd,
+      params.failedAttempts,
+      params.orderId,
+      params.description,
+      params.canceledAt,
+      params.createdAt,
+      params.updatedAt,
+      params.planId,
+      params.pendingCredit,
+      params.nextRetryAt,
+      params.lastDeclineCode,
     );
   }
 
@@ -328,7 +380,9 @@ export class Subscription {
    */
   computeUpgradeProration(newAmount: Money, now: Date): Money | undefined {
     if (newAmount.currency.code !== this._amount.currency.code) {
-      throw new Error(`Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`);
+      throw new Error(
+        `Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`,
+      );
     }
 
     const totalMs = this._currentPeriodEnd.getTime() - this._currentPeriodStart.getTime();
@@ -357,7 +411,9 @@ export class Subscription {
    */
   computeDowngradeCredit(newAmount: Money, now: Date): Money | undefined {
     if (newAmount.currency.code !== this._amount.currency.code) {
-      throw new Error(`Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`);
+      throw new Error(
+        `Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`,
+      );
     }
 
     const totalMs = this._currentPeriodEnd.getTime() - this._currentPeriodStart.getTime();
@@ -389,7 +445,9 @@ export class Subscription {
    */
   get amountDueThisPeriod(): Money {
     if (!this._pendingCredit || this._pendingCredit.isZero()) return this._amount;
-    return this._amount.isGreaterThan(this._pendingCredit) ? this._amount.subtract(this._pendingCredit) : Money.zero(this._amount.currency.code);
+    return this._amount.isGreaterThan(this._pendingCredit)
+      ? this._amount.subtract(this._pendingCredit)
+      : Money.zero(this._amount.currency.code);
   }
 
   /**
@@ -422,7 +480,10 @@ export class Subscription {
    * service through its end) — same "billing sweep drives what actually
    * gets charged" posture as everywhere else in this aggregate.
    */
-  applyPlanChange(params: { planId: string; amount: Money; interval: BillingInterval; intervalCount: number }, now: Date): void {
+  applyPlanChange(
+    params: { planId: string; amount: Money; interval: BillingInterval; intervalCount: number },
+    now: Date,
+  ): void {
     this._planId = params.planId;
     this._amount = params.amount;
     this._interval = params.interval;
@@ -430,25 +491,67 @@ export class Subscription {
     this._updatedAt = now;
   }
 
-  get id(): string { return this._id; }
-  get merchantId(): string { return this._merchantId; }
-  get customerId(): string { return this._customerId; }
-  get amount(): Money { return this._amount; }
-  get interval(): BillingInterval { return this._interval; }
-  get intervalCount(): number { return this._intervalCount; }
-  get paymentMethodId(): string { return this._paymentMethodId; }
-  get status(): SubscriptionStatus { return this._status; }
-  get currentPeriodStart(): Date { return this._currentPeriodStart; }
-  get currentPeriodEnd(): Date { return this._currentPeriodEnd; }
-  get cancelAtPeriodEnd(): boolean { return this._cancelAtPeriodEnd; }
-  get failedAttempts(): number { return this._failedAttempts; }
-  get orderId(): string | undefined { return this._orderId; }
-  get description(): string | undefined { return this._description; }
-  get canceledAt(): Date | undefined { return this._canceledAt; }
-  get createdAt(): Date { return this._createdAt; }
-  get updatedAt(): Date { return this._updatedAt; }
-  get planId(): string | undefined { return this._planId; }
-  get pendingCredit(): Money | undefined { return this._pendingCredit; }
-  get nextRetryAt(): Date | undefined { return this._nextRetryAt; }
-  get lastDeclineCode(): string | undefined { return this._lastDeclineCode; }
+  get id(): string {
+    return this._id;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get customerId(): string {
+    return this._customerId;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get interval(): BillingInterval {
+    return this._interval;
+  }
+  get intervalCount(): number {
+    return this._intervalCount;
+  }
+  get paymentMethodId(): string {
+    return this._paymentMethodId;
+  }
+  get status(): SubscriptionStatus {
+    return this._status;
+  }
+  get currentPeriodStart(): Date {
+    return this._currentPeriodStart;
+  }
+  get currentPeriodEnd(): Date {
+    return this._currentPeriodEnd;
+  }
+  get cancelAtPeriodEnd(): boolean {
+    return this._cancelAtPeriodEnd;
+  }
+  get failedAttempts(): number {
+    return this._failedAttempts;
+  }
+  get orderId(): string | undefined {
+    return this._orderId;
+  }
+  get description(): string | undefined {
+    return this._description;
+  }
+  get canceledAt(): Date | undefined {
+    return this._canceledAt;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+  get planId(): string | undefined {
+    return this._planId;
+  }
+  get pendingCredit(): Money | undefined {
+    return this._pendingCredit;
+  }
+  get nextRetryAt(): Date | undefined {
+    return this._nextRetryAt;
+  }
+  get lastDeclineCode(): string | undefined {
+    return this._lastDeclineCode;
+  }
 }

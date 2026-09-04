@@ -26,17 +26,52 @@ export class BinInfo {
     this._issuingBank = params.issuingBank;
   }
 
-  get bin(): string { return this._bin; }
-  get country(): string { return this._country; }
-  get cardBrand(): CardBrand { return this._cardBrand; }
-  get cardType(): CardType { return this._cardType; }
-  get issuingBank(): string | undefined { return this._issuingBank; }
+  get bin(): string {
+    return this._bin;
+  }
+  get country(): string {
+    return this._country;
+  }
+  get cardBrand(): CardBrand {
+    return this._cardBrand;
+  }
+  get cardType(): CardType {
+    return this._cardType;
+  }
+  get issuingBank(): string | undefined {
+    return this._issuingBank;
+  }
 
   isEuropean(): boolean {
     const euCountries = new Set([
-      'AT', 'BE', 'BG', 'CY', 'CZ', 'DE', 'DK', 'EE', 'ES', 'FI',
-      'FR', 'GR', 'HR', 'HU', 'IE', 'IT', 'LT', 'LU', 'LV', 'MT',
-      'NL', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK', 'GB',
+      'AT',
+      'BE',
+      'BG',
+      'CY',
+      'CZ',
+      'DE',
+      'DK',
+      'EE',
+      'ES',
+      'FI',
+      'FR',
+      'GR',
+      'HR',
+      'HU',
+      'IE',
+      'IT',
+      'LT',
+      'LU',
+      'LV',
+      'MT',
+      'NL',
+      'PL',
+      'PT',
+      'RO',
+      'SE',
+      'SI',
+      'SK',
+      'GB',
     ]);
     return euCountries.has(this._country);
   }

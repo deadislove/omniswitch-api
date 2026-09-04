@@ -42,11 +42,20 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME || 'postgres',
   password: dbPassword,
   database: process.env.DB_NAME || 'omniswitch',
-  ssl:
-    process.env.DB_SSL === 'true'
-      ? { rejectUnauthorized: true, ca: process.env.DB_SSL_CA || undefined }
-      : false,
-  entities: [PaymentEntity, LedgerOutboxEntity, MerchantEntity, ReconciliationRunEntity, DisputeEntity, ReserveHoldEntity, SubscriptionEntity, PlanEntity, PayoutEntity, PayoutSweepRunEntity, DelegationEntity],
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: true, ca: process.env.DB_SSL_CA || undefined } : false,
+  entities: [
+    PaymentEntity,
+    LedgerOutboxEntity,
+    MerchantEntity,
+    ReconciliationRunEntity,
+    DisputeEntity,
+    ReserveHoldEntity,
+    SubscriptionEntity,
+    PlanEntity,
+    PayoutEntity,
+    PayoutSweepRunEntity,
+    DelegationEntity,
+  ],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   migrationsTableName: 'typeorm_migrations',
 });

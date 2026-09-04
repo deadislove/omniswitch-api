@@ -24,7 +24,10 @@ export class CreatePlanDto {
   @IsIn(BILLING_INTERVALS)
   interval: BillingInterval;
 
-  @ApiPropertyOptional({ example: 1, description: 'Bill every N intervals — e.g. interval=month, intervalCount=3 bills quarterly. Defaults to 1.' })
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Bill every N intervals — e.g. interval=month, intervalCount=3 bills quarterly. Defaults to 1.',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -54,7 +57,11 @@ export class PlanResponseDto {
   @ApiProperty({ example: 1 })
   intervalCount: number;
 
-  @ApiProperty({ example: true, description: 'Deactivated plans cannot be used for new subscriptions or plan changes — existing subscriptions already using one are unaffected (the amount/interval was snapshotted, not a live reference)' })
+  @ApiProperty({
+    example: true,
+    description:
+      'Deactivated plans cannot be used for new subscriptions or plan changes — existing subscriptions already using one are unaffected (the amount/interval was snapshotted, not a live reference)',
+  })
   isActive: boolean;
 
   @ApiProperty()

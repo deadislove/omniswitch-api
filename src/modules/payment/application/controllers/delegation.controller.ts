@@ -1,4 +1,16 @@
-import { Controller, Post, Get, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsIn, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
@@ -13,7 +25,10 @@ import { Delegation, DelegationStatus } from '../../domain/aggregates/delegation
 const DELEGATION_STATUSES: DelegationStatus[] = ['ACTIVE', 'REVOKED'];
 
 class ListDelegationsQuery {
-  @ApiPropertyOptional({ description: 'ADMIN/OPERATOR/READONLY only — a MERCHANT is always scoped to their own delegations regardless of this param' })
+  @ApiPropertyOptional({
+    description:
+      'ADMIN/OPERATOR/READONLY only — a MERCHANT is always scoped to their own delegations regardless of this param',
+  })
   @IsOptional()
   @IsString()
   merchantId?: string;
@@ -65,10 +80,13 @@ export class DelegationController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Authorize a new agent to charge on this merchant\'s behalf, within a spend policy — returns the agent\'s JWT once, like an API key secret' })
+  @ApiOperation({
+    summary:
+      "Authorize a new agent to charge on this merchant's behalf, within a spend policy — returns the agent's JWT once, like an API key secret",
+  })
   @ApiResponse({ status: 201, type: CreateDelegationResponseDto })
   async create(@Body() dto: CreateDelegationDto, @Req() req: any): Promise<CreateDelegationResponseDto> {
-    const { delegation, agentToken, expiresIn } = await this.delegationService.createDelegation({
+    const { delegation, agentToken, expiresIn, agentSigningKey } = await this.delegationService.createDelegation({
       merchantId: req.user?.merchantId,
       agentName: dto.agentName,
       perTransactionLimit: Money.of(dto.perTransactionLimit, dto.currency),
@@ -76,7 +94,7 @@ export class DelegationController {
       allowedCategories: dto.allowedCategories,
       tokenTtlSeconds: dto.tokenTtlSeconds,
     });
-    return { delegation: toResponseDto(delegation), agentToken, tokenType: 'Bearer', expiresIn };
+    return { delegation: toResponseDto(delegation), agentToken, tokenType: 'Bearer', expiresIn, agentSigningKey };
   }
 
   @Get(':id')
@@ -93,7 +111,10 @@ export class DelegationController {
 
   @Get()
   @Roles(UserRole.MERCHANT, UserRole.ADMIN, UserRole.OPERATOR, UserRole.READONLY)
-  @ApiOperation({ summary: 'List delegations — a MERCHANT always sees only their own; ADMIN/OPERATOR/READONLY may filter by merchantId' })
+  @ApiOperation({
+    summary:
+      'List delegations — a MERCHANT always sees only their own; ADMIN/OPERATOR/READONLY may filter by merchantId',
+  })
   @ApiResponse({ status: 200, type: [DelegationResponseDto] })
   async list(@Query() query: ListDelegationsQuery, @Req() req: any): Promise<DelegationResponseDto[]> {
     const isMerchantRole = req.user?.roles?.includes(UserRole.MERCHANT);
@@ -105,7 +126,10 @@ export class DelegationController {
   @Post(':id/revoke')
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Revoke a delegation — takes effect immediately: the agent\'s JWT is rejected on its very next request, not just once it naturally expires' })
+  @ApiOperation({
+    summary:
+      "Revoke a delegation — takes effect immediately: the agent's JWT is rejected on its very next request, not just once it naturally expires",
+  })
   @ApiResponse({ status: 200, type: DelegationResponseDto })
   @ApiResponse({ status: 403, description: 'This delegation belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Delegation not found' })

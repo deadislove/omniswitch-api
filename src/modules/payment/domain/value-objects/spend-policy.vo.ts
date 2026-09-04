@@ -43,11 +43,19 @@ export class SpendPolicy {
     );
   }
 
-  get perTransactionLimit(): Money { return this._perTransactionLimit; }
-  get monthlyLimit(): Money { return this._monthlyLimit; }
+  get perTransactionLimit(): Money {
+    return this._perTransactionLimit;
+  }
+  get monthlyLimit(): Money {
+    return this._monthlyLimit;
+  }
   /** undefined means "no category restriction" — every category (including none supplied) is allowed. */
-  get allowedCategories(): string[] | undefined { return this._allowedCategories; }
-  get currency(): string { return this._perTransactionLimit.currency.code; }
+  get allowedCategories(): string[] | undefined {
+    return this._allowedCategories;
+  }
+  get currency(): string {
+    return this._perTransactionLimit.currency.code;
+  }
 
   isCategoryAllowed(category: string | undefined): boolean {
     if (!this._allowedCategories) return true;

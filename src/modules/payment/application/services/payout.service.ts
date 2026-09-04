@@ -99,7 +99,11 @@ export class PayoutService {
         if (existing) {
           existing.minorUnits += sign * entry.amount.amountMinorUnits;
         } else {
-          netByAccount.set(key, { merchantId: entry.accountId, currencyCode, minorUnits: sign * entry.amount.amountMinorUnits });
+          netByAccount.set(key, {
+            merchantId: entry.accountId,
+            currencyCode,
+            minorUnits: sign * entry.amount.amountMinorUnits,
+          });
         }
       }
     }
@@ -129,7 +133,9 @@ export class PayoutService {
       connectedMerchantsPaid++;
       this.logger.log(
         `Payout ${payout.id}: ${merchantId} gross=${grossAmount.toString()} net=${payout.netAmount.toString()}` +
-          (payout.reserveAmount.isZero() ? '' : ` reserve=${payout.reserveAmount.toString()} (eligible ${payout.releaseEligibleAt!.toISOString()})`) +
+          (payout.reserveAmount.isZero()
+            ? ''
+            : ` reserve=${payout.reserveAmount.toString()} (eligible ${payout.releaseEligibleAt!.toISOString()})`) +
           (kycVerified ? '' : ' [KYC_BLOCKED]'),
       );
     }
@@ -138,7 +144,9 @@ export class PayoutService {
     await this.payoutPort.saveSweepRun(run);
 
     if (connectedMerchantsPaid > 0) {
-      this.logger.log(`Payout sweep ${run.id}: ${connectedMerchantsPaid} connected merchant(s) paid, window [${windowStart.toISOString()} - ${windowEnd.toISOString()}]`);
+      this.logger.log(
+        `Payout sweep ${run.id}: ${connectedMerchantsPaid} connected merchant(s) paid, window [${windowStart.toISOString()} - ${windowEnd.toISOString()}]`,
+      );
     }
     return run;
   }
@@ -158,10 +166,18 @@ export class PayoutService {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${id} not found`, code: 'PAYOUT_NOT_FOUND' });
     }
     if (payout.reserveAmount.isZero()) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${id} has no reserve to release`, code: 'PAYOUT_HAS_NO_RESERVE' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${id} has no reserve to release`,
+        code: 'PAYOUT_HAS_NO_RESERVE',
+      });
     }
     if (payout.reserveReleased) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${id}'s reserve is already released`, code: 'PAYOUT_RESERVE_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${id}'s reserve is already released`,
+        code: 'PAYOUT_RESERVE_ALREADY_RELEASED',
+      });
     }
     const now = new Date();
     if (!options.force && payout.releaseEligibleAt && now < payout.releaseEligibleAt) {
@@ -174,7 +190,11 @@ export class PayoutService {
 
     const released = await this.payoutPort.markReserveReleased(id, now);
     if (!released) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${id}'s reserve lost a race with another release attempt`, code: 'PAYOUT_RESERVE_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${id}'s reserve lost a race with another release attempt`,
+        code: 'PAYOUT_RESERVE_ALREADY_RELEASED',
+      });
     }
 
     // Return the in-memory aggregate, mutated to match what was just
@@ -182,7 +202,9 @@ export class PayoutService {
     // write" posture ReserveService.release() already uses, for the same
     // replica-lag reason.
     payout.releaseReserve(now, options.force ?? false);
-    this.logger.log(`Payout ${id}'s reserve released (${payout.reserveAmount.toString()}) for merchant ${payout.merchantId}${options.force ? ' [forced]' : ''}`);
+    this.logger.log(
+      `Payout ${id}'s reserve released (${payout.reserveAmount.toString()}) for merchant ${payout.merchantId}${options.force ? ' [forced]' : ''}`,
+    );
     return payout;
   }
 
@@ -208,7 +230,9 @@ export class PayoutService {
     }
 
     if (payouts.length > 0) {
-      this.logger.log(`Payout reserve release sweep: ${released} released, ${failed} failed, ${payouts.length} eligible`);
+      this.logger.log(
+        `Payout reserve release sweep: ${released} released, ${failed} failed, ${payouts.length} eligible`,
+      );
     }
     return { released, failed };
   }
@@ -264,13 +288,25 @@ export class PayoutService {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${payoutId} not found`, code: 'PAYOUT_NOT_FOUND' });
     }
     if (payout.kycBlocked) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId} is KYC-blocked, cannot initiate a transfer`, code: 'PAYOUT_KYC_BLOCKED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId} is KYC-blocked, cannot initiate a transfer`,
+        code: 'PAYOUT_KYC_BLOCKED',
+      });
     }
     if (payout.netAmount.isZero()) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId} has no net amount to transfer`, code: 'PAYOUT_NO_TRANSFERABLE_AMOUNT' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId} has no net amount to transfer`,
+        code: 'PAYOUT_NO_TRANSFERABLE_AMOUNT',
+      });
     }
     if (payout.transferStatus === 'INITIATED') {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId}'s transfer is already initiated`, code: 'PAYOUT_TRANSFER_ALREADY_INITIATED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId}'s transfer is already initiated`,
+        code: 'PAYOUT_TRANSFER_ALREADY_INITIATED',
+      });
     }
 
     const idempotencyKey = uuidv4();
@@ -292,14 +328,20 @@ export class PayoutService {
     const now = new Date();
     const initiated = await this.payoutPort.markTransferInitiated(payoutId, result.transferId!, now);
     if (!initiated) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId}'s transfer lost a race with another initiation attempt`, code: 'PAYOUT_TRANSFER_ALREADY_INITIATED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId}'s transfer lost a race with another initiation attempt`,
+        code: 'PAYOUT_TRANSFER_ALREADY_INITIATED',
+      });
     }
 
     // Return the in-memory aggregate, mutated to match what was just
     // committed — same "don't re-fetch after your own write" posture as
     // releaseReserve() above.
     payout.recordTransferInitiated(result.transferId!, now);
-    this.logger.log(`Payout ${payoutId} transfer initiated (${payout.netAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId}`);
+    this.logger.log(
+      `Payout ${payoutId} transfer initiated (${payout.netAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId}`,
+    );
     return payout;
   }
 

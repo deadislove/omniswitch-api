@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Stage 2 of the payments/ledger_outbox partitioning migration.
@@ -33,18 +33,18 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * batching implementation.
  */
 export class BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819 implements MigrationInterface {
-    name = 'BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819'
+  name = 'BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        // Idempotent re-run safety — see docblock. Cascades to every
-        // partition of the parent table.
-        await queryRunner.query(`TRUNCATE TABLE "payments_partitioned"`);
-        await queryRunner.query(`TRUNCATE TABLE "ledger_outbox_partitioned"`);
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    // Idempotent re-run safety — see docblock. Cascades to every
+    // partition of the parent table.
+    await queryRunner.query(`TRUNCATE TABLE "payments_partitioned"`);
+    await queryRunner.query(`TRUNCATE TABLE "ledger_outbox_partitioned"`);
 
-        // ─── Backfill ───────────────────────────────────────────────────
-        // Explicit column lists on both sides — order-independent and
-        // resistant to future column-order drift, unlike `SELECT *`.
-        await queryRunner.query(`
+    // ─── Backfill ───────────────────────────────────────────────────
+    // Explicit column lists on both sides — order-independent and
+    // resistant to future column-order drift, unlike `SELECT *`.
+    await queryRunner.query(`
             INSERT INTO "payments_partitioned" (
                 "id", "merchant_id", "customer_id", "order_id", "amount_minor_units",
                 "currency_code", "currency_minor_units", "status", "idempotency_key",
@@ -63,7 +63,7 @@ export class BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819 impl
             FROM "payments"
         `);
 
-        await queryRunner.query(`
+    await queryRunner.query(`
             INSERT INTO "ledger_outbox_partitioned" (
                 "id", "payment_id", "event_type", "entries", "status",
                 "retry_count", "last_error", "processed_at", "created_at"
@@ -74,45 +74,44 @@ export class BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819 impl
             FROM "ledger_outbox"
         `);
 
-        // ─── Verify before cutover — refuse to swap on a row-count
-        // mismatch rather than silently going live on a partial backfill.
-        const [paymentsCheck] = await queryRunner.query(
-            `SELECT (SELECT count(*) FROM "payments") AS old_count, (SELECT count(*) FROM "payments_partitioned") AS new_count`,
-        );
-        if (paymentsCheck.old_count !== paymentsCheck.new_count) {
-            throw new Error(
-                `payments backfill row-count mismatch: payments=${paymentsCheck.old_count}, payments_partitioned=${paymentsCheck.new_count}`,
-            );
-        }
-        const [outboxCheck] = await queryRunner.query(
-            `SELECT (SELECT count(*) FROM "ledger_outbox") AS old_count, (SELECT count(*) FROM "ledger_outbox_partitioned") AS new_count`,
-        );
-        if (outboxCheck.old_count !== outboxCheck.new_count) {
-            throw new Error(
-                `ledger_outbox backfill row-count mismatch: ledger_outbox=${outboxCheck.old_count}, ledger_outbox_partitioned=${outboxCheck.new_count}`,
-            );
-        }
-
-        // ─── Atomic cutover ─────────────────────────────────────────────
-        // Runs inside this migration's transaction (TypeORM wraps each
-        // migration in one by default) — either every rename below lands,
-        // or none do; the app is never left pointed at a table that
-        // doesn't exist under the "payments"/"ledger_outbox" name.
-        await queryRunner.query(`ALTER TABLE "payments" RENAME TO "payments_old"`);
-        await queryRunner.query(`ALTER TABLE "payments_partitioned" RENAME TO "payments"`);
-        await queryRunner.query(`ALTER TABLE "ledger_outbox" RENAME TO "ledger_outbox_old"`);
-        await queryRunner.query(`ALTER TABLE "ledger_outbox_partitioned" RENAME TO "ledger_outbox"`);
+    // ─── Verify before cutover — refuse to swap on a row-count
+    // mismatch rather than silently going live on a partial backfill.
+    const [paymentsCheck] = await queryRunner.query(
+      `SELECT (SELECT count(*) FROM "payments") AS old_count, (SELECT count(*) FROM "payments_partitioned") AS new_count`,
+    );
+    if (paymentsCheck.old_count !== paymentsCheck.new_count) {
+      throw new Error(
+        `payments backfill row-count mismatch: payments=${paymentsCheck.old_count}, payments_partitioned=${paymentsCheck.new_count}`,
+      );
+    }
+    const [outboxCheck] = await queryRunner.query(
+      `SELECT (SELECT count(*) FROM "ledger_outbox") AS old_count, (SELECT count(*) FROM "ledger_outbox_partitioned") AS new_count`,
+    );
+    if (outboxCheck.old_count !== outboxCheck.new_count) {
+      throw new Error(
+        `ledger_outbox backfill row-count mismatch: ledger_outbox=${outboxCheck.old_count}, ledger_outbox_partitioned=${outboxCheck.new_count}`,
+      );
     }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        // Swap back — restores the original flat tables as the live
-        // "payments"/"ledger_outbox". The now-unused partitioned tables
-        // (still holding the backfilled copy) go back to their staging
-        // names, ready for `up()` to TRUNCATE and re-backfill cleanly.
-        await queryRunner.query(`ALTER TABLE "ledger_outbox" RENAME TO "ledger_outbox_partitioned"`);
-        await queryRunner.query(`ALTER TABLE "ledger_outbox_old" RENAME TO "ledger_outbox"`);
-        await queryRunner.query(`ALTER TABLE "payments" RENAME TO "payments_partitioned"`);
-        await queryRunner.query(`ALTER TABLE "payments_old" RENAME TO "payments"`);
-    }
+    // ─── Atomic cutover ─────────────────────────────────────────────
+    // Runs inside this migration's transaction (TypeORM wraps each
+    // migration in one by default) — either every rename below lands,
+    // or none do; the app is never left pointed at a table that
+    // doesn't exist under the "payments"/"ledger_outbox" name.
+    await queryRunner.query(`ALTER TABLE "payments" RENAME TO "payments_old"`);
+    await queryRunner.query(`ALTER TABLE "payments_partitioned" RENAME TO "payments"`);
+    await queryRunner.query(`ALTER TABLE "ledger_outbox" RENAME TO "ledger_outbox_old"`);
+    await queryRunner.query(`ALTER TABLE "ledger_outbox_partitioned" RENAME TO "ledger_outbox"`);
+  }
 
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    // Swap back — restores the original flat tables as the live
+    // "payments"/"ledger_outbox". The now-unused partitioned tables
+    // (still holding the backfilled copy) go back to their staging
+    // names, ready for `up()` to TRUNCATE and re-backfill cleanly.
+    await queryRunner.query(`ALTER TABLE "ledger_outbox" RENAME TO "ledger_outbox_partitioned"`);
+    await queryRunner.query(`ALTER TABLE "ledger_outbox_old" RENAME TO "ledger_outbox"`);
+    await queryRunner.query(`ALTER TABLE "payments" RENAME TO "payments_partitioned"`);
+    await queryRunner.query(`ALTER TABLE "payments_old" RENAME TO "payments"`);
+  }
 }

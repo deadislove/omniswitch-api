@@ -390,7 +390,7 @@ collapsed to ~0%; it stayed at the correct value instead). A real charge
 was also made through the running app to confirm `recordSuccess` writes to
 the *current* bucket correctly, not just that manually-injected data reads
 back. Verifying this also surfaced a real, unrelated infrastructure bug —
-see [`docs/technical/infra-verification-status.md`](docs/technical/infra-verification-status.md)
+see [`docs/technical/infra-verification-status.md`](docs/technical/tests/infra-verification-status.md)
 for the Redis port collision it led to finding and fixing.
 
 ### 10. Outbox dead-letter recovery is manual — ✅ resolved
@@ -448,14 +448,14 @@ many merchant identities should trigger — but it means a real charge-path
 capacity number needs a distributed load generator (many source IPs), out
 of scope here. Full story, including how each rate-limiting layer was
 isolated, in
-[`docs/technical/load-testing.md`](docs/technical/load-testing.md).
+[`docs/technical/load-testing.md`](docs/technical/tests/load-testing.md).
 
 ### 12. No merchant bootstrap path — ✅ resolved
 `POST /admin/merchants` requires an existing ADMIN JWT, which meant there
 was no way to create the *first* merchant on a brand-new deployment without
 already having admin credentials (previously worked around with a raw SQL
 insert while verifying the Docker image — see
-[`docs/technical/infra-verification-status.md`](docs/technical/infra-verification-status.md)).
+[`docs/technical/infra-verification-status.md`](docs/technical/tests/infra-verification-status.md)).
 Fixed with `npm run seed:admin` (`src/database/seed-admin.ts`) — an
 explicit, idempotent CLI command (not wired into automatic container
 startup the way migrations are, since issuing a credential is a
@@ -588,7 +588,7 @@ already-confirmed charge. Manage it via `POST /admin/merchants`
 converting the merchant's payout leg needs two separately-currency-balanced
 ledger legs linked by a new `FX_CLEARING` account type, not just a third
 entry — in
-[`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#fx-conversion-merchant-settlement-currency).
+[`docs/business-domain/fx-conversion.md`](docs/business-domain/fx-conversion.md#fx-conversion-merchant-settlement-currency).
 
 **Two real bugs found verifying the "clear a setting back to null" path**
 (both fixed):
@@ -722,7 +722,7 @@ ledger event that created it.
 return its now-current state. That re-fetch reliably came back still
 `HELD` — this app's `DataSource` routes plain reads to a Postgres replica
 (`app.module.ts`'s `replication` config; see
-[`infra-verification-status.md`](docs/technical/infra-verification-status.md)'s
+[`infra-verification-status.md`](docs/technical/tests/infra-verification-status.md)'s
 measured ~1s replication lag), and the re-fetch, running microseconds
 after the transaction committed to master, lost that race every time.
 Fixed by returning the already-mutated in-memory `ReserveHold` aggregate
@@ -1039,7 +1039,7 @@ now:
   functions as this system's answer to "who bears FX risk between charge
   and settlement time" (the platform does, by locking the rate at charge
   time and never re-quoting it for that payment's lifecycle), in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#refunds-and-lost-disputes-replay-the-original-charge-time-rate).
+  [`docs/business-domain/fx-conversion.md`](docs/business-domain/fx-conversion.md#refunds-and-lost-disputes-replay-the-original-charge-time-rate).
 - **Presentment currency.** `POST /payments/charge` accepts an optional
   `presentmentCurrency` and returns a computed `presentmentAmount` for
   display — purely informational, doesn't touch what's actually
@@ -1167,7 +1167,7 @@ part of the proceeds directly to its own sellers:
   recipient's own merchantId; whatever's left still credits the platform
   — a split doesn't have to add up to the full payout. Full ledger
   mechanics, including the double-entry shape, in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#marketplace-splits).
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#marketplace-splits).
 - Rejected up front (before the PSP is ever called, see the real bug
   below): an unknown/non-connected/wrong-platform recipient
   (`SPLIT_RECIPIENT_INVALID`, 422), a split total exceeding the net
@@ -1251,7 +1251,7 @@ either. Closed now:
   resolution path now pass this through. Full math and the (pre-existing,
   unrelated to splits) "a refund never gives back the platform fee"
   reasoning in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#reversing-a-split-on-refund-or-dispute-loss).
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#reversing-a-split-on-refund-or-dispute-loss).
 
 **A real bug found during implementation, not just during testing**:
 `splits` used to only be recorded on the `Payment` aggregate inside
@@ -1329,7 +1329,7 @@ rolling reserve, unlike a real marketplace processor. Closed now:
   sent" vs. "still on the books," so there's nothing for a ledger entry
   to move. Full design and the "ledger balance vs. available balance"
   reasoning in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#payout-scheduling-for-connected-accounts).
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#payout-scheduling-for-connected-accounts).
 
 New tables: `payouts`, `payout_sweep_runs`; new `merchants` columns
 `payout_reserve_bps`/`payout_reserve_hold_days`. New port method
@@ -1870,14 +1870,6 @@ design surface, not oversights:
   charge is scored identically to a human one. A real model would weigh
   velocity within the agent's own spend policy and whether this
   agent/principal pairing has transacted with this merchant before.
-- **Per-request agent signing.** `HmacSignatureGuard` exempts an
-  `AGENT`-authenticated request from the HMAC requirement entirely
-  (see that guard's docblock) rather than requiring a per-agent signing
-  key — the delegation JWT's own bearer-token possession is this MVP's
-  authenticity proof. Extending HMAC-style request signing to
-  per-agent keys (rather than the merchant's own secret, which an agent
-  should never hold) is real, scoped follow-up work, not a gap in the
-  underlying mechanism.
 - **Standards alignment.** Stripe's agentic commerce tooling, Google's
   Agent Payments Protocol, and various agent-to-agent authorization
   proposals are all still evolving; `Delegation`/`SpendPolicy` implement

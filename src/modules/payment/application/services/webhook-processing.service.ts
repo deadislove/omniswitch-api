@@ -76,7 +76,9 @@ export class WebhookProcessingService {
     }
   }
 
-  async handleAdyenNotification(body: { notificationItems?: Array<{ NotificationRequestItem: AdyenNotificationRequestItem }> }): Promise<void> {
+  async handleAdyenNotification(body: {
+    notificationItems?: Array<{ NotificationRequestItem: AdyenNotificationRequestItem }>;
+  }): Promise<void> {
     const items = body?.notificationItems ?? [];
 
     for (const wrapper of items) {
@@ -162,7 +164,11 @@ export class WebhookProcessingService {
     // is threaded through to the ledger entries below — without this, a
     // split charge that needed a 3DS challenge would silently lose its
     // split the moment the challenge completed.
-    const { platformFee, settlementConversion, reserveHold, splits } = await this.chargeLedgerParams.resolve(payment.metadata.merchantId, payment.amount, payment.splits);
+    const { platformFee, settlementConversion, reserveHold, splits } = await this.chargeLedgerParams.resolve(
+      payment.metadata.merchantId,
+      payment.amount,
+      payment.splits,
+    );
     if (settlementConversion) {
       payment.recordSettlementConversion({
         currency: settlementConversion.convertedNetAmount.currency.code,
@@ -186,7 +192,12 @@ export class WebhookProcessingService {
       await this.ledgerOutbox.saveWithPayment(payment.id, outboxEvent, manager);
       if (reserveHold) {
         await this.reserveService.recordHold(
-          { paymentId: payment.id, merchantId: payment.metadata.merchantId, amount: reserveHold.amount, holdDays: reserveHold.holdDays },
+          {
+            paymentId: payment.id,
+            merchantId: payment.metadata.merchantId,
+            amount: reserveHold.amount,
+            holdDays: reserveHold.holdDays,
+          },
           manager,
         );
       }

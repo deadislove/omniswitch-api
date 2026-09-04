@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest, signStripeWebhook } from './utils/signing';
 import { LedgerOutboxEntity } from '../src/modules/payment/adapters/persistence/entities/ledger-outbox.entity';
 
@@ -22,14 +22,11 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET!;
  */
 describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
-  let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -60,14 +57,21 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     const queryRunner = dataSource.createQueryRunner('master');
     let events: LedgerOutboxEntity[];
     try {
-      events = await queryRunner.manager.find(LedgerOutboxEntity, { where: { paymentId }, order: { createdAt: 'ASC' } });
+      events = await queryRunner.manager.find(LedgerOutboxEntity, {
+        where: { paymentId },
+        order: { createdAt: 'ASC' },
+      });
     } finally {
       await queryRunner.release();
     }
     return events.flatMap((e) => e.entries as any[]);
   }
 
-  async function platformWithConnected(): Promise<{ platform: SeededMerchant; platformToken: string; connected: SeededMerchant }> {
+  async function platformWithConnected(): Promise<{
+    platform: SeededMerchant;
+    platformToken: string;
+    connected: SeededMerchant;
+  }> {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platform') });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {
@@ -90,7 +94,13 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
       splits: [{ merchantId: connected.merchantId, amount: 30 }],
     }).expect(201);
 
-    const refundRes = await signedRequest(platform, platformToken, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, {}).expect(200);
+    const refundRes = await signedRequest(
+      platform,
+      platformToken,
+      'post',
+      `/api/v1/payments/${chargeRes.body.paymentId}/refund`,
+      {},
+    ).expect(200);
     expect(refundRes.body.status).toBe('REFUNDED');
 
     const entries = await ledgerEntries(chargeRes.body.paymentId);
@@ -124,9 +134,15 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     // 10% partial refund: connected's exact proportional share of $10 is
     // $3.333 -> floors to $3.33 (330 minor units); the platform absorbs
     // the truncated remainder so the two debits still sum to exactly $10.
-    const refundRes = await signedRequest(platform, platformToken, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, {
-      amount: 10,
-    }).expect(200);
+    const refundRes = await signedRequest(
+      platform,
+      platformToken,
+      'post',
+      `/api/v1/payments/${chargeRes.body.paymentId}/refund`,
+      {
+        amount: 10,
+      },
+    ).expect(200);
     expect(refundRes.body.status).toBe('PARTIALLY_REFUNDED');
 
     const entries = await ledgerEntries(chargeRes.body.paymentId);
@@ -214,7 +230,9 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
       preferredProvider: 'STRIPE',
       splits: [{ merchantId: connected.merchantId, amount: 15 }],
     };
-    const chargeRes = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', bodyObj).expect(201);
+    const chargeRes = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', bodyObj).expect(
+      201,
+    );
     expect(chargeRes.body.status).toBe('REQUIRES_ACTION');
     expect(chargeRes.body.pspTransactionId).toEqual(expect.any(String));
 

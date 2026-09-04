@@ -28,7 +28,10 @@ export class ReconciliationTypeOrmRepository implements ReconciliationPort {
       paymentId: m.paymentId,
       pspTransactionId: m.pspTransactionId,
       expectedAmount: m.expectedAmount
-        ? { amountMinorUnits: m.expectedAmount.amountMinorUnits.toString(), currencyCode: m.expectedAmount.currency.code }
+        ? {
+            amountMinorUnits: m.expectedAmount.amountMinorUnits.toString(),
+            currencyCode: m.expectedAmount.currency.code,
+          }
         : undefined,
       actualAmount: m.actualAmount
         ? { amountMinorUnits: m.actualAmount.amountMinorUnits.toString(), currencyCode: m.actualAmount.currency.code }

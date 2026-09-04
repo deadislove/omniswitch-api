@@ -25,8 +25,10 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * (1 + 2 + 2), enough to trip the circuit OPEN as a side effect of
  * testing something unrelated. Reset before and after, same reasoning
  * as resetCircuitBreakerState's own docblock: this state is shared
- * Redis state across every e2e file (maxWorkers: 1, no flush between
- * files), so a leaked OPEN state here is one root cause of
+ * Redis state across every e2e file the same Jest worker runs (each
+ * worker gets its own Redis DB — test/setup-env.ts — but no flush
+ * between files within one worker), so a leaked OPEN state here is one
+ * root cause of
  * chargeWithForcedThreeDS() flakiness in webhooks.e2e-spec.ts and
  * marketplace-split-refunds.e2e-spec.ts when this file runs before them
  * without a reset.

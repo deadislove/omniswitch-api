@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  ExecutionContext,
-  UnauthorizedException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
@@ -64,12 +59,15 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   handleRequest(err: any, user: any, info: any) {
     if (err || !user) {
       this.logger.warn(`JWT auth failed: ${info?.message || err?.message || 'No token'}`);
-      throw err || new UnauthorizedException({
-        statusCode: 401,
-        error: 'Unauthorized',
-        message: info?.message || 'Invalid or missing JWT token',
-        code: 'JWT_AUTH_FAILED',
-      });
+      throw (
+        err ||
+        new UnauthorizedException({
+          statusCode: 401,
+          error: 'Unauthorized',
+          message: info?.message || 'Invalid or missing JWT token',
+          code: 'JWT_AUTH_FAILED',
+        })
+      );
     }
     return user;
   }

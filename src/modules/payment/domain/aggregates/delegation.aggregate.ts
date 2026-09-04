@@ -47,6 +47,7 @@ export class Delegation {
     private readonly _createdAt: Date,
     private _revokedAt: Date | undefined,
     private _updatedAt: Date,
+    private readonly _signingKeyCiphertext: string | undefined,
   ) {}
 
   static create(params: {
@@ -56,6 +57,7 @@ export class Delegation {
     spendPolicy: SpendPolicy;
     jti: string;
     tokenExpiresAt: Date;
+    signingKeyCiphertext: string;
   }): Delegation {
     const now = new Date();
     return new Delegation(
@@ -71,6 +73,7 @@ export class Delegation {
       now,
       undefined,
       now,
+      params.signingKeyCiphertext,
     );
   }
 
@@ -87,6 +90,7 @@ export class Delegation {
     createdAt: Date;
     revokedAt?: Date;
     updatedAt: Date;
+    signingKeyCiphertext?: string;
   }): Delegation {
     return new Delegation(
       params.id,
@@ -101,6 +105,7 @@ export class Delegation {
       params.createdAt,
       params.revokedAt,
       params.updatedAt,
+      params.signingKeyCiphertext,
     );
   }
 
@@ -115,16 +120,44 @@ export class Delegation {
     this._updatedAt = now;
   }
 
-  get id(): string { return this._id; }
-  get merchantId(): string { return this._merchantId; }
-  get agentName(): string { return this._agentName; }
-  get spendPolicy(): SpendPolicy { return this._spendPolicy; }
-  get status(): DelegationStatus { return this._status; }
-  get currentMonthKey(): string { return this._currentMonthKey; }
-  get currentMonthSpent(): Money { return this._currentMonthSpent; }
-  get jti(): string { return this._jti; }
-  get tokenExpiresAt(): Date { return this._tokenExpiresAt; }
-  get createdAt(): Date { return this._createdAt; }
-  get revokedAt(): Date | undefined { return this._revokedAt; }
-  get updatedAt(): Date { return this._updatedAt; }
+  get id(): string {
+    return this._id;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get agentName(): string {
+    return this._agentName;
+  }
+  get spendPolicy(): SpendPolicy {
+    return this._spendPolicy;
+  }
+  get status(): DelegationStatus {
+    return this._status;
+  }
+  get currentMonthKey(): string {
+    return this._currentMonthKey;
+  }
+  get currentMonthSpent(): Money {
+    return this._currentMonthSpent;
+  }
+  get jti(): string {
+    return this._jti;
+  }
+  get tokenExpiresAt(): Date {
+    return this._tokenExpiresAt;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get revokedAt(): Date | undefined {
+    return this._revokedAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+  /** Undefined only for a delegation created before this column existed — see DelegationEntity's own comment. */
+  get signingKeyCiphertext(): string | undefined {
+    return this._signingKeyCiphertext;
+  }
 }

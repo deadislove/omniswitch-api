@@ -36,7 +36,7 @@ export interface PSPChargeResponse {
   success: boolean;
   transactionId: string;
   status: 'SUCCEEDED' | 'REQUIRES_ACTION' | 'REQUIRES_CAPTURE' | 'FAILED';
-  actionUrl?: string;       // 3DS redirect URL
+  actionUrl?: string; // 3DS redirect URL
   rawResponse: Record<string, unknown>;
   errorCode?: string;
   errorMessage?: string;
@@ -123,6 +123,11 @@ export interface PSPSettlementTransaction {
   settledAt: Date;
 }
 
+export interface PSPFeeStatement {
+  totalFeeMinorUnits: bigint;
+  transactionCount: number;
+}
+
 export interface PSPQueryOutcomeResult {
   outcome: 'SUCCEEDED' | 'FAILED' | 'STILL_UNKNOWN';
   pspTransactionId?: string;
@@ -177,6 +182,20 @@ export abstract class PSPAdapterPort {
    * (both would need to already be wrong the same way to miss it).
    */
   abstract fetchSettlementTransactions(since: Date, until: Date): Promise<PSPSettlementTransaction[]>;
+
+  /**
+   * The PSP's own real fee invoice for a window — PspCostReconciliationService's
+   * "actual" side, fetched for real rather than requiring an operator to
+   * type in a number from a statement by hand. Real Stripe exposes this
+   * via `fee_details` on each balance transaction (or the Reporting API);
+   * real Adyen via its settlement batch reports. mock-psp's `/statement`
+   * endpoints simulate the same thing with a real, deterministic
+   * per-transaction fee that includes a "premium card" surcharge on a
+   * fifth of transactions — so this genuinely diverges from
+   * PspFeeScheduleService's flat-rate routing estimate, the same way a
+   * real interchange bill would, rather than always matching it exactly.
+   */
+  abstract fetchFeeStatement(since: Date, until: Date, currency: string): Promise<PSPFeeStatement>;
 
   /**
    * Representment — submits evidence to contest a dispute at the PSP.

@@ -42,10 +42,7 @@ export class MerchantPspExposureService {
   /** Call once a charge's actual PSP has been resolved, on success. */
   async recordRouting(merchantId: string, provider: string): Promise<void> {
     const key = this.key(merchantId, provider);
-    await Promise.all([
-      this.cache.incr(key),
-      this.cache.expire(key, ROUTING_HISTORY_WINDOW_SECONDS),
-    ]);
+    await Promise.all([this.cache.incr(key), this.cache.expire(key, ROUTING_HISTORY_WINDOW_SECONDS)]);
   }
 
   /**

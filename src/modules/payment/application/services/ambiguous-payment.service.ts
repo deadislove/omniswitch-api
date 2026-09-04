@@ -119,7 +119,8 @@ export class AmbiguousPaymentService {
       if (!params.pspTransactionId) {
         throw new UnprocessableEntityException({
           statusCode: 422,
-          error: 'pspTransactionId is required when outcome is SUCCEEDED — an ambiguous payment never received one automatically',
+          error:
+            'pspTransactionId is required when outcome is SUCCEEDED — an ambiguous payment never received one automatically',
           code: 'PSP_TRANSACTION_ID_REQUIRED',
         });
       }
@@ -128,12 +129,16 @@ export class AmbiguousPaymentService {
       payment.recordManualAmbiguousResolution(params.resolvedBy, params.reason);
       await this.bookSucceeded(payment);
 
-      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> SUCCEEDED by ${params.resolvedBy} (pspTransactionId=${params.pspTransactionId}): ${params.reason}`);
+      this.logger.warn(
+        `Payment ${payment.id} manually resolved AMBIGUOUS -> SUCCEEDED by ${params.resolvedBy} (pspTransactionId=${params.pspTransactionId}): ${params.reason}`,
+      );
     } else {
       payment.markFailed(params.reason, 'MANUALLY_RESOLVED_AMBIGUOUS');
       payment.recordManualAmbiguousResolution(params.resolvedBy, params.reason);
       await this.paymentRepository.update(payment);
-      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> FAILED by ${params.resolvedBy}: ${params.reason}`);
+      this.logger.warn(
+        `Payment ${payment.id} manually resolved AMBIGUOUS -> FAILED by ${params.resolvedBy}: ${params.reason}`,
+      );
     }
 
     this.publish(payment);
@@ -185,7 +190,12 @@ export class AmbiguousPaymentService {
       await this.ledgerOutbox.saveWithPayment(payment.id, outboxEvent, manager);
       if (reserveHold) {
         await this.reserveService.recordHold(
-          { paymentId: payment.id, merchantId: payment.metadata.merchantId, amount: reserveHold.amount, holdDays: reserveHold.holdDays },
+          {
+            paymentId: payment.id,
+            merchantId: payment.metadata.merchantId,
+            amount: reserveHold.amount,
+            holdDays: reserveHold.holdDays,
+          },
           manager,
         );
       }
@@ -203,7 +213,12 @@ export class AmbiguousPaymentService {
    * abort the whole batch, same posture as PayoutService's sweep.
    */
   @Cron(CronExpression.EVERY_10_MINUTES, { name: 'ambiguous-payment-auto-resolution' })
-  async runAutoResolutionSweep(): Promise<{ succeeded: number; failed: number; stillUnknown: number; skipped: number }> {
+  async runAutoResolutionSweep(): Promise<{
+    succeeded: number;
+    failed: number;
+    stillUnknown: number;
+    skipped: number;
+  }> {
     const eligible = await this.paymentRepository.findAmbiguousEligibleForAutoResolution(
       this.maxAutoResolutionAttempts,
       this.minAutoResolutionAgeMinutes,
@@ -254,13 +269,20 @@ export class AmbiguousPaymentService {
       await this.bookSucceeded(fresh);
       this.publish(fresh);
       result.succeeded++;
-      this.logger.warn(`Payment ${fresh.id} auto-resolved AMBIGUOUS -> SUCCEEDED via PSP query (pspTransactionId=${outcome.pspTransactionId})`);
+      this.logger.warn(
+        `Payment ${fresh.id} auto-resolved AMBIGUOUS -> SUCCEEDED via PSP query (pspTransactionId=${outcome.pspTransactionId})`,
+      );
     } else if (outcome.outcome === 'FAILED') {
-      fresh.markFailed('Auto-resolved via PSP query: the PSP has no record of this charge succeeding', outcome.errorCode ?? 'AUTO_RESOLVED_AMBIGUOUS');
+      fresh.markFailed(
+        'Auto-resolved via PSP query: the PSP has no record of this charge succeeding',
+        outcome.errorCode ?? 'AUTO_RESOLVED_AMBIGUOUS',
+      );
       await this.paymentRepository.update(fresh);
       this.publish(fresh);
       result.failed++;
-      this.logger.warn(`Payment ${fresh.id} auto-resolved AMBIGUOUS -> FAILED via PSP query (errorCode=${outcome.errorCode ?? 'unknown'})`);
+      this.logger.warn(
+        `Payment ${fresh.id} auto-resolved AMBIGUOUS -> FAILED via PSP query (errorCode=${outcome.errorCode ?? 'unknown'})`,
+      );
     } else {
       fresh.incrementAmbiguousAutoRetryCount();
       await this.paymentRepository.update(fresh);
@@ -287,8 +309,8 @@ export class AmbiguousPaymentService {
     for (const payment of stale) {
       this.logger.error(
         `Payment ${payment.id} (merchant ${payment.metadata.merchantId}, ${payment.pspProvider ?? 'unknown PSP'}) has been AMBIGUOUS for ` +
-        `>${ALERT_THRESHOLD_MINUTES}min (auto-resolution attempts so far: ${payment.ambiguousAutoRetryCount}/${this.maxAutoResolutionAttempts}) — ` +
-        `check the PSP directly if this persists, or resolve via POST /admin/payments/${payment.id}/resolve-ambiguous`,
+          `>${ALERT_THRESHOLD_MINUTES}min (auto-resolution attempts so far: ${payment.ambiguousAutoRetryCount}/${this.maxAutoResolutionAttempts}) — ` +
+          `check the PSP directly if this persists, or resolve via POST /admin/payments/${payment.id}/resolve-ambiguous`,
       );
     }
   }

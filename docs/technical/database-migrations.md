@@ -24,7 +24,7 @@ only; migrations must never run against a replica. In local/dev these
 point straight at `postgres-master`'s own port, not at `pgbouncer-master`
 — DDL and transaction-mode pooling don't mix well, and migrations aren't
 the connection-count concern PgBouncer exists for (see
-[`load-testing.md`](./load-testing.md), Finding #3).
+[`load-testing.md`](./tests/load-testing.md), Finding #3).
 
 `src/database/data-source.ts` is a plain TypeORM `DataSource`, deliberately
 separate from `app.module.ts`'s `TypeOrmModule.forRootAsync()` — the CLI
@@ -33,22 +33,19 @@ It lists the same entities the app uses, so `migration:generate` is always
 diffing against the real, current entity definitions — there's no separate
 schema description to keep in sync by hand.
 
-**A real gotcha, hit twice building this project**: "the same entities the
-app uses" means *listed in both places* — `app.module.ts`'s
-`TypeOrmModule.forRootAsync()` entities array, **and**
-`data-source.ts`'s. They're two separate arrays, not one shared constant,
-because `data-source.ts` can't import from `app.module.ts` (it would pull
-in the whole Nest DI graph just to run a CLI command). A new entity file
-that's registered in `app.module.ts` (so the running app can read/write
-it) but forgotten in `data-source.ts` doesn't error anywhere obvious —
-`migration:generate` simply doesn't see the new table at all and reports
-either no changes, or changes for everything *except* the new entity.
-This happened twice in the same session (`ReserveHoldEntity`, then
-`SubscriptionEntity`) — both times the fix was remembering to add the
-`import` + array entry to `data-source.ts` too. **Checklist for a new
-entity**: add it to `TypeOrmModule.forFeature([...])` in its owning
-module, `app.module.ts`'s `entities:` array, *and* `data-source.ts`'s
-`entities:` array — three places, not two.
+**A real gotcha**: "the same entities the app uses" means *listed in both
+places* — `app.module.ts`'s `TypeOrmModule.forRootAsync()` entities
+array, **and** `data-source.ts`'s. They're two separate arrays, not one
+shared constant, because `data-source.ts` can't import from
+`app.module.ts` (it would pull in the whole Nest DI graph just to run a
+CLI command). A new entity file that's registered in `app.module.ts` (so
+the running app can read/write it) but forgotten in `data-source.ts`
+doesn't error anywhere obvious — `migration:generate` simply doesn't see
+the new table at all and reports either no changes, or changes for
+everything *except* the new entity. **Checklist for a new entity**: add
+it to `TypeOrmModule.forFeature([...])` in its owning module,
+`app.module.ts`'s `entities:` array, *and* `data-source.ts`'s `entities:`
+array — three places, not two.
 
 ## Where migrations run automatically
 
@@ -90,7 +87,7 @@ attribute in `CREATE ROLE`, which the script already did one statement
 earlier). On every fresh cluster init, this line aborted the whole
 `01-init.sql` script with a syntax error partway through, which in turn
 meant `02-init-hba.sh` (see
-[`infra-verification-status.md`](./infra-verification-status.md)) never got
+[`infra-verification-status.md`](./tests/infra-verification-status.md)) never got
 a chance to run either — one broken SQL statement was silently taking out
 an unrelated script later in the same init sequence.
 
@@ -105,6 +102,75 @@ time the app booted. Now that migrations own the schema, that file would
 actively conflict with them instead of just being redundant, so
 `init-master.sql` is now cluster-level setup only (the `replicator` role,
 the `pg_stat_statements` extension) — no application tables.
+
+## Backward-compatible migrations across a rolling deploy
+
+`k8s/deployment.yaml`'s rolling-update strategy (`maxSurge: 1,
+maxUnavailable: 0`) means old and new pods run **at the same time**
+during every deploy, both against the **same** Postgres — there is no
+point where only one app version is live. Migrations run inside the
+*new* pod's own startup `CMD` (`node ./node_modules/typeorm/cli.js -d
+dist/database/data-source.js migration:run && exec node dist/main.js`,
+see [`../technical/database-migrations.md`](#where-migrations-run-automatically)
+above), so the schema change lands and starts being live *before* that
+new pod's own app code starts serving traffic — and while every old pod
+is still up, still serving traffic, still running the *previous*
+version's queries against the database the migration just changed. A
+migration that the currently-running old code can't tolerate is an
+outage during every single rollout, not an edge case.
+
+**The rule**: a migration must never break the app version that was
+running immediately *before* it deploys. Schema changes that would
+break the old version have to be split across two separate
+deploy cycles — expand, then contract — never combined into one.
+
+### Expand (safe to ship in the same deploy as new code, or ahead of it)
+
+- Add a new column — **nullable, or with a `DEFAULT`**, never `NOT
+  NULL` with no default. Old code's `INSERT`s that don't know about the
+  new column must keep working unmodified.
+- Add a new table, a new index, a new enum *value* (old code that never
+  reads/writes the new value is unaffected by its existence).
+- Widen a constraint (e.g. raise a `VARCHAR` length cap, relax a
+  `CHECK`). Old code issuing narrower values is still valid under a
+  wider constraint.
+
+### Contract (only after every old-version pod is confirmed gone)
+
+- Drop a column, drop a table, narrow a constraint, add `NOT NULL` to
+  an existing column, or remove/rename an enum value. Every one of
+  these breaks any old-version pod still reading or writing the old
+  shape — safe only once a full rollout has completed and no pod
+  running the previous version remains (`kubectl rollout status
+  deployment/omniswitch-api -n payments` reporting the new
+  `ReplicaSet` fully available, with the old `ReplicaSet` at 0 replicas,
+  is the operator-facing signal that condition holds).
+- **Never combine an expand step and its matching contract step in the
+  same migration.** A column rename is not one migration — it's an
+  expand (add the new column, dual-write or backfill it) shipped in one
+  deploy, followed by a contract (drop the old column) shipped in a
+  *later*, separate deploy once the expand step has been live through a
+  full rollout with no issues.
+- Renaming or removing a Postgres enum value needs the same
+  rename-recreate-swap pattern
+  `1787459580113-AddAmbiguousPaymentStatus.ts` already uses for *adding*
+  a value (Postgres has no `ALTER TYPE ... RENAME VALUE` equivalent for
+  removal) — treat any enum-shrinking change as a contract step, gated
+  the same way.
+
+### What this doesn't cover
+
+- **No automated check enforces this today.** `migration:generate`
+  diffs entities against the database; it has no concept of "is this
+  change safe for the version currently running against this schema."
+  This section is operator/reviewer discipline, not a CI gate.
+- **Column backfills for a new `NOT NULL` column** (expand with a
+  default, backfill existing rows, *then* a later contract migration
+  adds the `NOT NULL` constraint once backfill is confirmed complete)
+  aren't automated by any job in this codebase — write the backfill as
+  part of the migration's own `up()` (batched, if the table is large
+  enough that a single `UPDATE` would hold a long lock) or as a
+  one-off script, on a case-by-case basis.
 
 ## Verification
 
@@ -123,4 +189,4 @@ the `pg_stat_statements` extension) — no application tables.
 - **Not yet verified**: an actual `docker build` + container run of the
   production image exercising this `CMD` end to end (only the underlying
   command was verified directly, not the full image build/run). Tracked in
-  [`infra-verification-status.md`](./infra-verification-status.md).
+  [`infra-verification-status.md`](./tests/infra-verification-status.md).

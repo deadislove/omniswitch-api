@@ -62,15 +62,32 @@ export class Payout {
      */
     kycVerified: boolean;
   }): Payout {
-    const reserveAmount = params.reserveBps > 0 ? params.grossAmount.multiply(params.reserveBps / 10_000) : Money.zero(params.grossAmount.currency.code);
+    const reserveAmount =
+      params.reserveBps > 0
+        ? params.grossAmount.multiply(params.reserveBps / 10_000)
+        : Money.zero(params.grossAmount.currency.code);
     const netAmount = params.grossAmount.subtract(reserveAmount);
     const now = new Date();
-    const releaseEligibleAt = reserveAmount.isZero() ? undefined : new Date(now.getTime() + params.reserveHoldDays * 24 * 60 * 60 * 1000);
+    const releaseEligibleAt = reserveAmount.isZero()
+      ? undefined
+      : new Date(now.getTime() + params.reserveHoldDays * 24 * 60 * 60 * 1000);
     return new Payout(
-      params.id, params.merchantId, params.sweepRunId, params.grossAmount, reserveAmount, netAmount,
-      releaseEligibleAt, false, undefined, now,
-      !params.kycVerified, undefined,
-      'NOT_INITIATED', undefined, undefined, undefined,
+      params.id,
+      params.merchantId,
+      params.sweepRunId,
+      params.grossAmount,
+      reserveAmount,
+      netAmount,
+      releaseEligibleAt,
+      false,
+      undefined,
+      now,
+      !params.kycVerified,
+      undefined,
+      'NOT_INITIATED',
+      undefined,
+      undefined,
+      undefined,
     );
   }
 
@@ -121,7 +138,9 @@ export class Payout {
       throw new Error(`Payout ${this._id}'s reserve is already released`);
     }
     if (!force && this._releaseEligibleAt && now < this._releaseEligibleAt) {
-      throw new Error(`Payout ${this._id}'s reserve is not yet eligible for release (eligible at ${this._releaseEligibleAt.toISOString()})`);
+      throw new Error(
+        `Payout ${this._id}'s reserve is not yet eligible for release (eligible at ${this._releaseEligibleAt.toISOString()})`,
+      );
     }
     this._reserveReleased = true;
     this._reserveReleasedAt = now;
@@ -166,22 +185,54 @@ export class Payout {
     this._transferError = error;
   }
 
-  get id(): string { return this._id; }
-  get merchantId(): string { return this._merchantId; }
-  get sweepRunId(): string { return this._sweepRunId; }
-  get grossAmount(): Money { return this._grossAmount; }
-  get reserveAmount(): Money { return this._reserveAmount; }
-  get netAmount(): Money { return this._netAmount; }
-  get releaseEligibleAt(): Date | undefined { return this._releaseEligibleAt; }
-  get reserveReleased(): boolean { return this._reserveReleased; }
-  get reserveReleasedAt(): Date | undefined { return this._reserveReleasedAt; }
-  get createdAt(): Date { return this._createdAt; }
-  get kycBlocked(): boolean { return this._kycBlocked; }
-  get kycClearedAt(): Date | undefined { return this._kycClearedAt; }
-  get transferStatus(): PayoutTransferStatus { return this._transferStatus; }
-  get transferId(): string | undefined { return this._transferId; }
-  get transferInitiatedAt(): Date | undefined { return this._transferInitiatedAt; }
-  get transferError(): string | undefined { return this._transferError; }
+  get id(): string {
+    return this._id;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get sweepRunId(): string {
+    return this._sweepRunId;
+  }
+  get grossAmount(): Money {
+    return this._grossAmount;
+  }
+  get reserveAmount(): Money {
+    return this._reserveAmount;
+  }
+  get netAmount(): Money {
+    return this._netAmount;
+  }
+  get releaseEligibleAt(): Date | undefined {
+    return this._releaseEligibleAt;
+  }
+  get reserveReleased(): boolean {
+    return this._reserveReleased;
+  }
+  get reserveReleasedAt(): Date | undefined {
+    return this._reserveReleasedAt;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get kycBlocked(): boolean {
+    return this._kycBlocked;
+  }
+  get kycClearedAt(): Date | undefined {
+    return this._kycClearedAt;
+  }
+  get transferStatus(): PayoutTransferStatus {
+    return this._transferStatus;
+  }
+  get transferId(): string | undefined {
+    return this._transferId;
+  }
+  get transferInitiatedAt(): Date | undefined {
+    return this._transferInitiatedAt;
+  }
+  get transferError(): string | undefined {
+    return this._transferError;
+  }
 
   get reserveStatus(): PayoutReserveStatus {
     if (this._reserveAmount.isZero()) return 'NONE';

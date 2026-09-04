@@ -16,11 +16,7 @@ const tracer = trace.getTracer('omniswitch-api');
  * exception — `fn`'s own rejection still propagates to the caller) so a
  * failed step is visible in a trace, not just a successful one.
  */
-export async function traced<T>(
-  spanName: string,
-  fn: () => Promise<T>,
-  attributes?: Attributes,
-): Promise<T> {
+export async function traced<T>(spanName: string, fn: () => Promise<T>, attributes?: Attributes): Promise<T> {
   return tracer.startActiveSpan(spanName, async (span) => {
     if (attributes) {
       span.setAttributes(attributes);

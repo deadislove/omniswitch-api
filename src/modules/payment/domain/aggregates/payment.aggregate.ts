@@ -197,9 +197,7 @@ export class PaymentAggregate {
       this._pspTransactionId = pspTransactionId;
     }
     this.transitionTo(PaymentStatus.REQUIRES_ACTION);
-    this.addDomainEvent(
-      new PaymentRequiresActionEvent(this._id, actionUrl, riskScore),
-    );
+    this.addDomainEvent(new PaymentRequiresActionEvent(this._id, actionUrl, riskScore));
   }
 
   completeThreeDS(result: ThreeDSResult): void {
@@ -294,9 +292,7 @@ export class PaymentAggregate {
     this._failureReason = reason;
     this._failureCode = errorCode;
     this.transitionTo(PaymentStatus.FAILED);
-    this.addDomainEvent(
-      new PaymentFailedEvent(this._id, reason, errorCode),
-    );
+    this.addDomainEvent(new PaymentFailedEvent(this._id, reason, errorCode));
   }
 
   markAmbiguous(reason: string, errorCode?: string): void {
@@ -304,9 +300,7 @@ export class PaymentAggregate {
     this._failureReason = reason;
     this._failureCode = errorCode;
     this.transitionTo(PaymentStatus.AMBIGUOUS);
-    this.addDomainEvent(
-      new PaymentAmbiguousEvent(this._id, reason, this._pspProvider),
-    );
+    this.addDomainEvent(new PaymentAmbiguousEvent(this._id, reason, this._pspProvider));
   }
 
   /**
@@ -343,26 +337,16 @@ export class PaymentAggregate {
     this.transitionTo(PaymentStatus.CANCELLED);
   }
 
-  refund(params: {
-    refundId: string;
-    amount: Money;
-    reason: string;
-    pspRefundId?: string;
-  }): void {
+  refund(params: { refundId: string; amount: Money; reason: string; pspRefundId?: string }): void {
     if (this._status !== PaymentStatus.SUCCEEDED && this._status !== PaymentStatus.PARTIALLY_REFUNDED) {
       throw new Error(`Cannot refund payment in status: ${this._status}`);
     }
 
-    const totalRefunded = this._refunds.reduce(
-      (sum, r) => sum.add(r.amount),
-      Money.zero(this._amount.currency.code),
-    );
+    const totalRefunded = this._refunds.reduce((sum, r) => sum.add(r.amount), Money.zero(this._amount.currency.code));
 
     const newTotal = totalRefunded.add(params.amount);
     if (newTotal.isGreaterThan(this._amount)) {
-      throw new Error(
-        `Refund amount ${params.amount.toString()} exceeds remaining refundable amount`,
-      );
+      throw new Error(`Refund amount ${params.amount.toString()} exceeds remaining refundable amount`);
     }
 
     this._refunds.push({
@@ -508,9 +492,7 @@ export class PaymentAggregate {
     const previousStatus = this._status;
     this._status = newStatus;
     this._updatedAt = new Date();
-    this.addDomainEvent(
-      new PaymentStatusChangedEvent(this._id, previousStatus, newStatus),
-    );
+    this.addDomainEvent(new PaymentStatusChangedEvent(this._id, previousStatus, newStatus));
   }
 
   private addDomainEvent(event: DomainEvent): void {
@@ -519,35 +501,78 @@ export class PaymentAggregate {
 
   // ─── Getters ────────────────────────────────────────────────────────────────
 
-  get id(): string { return this._id; }
-  get amount(): Money { return this._amount; }
-  get status(): PaymentStatus { return this._status; }
-  get idempotencyKey(): string { return this._idempotencyKey; }
-  get metadata(): PaymentMetadata { return this._metadata; }
-  get binInfo(): BinInfo | undefined { return this._binInfo; }
-  get pspProvider(): PSPProvider | undefined { return this._pspProvider; }
-  get pspTransactionId(): string | undefined { return this._pspTransactionId; }
-  get pspRawResponse(): Record<string, unknown> | undefined { return this._pspRawResponse; }
-  get riskScore(): number | undefined { return this._riskScore; }
-  get threeDSResult(): ThreeDSResult | undefined { return this._threeDSResult; }
-  get refunds(): RefundRecord[] { return [...this._refunds]; }
-  get captures(): CaptureRecord[] { return [...this._captures]; }
-  get failureReason(): string | undefined { return this._failureReason; }
-  get failureCode(): string | undefined { return this._failureCode; }
-  get createdAt(): Date { return this._createdAt; }
-  get updatedAt(): Date { return this._updatedAt; }
-  get settlementConversion(): SettlementConversion | undefined { return this._settlementConversion; }
-  get splits(): PaymentSplit[] | undefined { return this._splits; }
-  get ambiguousResolvedBy(): string | undefined { return this._ambiguousResolvedBy; }
-  get ambiguousResolvedReason(): string | undefined { return this._ambiguousResolvedReason; }
-  get ambiguousResolvedAt(): Date | undefined { return this._ambiguousResolvedAt; }
-  get ambiguousAutoRetryCount(): number { return this._ambiguousAutoRetryCount; }
+  get id(): string {
+    return this._id;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get status(): PaymentStatus {
+    return this._status;
+  }
+  get idempotencyKey(): string {
+    return this._idempotencyKey;
+  }
+  get metadata(): PaymentMetadata {
+    return this._metadata;
+  }
+  get binInfo(): BinInfo | undefined {
+    return this._binInfo;
+  }
+  get pspProvider(): PSPProvider | undefined {
+    return this._pspProvider;
+  }
+  get pspTransactionId(): string | undefined {
+    return this._pspTransactionId;
+  }
+  get pspRawResponse(): Record<string, unknown> | undefined {
+    return this._pspRawResponse;
+  }
+  get riskScore(): number | undefined {
+    return this._riskScore;
+  }
+  get threeDSResult(): ThreeDSResult | undefined {
+    return this._threeDSResult;
+  }
+  get refunds(): RefundRecord[] {
+    return [...this._refunds];
+  }
+  get captures(): CaptureRecord[] {
+    return [...this._captures];
+  }
+  get failureReason(): string | undefined {
+    return this._failureReason;
+  }
+  get failureCode(): string | undefined {
+    return this._failureCode;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+  get settlementConversion(): SettlementConversion | undefined {
+    return this._settlementConversion;
+  }
+  get splits(): PaymentSplit[] | undefined {
+    return this._splits;
+  }
+  get ambiguousResolvedBy(): string | undefined {
+    return this._ambiguousResolvedBy;
+  }
+  get ambiguousResolvedReason(): string | undefined {
+    return this._ambiguousResolvedReason;
+  }
+  get ambiguousResolvedAt(): Date | undefined {
+    return this._ambiguousResolvedAt;
+  }
+  get ambiguousAutoRetryCount(): number {
+    return this._ambiguousAutoRetryCount;
+  }
 
   get totalRefunded(): Money {
-    return this._refunds.reduce(
-      (sum, r) => sum.add(r.amount),
-      Money.zero(this._amount.currency.code),
-    );
+    return this._refunds.reduce((sum, r) => sum.add(r.amount), Money.zero(this._amount.currency.code));
   }
 
   get remainingRefundable(): Money {
@@ -555,10 +580,7 @@ export class PaymentAggregate {
   }
 
   get totalCaptured(): Money {
-    return this._captures.reduce(
-      (sum, c) => sum.add(c.amount),
-      Money.zero(this._amount.currency.code),
-    );
+    return this._captures.reduce((sum, c) => sum.add(c.amount), Money.zero(this._amount.currency.code));
   }
 
   get remainingCapturable(): Money {

@@ -266,7 +266,7 @@ directly in `PaymentModule` or `MerchantModule`.
 | Hexagonal (Ports & Adapters) | `payment/ports` vs `payment/adapters` | Domain and application logic depend on interfaces (`PSPAdapterPort`, `PaymentRepositoryPort`), never on TypeORM or a specific PSP's SDK directly |
 | Factory | `PaymentProcessorFactory` | Selects Stripe vs. Adyen at runtime based on `SmartRoutingStrategy`'s decision, with automatic fallback if the primary PSP fails |
 | Saga (orchestration, not choreography) | `PaymentCheckoutSaga` | Multi-step checkout (create intent → risk check → route → charge → confirm) with explicit compensating actions on failure |
-| Transactional Outbox | `LedgerOutboxEvent` + `LedgerOutboxRelayService` | Ledger entries are written atomically with the payment state change that confirms them, then relayed asynchronously by a cron job — see `docs/business-domain/ledger-and-settlement.md` for why *when* they're written matters |
+| Transactional Outbox | `LedgerOutboxEvent` + `LedgerOutboxRelayService` | Ledger entries are written atomically with the payment state change that confirms them, then relayed asynchronously by a cron job — see `docs/business-domain/ledger-accounting.md` for why *when* they're written matters |
 | Repository | `PaymentTypeOrmRepository`, `MerchantService` | Isolates persistence details from application services |
 | Recurring sweep + on-demand trigger | `LedgerOutboxRelayService`, `ReconciliationService`, `ReserveService`, `SubscriptionService`, `RiskTieringService`, `PayoutService` (payout batching, reserve release, KYC-block recheck, and transfer initiation are each their own sweep), `AmbiguousPaymentService` (auto-resolution and stale-alert sweeps), `AmbiguousRiskMonitoringService` (auto-clear sweep) | Each pairs a `@Cron` schedule with an admin `POST .../run` endpoint doing the exact same work — an operator (or a test) doesn't have to wait for the schedule, and there's exactly one code path to reason about, not two. Every one of these is also individually resilient to a single item's failure (a per-item `try/catch` inside the sweep loop) — one bad subscription/reserve/merchant/payout doesn't abort the whole batch |
 | Atomic conditional update (race-safe state transition) | `ReserveHoldPort.markReserveReleased()`, `PayoutPort.markKycCleared()`/`markTransferInitiated()`, `DelegationPort.tryReserveSpend()` | A single `UPDATE ... WHERE <preconditions>` (returning affected-row count, or a computed `RETURNING`) instead of a read-then-write — so two concurrent callers (an operator's manual action racing a scheduled sweep, or two concurrent agent charges against the same delegation) can't both succeed past a limit or double-apply a transition |
@@ -335,16 +335,16 @@ npm run test:e2e
 `docker-compose.yml`'s service credentials exactly, so no extra
 configuration is needed for that workflow. Every default can be overridden
 via real environment variables (e.g. in CI, pointing at service containers
-on different hosts/ports). Test files run with `maxWorkers: 1` — each spec
-file boots its own full `AppModule` instance against the same shared
-Postgres/Redis/Redis-backed rate limiter, and running them concurrently
-risks cross-file interference on that shared state (e.g. two files'
-merchants racing the same IP-scoped rate-limit bucket); sequential
-execution trades a bit of wall-clock time for determinism, which matters
-more here. This does mean the *whole* e2e run's request volume shares one
-60-second rate-limit window, not one per file — see `test/setup-env.ts`'s
-`RATE_LIMIT_MAX` comment for a real instance of this biting a spec file
-that had nothing to do with rate limiting.
+on different hosts/ports). Test files run with `maxWorkers: "50%"` —
+each spec file boots its own full `AppModule` instance against the same
+shared Postgres/Redis, so `test/setup-env.ts` gives each Jest worker its
+own logical Redis DB (keyed by `JEST_WORKER_ID`) and a larger DB
+connection pool (`DB_POOL_MAX=15`) to avoid concurrent workers racing
+each other's rate-limit bucket/circuit-breaker state or exhausting
+Postgres's connection limit. `"50%"` (half the host's detected cores),
+not a fixed number — see `docs/technical/ci-cd.md`'s "Parallelizing e2e
+workers" section for the measured host-CPU-contention root cause a fixed
+worker count ran into, and why adaptive sizing is the actual fix.
 
 `test/utils/` has the shared plumbing: `test-app.ts` (bootstrap),
 `seed.ts` (merchant creation + login through the real `/auth/token`
@@ -358,12 +358,35 @@ helpers matching exactly what the guards being tested verify).
 - [`../business-domain/payment-lifecycle.md`](../business-domain/payment-lifecycle.md) —
   the payment state machine and how charge/refund/capture/cancel/webhooks
   move a payment through it
+- [`../business-domain/ledger-accounting.md`](../business-domain/ledger-accounting.md) —
+  the double-entry bookkeeping model and the outbox pattern
+- [`../business-domain/fee-model.md`](../business-domain/fee-model.md) —
+  platform fee rate, volume tiers, and PSP interchange cost reconciliation
+- [`../business-domain/fx-conversion.md`](../business-domain/fx-conversion.md) —
+  merchant settlement currency, refund/dispute rate replay, presentment
+  currency
+- [`../business-domain/marketplace-and-payouts.md`](../business-domain/marketplace-and-payouts.md) —
+  marketplace splits, payout scheduling, KYC gating, transfer initiation
 - [`../business-domain/ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md) —
-  double-entry bookkeeping model, smart routing/fee logic, FX conversion,
-  merchant reserves, automatic risk-tier adjustment
+  smart PSP routing/circuit breaker, reconciliation, merchant reserves,
+  automatic risk-tier adjustment
 - [`../business-domain/subscriptions.md`](../business-domain/subscriptions.md) —
   the subscription state machine, billing/dunning/crash-recovery design,
   and what's deliberately simplified
+- [`../business-domain/disputes.md`](../business-domain/disputes.md) —
+  the dispute state machine, the auto-decision policy (`ACCEPT`/`CONTEST`/
+  `MANUAL_REVIEW`) and why `fraudulent` is deliberately excluded from
+  auto-contest
+- [`../business-domain/risk-and-fraud.md`](../business-domain/risk-and-fraud.md) —
+  the two independent risk signals this platform tracks per merchant
+  (chargeback-driven reserve tiering, and ambiguous-payment PSP-reliability
+  monitoring) and why they're kept separate
+- [`../business-domain/compliance-and-security.md`](../business-domain/compliance-and-security.md) —
+  why PCI DSS scope, AML/KYC, and delegation-liability considerations
+  shaped specific domain-model decisions (tokenization, the KYC
+  payout-vs-charge gate, delegation scope); the business-framing
+  counterpart to this document's own security section and
+  `compliance-certification-roadmap.md`
 - [`database-migrations.md`](./database-migrations.md) — the migration
   workflow, and why every entity has to be registered in both
   `app.module.ts` *and* `database/data-source.ts`
@@ -385,3 +408,37 @@ helpers matching exactly what the guards being tested verify).
 - [`incident-response.md`](./incident-response.md) — what each Prometheus
   alert in [`monitoring/alert.rules.yml`](../../monitoring/alert.rules.yml)
   means and the admin endpoint/service method that actually addresses it
+- [`chaos-testing.md`](./tests/chaos-testing.md) — real fault injection
+  (`scripts/chaos/`) against the docker-compose stack: PSP outage, Redis
+  outage, Postgres primary outage, and what each one actually found
+- [`contract-testing.md`](./tests/contract-testing.md) — `test/contract/`,
+  verifying `StripePSPAdapter`/`AdyenPSPAdapter` against the real
+  Stripe/Adyen test-mode APIs instead of mock-psp; framework only, never
+  executed in this repo (no sandbox credentials available)
+- [`disaster-recovery.md`](./disaster-recovery.md) — the multi-region/
+  cross-AZ failover design (topology, RTO/RPO targets, per-component
+  plan, the failover drill runbook) and today's real single-region
+  posture; strategy documented, never drilled against real
+  infrastructure (no second region/cluster available)
+- [`api-versioning-policy.md`](./api-versioning-policy.md) — the
+  deprecation SLA for `VersioningType.URI` routes, and `@Deprecated()`
+  (`src/shared/decorators/deprecated.decorator.ts`), a real, tested
+  mechanism that adds RFC 8594 `Sunset`/`Deprecation`/`Link` headers —
+  not yet applied to any real route, since nothing is deprecated today
+- [`service-boundaries.md`](./service-boundaries.md) — evaluates
+  splitting the modular monolith into Ledger/Routing/Risk services: what
+  each would own, why `PaymentCheckoutSaga`'s own dependency list is the
+  central coupling fact any split has to reckon with, and why the
+  recommendation is not to do this yet
+- [`compliance-certification-roadmap.md`](./compliance-certification-roadmap.md) —
+  the SOC 2 certification path (Trust Service Criteria, what this repo
+  already has real evidence for vs. what's organizational-only and can't
+  come from code), plus a concrete ASV-scan/penetration-test budget and
+  cadence; PCI DSS specifics stay in
+  [`security-and-compliance.md`](./security-and-compliance.md#pci-dss-compliance)
+- [`threshold-calibration.md`](./tests/threshold-calibration.md) —
+  `scripts/calibration/`, which runs an actual precision/recall (risk
+  tiering) and break-even (dispute auto-accept) calibration against a
+  generated, seeded-reproducible synthetic dataset, since no real fraud/
+  chargeback history exists in this repo; real, reproducible numbers,
+  not just a description of the method

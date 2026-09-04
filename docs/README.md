@@ -19,72 +19,10 @@ engineer needs before their first PR.
 
 ## [`technical/`](./technical/)
 
-How the system is built — architecture, module boundaries, security design,
-compliance posture. Read this if you're changing code.
-
-- [`architecture.md`](./technical/architecture.md) — module map, design
-  patterns, why the module dependency graph is shaped the way it is, and
-  the end-to-end testing strategy
-- [`security-and-compliance.md`](./technical/security-and-compliance.md) —
-  JWT revocation design and trade-offs, PCI DSS scope/gaps, and the
-  recommended path if this project ever goes through formal PCI
-  certification
-- [`distributed-state.md`](./technical/distributed-state.md) — rate
-  limiting and circuit breaker design once this runs as multiple replicas
-  (including a real debugging story worth reading before touching
-  either), plus a documented, still-open gap: `@Cron` jobs run
-  per-replica, not once per cluster — read this before adding a new one
-- [`infra-verification-status.md`](./technical/infra-verification-status.md) —
-  what's actually been proven to work in `docker-compose.yml` (mock-psp,
-  Postgres replication, port conflicts) versus what's still an unverified
-  assumption — read this before trusting a green e2e run more than it's
-  earned
-- [`database-migrations.md`](./technical/database-migrations.md) — why
-  `synchronize` is now `false` everywhere, the migration workflow, and a
-  real bug (invalid MySQL-style SQL in the master's init script) that only
-  surfaced once this required a genuinely fresh database
-- [`secret-management.md`](./technical/secret-management.md) — why
-  `hmac_secret` is now envelope-encrypted via Vault Transit instead of
-  plaintext in Postgres, what dev-mode Vault does and doesn't prove, and a
-  real bug (no `.dockerignore`) it surfaced along the way
-- [`reconciliation.md`](./technical/reconciliation.md) — how this system's
-  ledger is diffed against each PSP's own settlement report, and a real
-  pre-existing timezone bug (raw `Date` objects silently shifted by the
-  host machine's local offset) it surfaced in the query layer
-- [`load-testing.md`](./technical/load-testing.md) — a real throughput/
-  latency baseline against the actual production Docker image, what it
-  means for `k8s/hpa.yaml`'s CPU/memory thresholds, and why a
-  single-machine load generator can't measure the charge endpoint's own
-  ceiling (a route-level rate limit gets there first)
-- [`ci-cd.md`](./technical/ci-cd.md) — what the GitHub Actions workflows
-  and Dependabot actually do, the known flaky-test classes, and two real
-  CI incidents: a master/replica read race a routine dependency-bump PR
-  surfaced, and a heap-flake fix that passed locally three times and then
-  broke 61 tests on the actual CI runner
-- [`jobs.md`](./technical/jobs.md) — architecture of the background-job
-  subsystem (archiving, deletion, partition maintenance, cutover
-  cleanup): why they're standalone scripts run as k8s `CronJob`/`Job`
-  resources instead of `@Cron()` methods, the `BackupStorage` factory
-  pattern, and pod labeling
-- [`databases/`](./technical/databases/) — the ERD and table-by-table
-  schema reference, the physical database architecture
-  (master/replica replication, PgBouncer pooling, table partitioning,
-  the `archive` schema), and an index of recurring/one-time database
-  maintenance tasks
-- [`clouds/`](./technical/clouds/) — the pluggable AWS S3/GCS/Azure
-  Blob `BackupStorage` adapters the deletion job can write to:
-  configuration, credentials, and what's been (and hasn't been)
-  verified against real cloud infrastructure
-- [`k8s/`](./technical/k8s/) — what every manifest in the repo's `k8s/`
-  folder actually does: the Postgres/Redis/Vault/PgBouncer data layer,
-  the application Deployment/Service/HPA/config, and the
-  `NetworkPolicy`/Ingress/TLS networking model — including real bugs
-  each one surfaced only once actually deployed to a live cluster
-- [`deployment/`](./technical/deployment/) — how to actually get `k8s/`
-  running: cluster prerequisites it assumes (ingress-nginx, cert-manager,
-  a `StorageClass`), the apply order, a table of silent-failure gotchas,
-  a full runbook, and how to stand up a temporary mock-PSP test
-  environment on top of a real deployment
+How the system is built — architecture, data & jobs, compliance &
+security, operations & reliability, deployment, and testing
+methodology. Read this if you're changing code. See
+[`technical/README.md`](./technical/README.md) for the full index.
 
 ## [`business-domain/`](./business-domain/)
 
@@ -96,8 +34,26 @@ to payments domain concepts generally.
 - [`payment-lifecycle.md`](./business-domain/payment-lifecycle.md) — the
   payment state machine, what triggers each transition, idempotency
 - [`ledger-and-settlement.md`](./business-domain/ledger-and-settlement.md) —
-  double-entry bookkeeping model, the Outbox pattern, smart PSP routing,
-  fee model, FX settlement conversion, merchant risk reserves
+  smart PSP routing, PSP-cost reconciliation, merchant risk tiering &
+  reserves — see also the four topics split into their own files below
+- [`ledger-accounting.md`](./business-domain/ledger-accounting.md) —
+  the double-entry bookkeeping model and the Outbox pattern that
+  publishes it reliably
+- [`fee-model.md`](./business-domain/fee-model.md) — platform fee-rate
+  calculation and PSP interchange-cost reconciliation
+- [`fx-conversion.md`](./business-domain/fx-conversion.md) — cross-currency
+  merchant settlement, refund/dispute FX replay, presentment currency
+- [`marketplace-and-payouts.md`](./business-domain/marketplace-and-payouts.md) —
+  marketplace splits, payout scheduling, connected-account KYC gating
+- [`disputes.md`](./business-domain/disputes.md) — the dispute state
+  machine, representment, and the auto-decision policy that decides
+  whether this platform contests one automatically
+- [`risk-and-fraud.md`](./business-domain/risk-and-fraud.md) — the two
+  independent risk signals this platform tracks per merchant: reserve-driving
+  risk tiering and ambiguous-payment (PSP-reliability) monitoring
+- [`compliance-and-security.md`](./business-domain/compliance-and-security.md) —
+  why PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
+  delegation scope are business decisions, not just engineering choices
 - [`subscriptions.md`](./business-domain/subscriptions.md) — the
   subscription state machine, how billing/dunning/crash-recovery/plan
   catalog & proration/trial-verification work, and what's still

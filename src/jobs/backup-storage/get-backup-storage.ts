@@ -56,7 +56,9 @@ export function getBackupStorage(): BackupStorage {
       const connectionString = process.env.DELETION_BACKUP_AZURE_CONNECTION_STRING;
       const container = process.env.DELETION_BACKUP_AZURE_CONTAINER;
       if (!connectionString || !container) {
-        throw new Error('DELETION_BACKUP_STORAGE=azure requires DELETION_BACKUP_AZURE_CONNECTION_STRING and DELETION_BACKUP_AZURE_CONTAINER');
+        throw new Error(
+          'DELETION_BACKUP_STORAGE=azure requires DELETION_BACKUP_AZURE_CONNECTION_STRING and DELETION_BACKUP_AZURE_CONTAINER',
+        );
       }
       return new AzureBlobBackupStorage(connectionString, container);
     }

@@ -23,14 +23,13 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('Marketplace & split payments (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -80,7 +79,11 @@ describe('Marketplace & split payments (e2e)', () => {
     return (event?.entries as any[]) ?? [];
   }
 
-  async function platformWithConnected(): Promise<{ platform: SeededMerchant; platformToken: string; connected: SeededMerchant }> {
+  async function platformWithConnected(): Promise<{
+    platform: SeededMerchant;
+    platformToken: string;
+    connected: SeededMerchant;
+  }> {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platform') });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {
@@ -104,7 +107,13 @@ describe('Marketplace & split payments (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/admin/merchants')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ merchantId: connectedId, name: 'Seller', roles: ['MERCHANT'], accountType: 'CONNECTED', platformMerchantId: platformId })
+        .send({
+          merchantId: connectedId,
+          name: 'Seller',
+          roles: ['MERCHANT'],
+          accountType: 'CONNECTED',
+          platformMerchantId: platformId,
+        })
         .expect(201);
       expect(res.body.accountType).toBe('CONNECTED');
       expect(res.body.platformMerchantId).toBe(platformId);
@@ -133,7 +142,13 @@ describe('Marketplace & split payments (e2e)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/admin/merchants')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ merchantId: uniqueId('orphan-connected'), name: 'Orphan', roles: ['MERCHANT'], accountType: 'CONNECTED', platformMerchantId: uniqueId('nonexistent') })
+        .send({
+          merchantId: uniqueId('orphan-connected'),
+          name: 'Orphan',
+          roles: ['MERCHANT'],
+          accountType: 'CONNECTED',
+          platformMerchantId: uniqueId('nonexistent'),
+        })
         .expect(404);
     });
 
@@ -142,7 +157,13 @@ describe('Marketplace & split payments (e2e)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/admin/merchants')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ merchantId: uniqueId('grandchild'), name: 'Grandchild', roles: ['MERCHANT'], accountType: 'CONNECTED', platformMerchantId: connected.merchantId })
+        .send({
+          merchantId: uniqueId('grandchild'),
+          name: 'Grandchild',
+          roles: ['MERCHANT'],
+          accountType: 'CONNECTED',
+          platformMerchantId: connected.merchantId,
+        })
         .expect(409);
     });
   });
@@ -177,7 +198,8 @@ describe('Marketplace & split payments (e2e)', () => {
     // PSP_SETTLEMENT debit.
     const debit = entries.find((e) => e.accountType === 'PSP_SETTLEMENT');
     const fee = entries.find((e) => e.accountType === 'FEE');
-    const creditTotal = BigInt(connectedCredit.amountMinorUnits) + BigInt(platformCredit.amountMinorUnits) + BigInt(fee.amountMinorUnits);
+    const creditTotal =
+      BigInt(connectedCredit.amountMinorUnits) + BigInt(platformCredit.amountMinorUnits) + BigInt(fee.amountMinorUnits);
     expect(creditTotal.toString()).toBe(debit.amountMinorUnits);
   });
 

@@ -127,7 +127,9 @@ export class MfaService {
       if (await bcrypt.compare(code, merchant.mfaBackupCodeHashes[i])) {
         merchant.mfaBackupCodeHashes = merchant.mfaBackupCodeHashes.filter((_, idx) => idx !== i);
         await this.merchantRepo.save(merchant);
-        this.logger.warn(`Merchant ${merchantId} used a backup code — ${merchant.mfaBackupCodeHashes.length} remaining`);
+        this.logger.warn(
+          `Merchant ${merchantId} used a backup code — ${merchant.mfaBackupCodeHashes.length} remaining`,
+        );
         return;
       }
     }

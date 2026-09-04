@@ -74,7 +74,9 @@ export abstract class PaymentRepositoryPort {
    * can't drift from it, the same reasoning the existing PSP health/outbox
    * backlog gauges already use.
    */
-  abstract countByStatusAndProvider(): Promise<{ status: PaymentStatus; pspProvider: PSPProvider | null; count: number }[]>;
+  abstract countByStatusAndProvider(): Promise<
+    { status: PaymentStatus; pspProvider: PSPProvider | null; count: number }[]
+  >;
 
   /**
    * Total SUCCEEDED charge volume for a merchant, in a specific currency,
@@ -139,5 +141,8 @@ export abstract class PaymentRepositoryPort {
    * human already resolved manually is naturally excluded: its status is
    * no longer `AMBIGUOUS` once AmbiguousPaymentService.resolve() runs.
    */
-  abstract findAmbiguousEligibleForAutoResolution(maxAttempts: number, minAgeMinutes: number): Promise<PaymentAggregate[]>;
+  abstract findAmbiguousEligibleForAutoResolution(
+    maxAttempts: number,
+    minAgeMinutes: number,
+  ): Promise<PaymentAggregate[]>;
 }

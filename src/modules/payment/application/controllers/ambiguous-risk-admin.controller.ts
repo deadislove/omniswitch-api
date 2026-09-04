@@ -6,7 +6,11 @@ import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
 import { MerchantService } from '../../../merchant/merchant.service';
 import { toSummary } from '../../../merchant/merchant-admin.controller';
 import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
-import { UpdateAmbiguousRiskFlagDto, UpdateAmbiguousRiskAutoDto, MerchantSummaryDto } from '../../../merchant/dto/create-merchant.dto';
+import {
+  UpdateAmbiguousRiskFlagDto,
+  UpdateAmbiguousRiskAutoDto,
+  MerchantSummaryDto,
+} from '../../../merchant/dto/create-merchant.dto';
 
 /**
  * Ambiguous Risk Admin Controller — see AmbiguousRiskMonitoringService's
@@ -26,26 +30,47 @@ export class AmbiguousRiskAdminController {
   ) {}
 
   @Patch(':merchantId/ambiguous-risk')
-  @ApiOperation({ summary: 'Manually flag or clear a merchant\'s ambiguous-risk observation status — reason is required and, along with the acting admin/operator\'s identity, is recorded as a permanent audit trail. Disables ambiguousRiskAutoManaged as a side effect, same "manual input pauses automation" behavior as PATCH .../risk-tier-auto.' })
+  @ApiOperation({
+    summary:
+      'Manually flag or clear a merchant\'s ambiguous-risk observation status — reason is required and, along with the acting admin/operator\'s identity, is recorded as a permanent audit trail. Disables ambiguousRiskAutoManaged as a side effect, same "manual input pauses automation" behavior as PATCH .../risk-tier-auto.',
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async setFlag(@Param('merchantId') merchantId: string, @Body() dto: UpdateAmbiguousRiskFlagDto, @Req() req: any): Promise<MerchantSummaryDto> {
-    const merchant = await this.merchantService.setAmbiguousRiskFlagManual(merchantId, dto.flagged, dto.reason, req.user.merchantId);
+  async setFlag(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateAmbiguousRiskFlagDto,
+    @Req() req: any,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.setAmbiguousRiskFlagManual(
+      merchantId,
+      dto.flagged,
+      dto.reason,
+      req.user.merchantId,
+    );
     return toSummary(merchant);
   }
 
   @Patch(':merchantId/ambiguous-risk-auto')
-  @ApiOperation({ summary: 'Re-enable AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic for this merchant, after a manual PATCH .../ambiguous-risk disabled it.' })
+  @ApiOperation({
+    summary:
+      "Re-enable AmbiguousRiskMonitoringService's automated flag/auto-clear logic for this merchant, after a manual PATCH .../ambiguous-risk disabled it.",
+  })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
-  async setAutoManaged(@Param('merchantId') merchantId: string, @Body() dto: UpdateAmbiguousRiskAutoDto): Promise<MerchantSummaryDto> {
+  async setAutoManaged(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateAmbiguousRiskAutoDto,
+  ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.setAmbiguousRiskAutoManaged(merchantId, dto.enabled);
     return toSummary(merchant);
   }
 
   @Post('ambiguous-risk/run-auto-clear')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Trigger the daily auto-clear sweep on demand — the same logic the 3am @Cron runs, without waiting for the schedule. Only clears merchants with ambiguousRiskAutoManaged: true whose most recent AMBIGUOUS incident is older than AMBIGUOUS_RISK_AUTO_CLEAR_DAYS.' })
+  @ApiOperation({
+    summary:
+      'Trigger the daily auto-clear sweep on demand — the same logic the 3am @Cron runs, without waiting for the schedule. Only clears merchants with ambiguousRiskAutoManaged: true whose most recent AMBIGUOUS incident is older than AMBIGUOUS_RISK_AUTO_CLEAR_DAYS.',
+  })
   @ApiResponse({ status: 200, description: '{ cleared: number }' })
   async runAutoClear(): Promise<{ cleared: number }> {
     return this.ambiguousRiskMonitoring.runAutoClearSweep();

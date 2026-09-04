@@ -1,7 +1,13 @@
-import { PaymentAggregate, PSPProvider, ThreeDSResult, RefundRecord, CaptureRecord, PaymentSplit } from '../../../domain/aggregates/payment.aggregate';
+import {
+  PaymentAggregate,
+  PSPProvider,
+  ThreeDSResult,
+  RefundRecord,
+  CaptureRecord,
+  PaymentSplit,
+} from '../../../domain/aggregates/payment.aggregate';
 import { PaymentEntity } from '../entities/payment.entity';
 import { Money } from '../../../domain/value-objects/money.vo';
-import { Currency } from '../../../domain/value-objects/currency.vo';
 import { PaymentStatus } from '../../../domain/value-objects/payment-status.vo';
 import { BinInfo, CardBrand, CardType } from '../../../domain/value-objects/bin-info.vo';
 
@@ -12,12 +18,7 @@ import { BinInfo, CardBrand, CardType } from '../../../domain/value-objects/bin-
  */
 export class PaymentMapper {
   static toDomain(entity: PaymentEntity): PaymentAggregate {
-    const currency = Currency.of(entity.currencyCode);
-    const amount = Money.fromMinorUnits(
-      BigInt(entity.amountMinorUnits),
-      entity.currencyCode,
-      entity.fxSnapshot as any,
-    );
+    const amount = Money.fromMinorUnits(BigInt(entity.amountMinorUnits), entity.currencyCode, entity.fxSnapshot as any);
 
     let binInfo: BinInfo | undefined;
     if (entity.binInfo) {
@@ -47,7 +48,10 @@ export class PaymentMapper {
     }));
 
     const splits: PaymentSplit[] | undefined = entity.splits
-      ? entity.splits.map((s) => ({ merchantId: s.merchantId, amount: Money.fromMinorUnits(BigInt(s.amountMinorUnits), s.currencyCode) }))
+      ? entity.splits.map((s) => ({
+          merchantId: s.merchantId,
+          amount: Money.fromMinorUnits(BigInt(s.amountMinorUnits), s.currencyCode),
+        }))
       : undefined;
 
     return PaymentAggregate.reconstitute({
