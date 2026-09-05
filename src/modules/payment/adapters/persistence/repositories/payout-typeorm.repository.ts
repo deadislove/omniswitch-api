@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { PayoutPort, FindPayoutsFilter } from '../../../ports/outbound/payout.port';
 import { Payout } from '../../../domain/aggregates/payout.aggregate';
 import { PayoutSweepRun } from '../../../domain/aggregates/payout-sweep-run.aggregate';
@@ -15,6 +15,7 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     private readonly payoutRepo: Repository<PayoutEntity>,
     @InjectRepository(PayoutSweepRunEntity)
     private readonly sweepRunRepo: Repository<PayoutSweepRunEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async save(payout: Payout): Promise<void> {
@@ -35,6 +36,10 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     entity.transferId = payout.transferId ?? null;
     entity.transferInitiatedAt = payout.transferInitiatedAt ?? null;
     entity.transferError = payout.transferError ?? null;
+    entity.reserveTransferStatus = payout.reserveTransferStatus;
+    entity.reserveTransferId = payout.reserveTransferId ?? null;
+    entity.reserveTransferInitiatedAt = payout.reserveTransferInitiatedAt ?? null;
+    entity.reserveTransferError = payout.reserveTransferError ?? null;
     await this.payoutRepo.save(entity);
   }
 
@@ -101,10 +106,26 @@ export class PayoutTypeOrmRepository implements PayoutPort {
       .createQueryBuilder('p')
       .where('p.kycBlocked = false')
       .andWhere('p.netAmountMinorUnits > 0')
-      .andWhere('p.transferStatus != :initiated', { initiated: 'INITIATED' })
+      .andWhere('p.transferStatus NOT IN (:...excluded)', { excluded: ['INITIATED', 'PENDING_CONFIRMATION'] })
       .orderBy('p.createdAt', 'ASC')
       .getMany();
     return entities.map((e) => this.toDomain(e));
+  }
+
+  async markTransferPending(id: string, transferId: string, submittedAt: Date): Promise<boolean> {
+    const result = await this.payoutRepo
+      .createQueryBuilder()
+      .update(PayoutEntity)
+      .set({
+        transferStatus: 'PENDING_CONFIRMATION',
+        transferId,
+        transferInitiatedAt: submittedAt,
+        transferError: () => 'NULL',
+      })
+      .where('id = :id', { id })
+      .andWhere('transferStatus NOT IN (:...excluded)', { excluded: ['INITIATED', 'PENDING_CONFIRMATION'] })
+      .execute();
+    return (result.affected ?? 0) > 0;
   }
 
   async markTransferInitiated(id: string, transferId: string, initiatedAt: Date): Promise<boolean> {
@@ -122,6 +143,64 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     await this.payoutRepo.update(id, { transferStatus: 'FAILED', transferError: error });
   }
 
+  async findByTransferId(transferId: string): Promise<Payout | null> {
+    const entity = await this.payoutRepo.findOne({ where: { transferId } });
+    return entity ? this.toDomain(entity) : null;
+  }
+
+  async findReserveTransferEligible(): Promise<Payout[]> {
+    const entities = await this.payoutRepo
+      .createQueryBuilder('p')
+      .where('p.kycBlocked = false')
+      .andWhere('p.reserveReleased = true')
+      .andWhere('p.reserveAmountMinorUnits > 0')
+      .andWhere('p.reserveTransferStatus NOT IN (:...excluded)', { excluded: ['INITIATED', 'PENDING_CONFIRMATION'] })
+      .orderBy('p.reserveReleasedAt', 'ASC')
+      .getMany();
+    return entities.map((e) => this.toDomain(e));
+  }
+
+  async markReserveTransferPending(id: string, transferId: string, submittedAt: Date): Promise<boolean> {
+    const result = await this.payoutRepo
+      .createQueryBuilder()
+      .update(PayoutEntity)
+      .set({
+        reserveTransferStatus: 'PENDING_CONFIRMATION',
+        reserveTransferId: transferId,
+        reserveTransferInitiatedAt: submittedAt,
+        reserveTransferError: () => 'NULL',
+      })
+      .where('id = :id', { id })
+      .andWhere('reserveTransferStatus NOT IN (:...excluded)', { excluded: ['INITIATED', 'PENDING_CONFIRMATION'] })
+      .execute();
+    return (result.affected ?? 0) > 0;
+  }
+
+  async markReserveTransferInitiated(id: string, transferId: string, initiatedAt: Date): Promise<boolean> {
+    const result = await this.payoutRepo
+      .createQueryBuilder()
+      .update(PayoutEntity)
+      .set({
+        reserveTransferStatus: 'INITIATED',
+        reserveTransferId: transferId,
+        reserveTransferInitiatedAt: initiatedAt,
+        reserveTransferError: () => 'NULL',
+      })
+      .where('id = :id', { id })
+      .andWhere('reserveTransferStatus != :initiated', { initiated: 'INITIATED' })
+      .execute();
+    return (result.affected ?? 0) > 0;
+  }
+
+  async markReserveTransferFailed(id: string, error: string): Promise<void> {
+    await this.payoutRepo.update(id, { reserveTransferStatus: 'FAILED', reserveTransferError: error });
+  }
+
+  async findByReserveTransferId(transferId: string): Promise<Payout | null> {
+    const entity = await this.payoutRepo.findOne({ where: { reserveTransferId: transferId } });
+    return entity ? this.toDomain(entity) : null;
+  }
+
   async saveSweepRun(run: PayoutSweepRun): Promise<void> {
     const entity = new PayoutSweepRunEntity();
     entity.id = run.id;
@@ -132,8 +211,23 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     await this.sweepRunRepo.save(entity);
   }
 
+  // Forced onto master, same reasoning as MerchantService's
+  // findMerchantOnMaster()/list() — this gates runSweepLocked()'s
+  // windowStart. The SETNX lock in PayoutService.runSweep() only
+  // serializes concurrent sweeps against each other; it doesn't stop a
+  // *later*, already-serialized sweep from reading a stale (pre-replication)
+  // "no prior run" here and re-processing a window the previous sweep
+  // already paid out — a real duplicate Payout, not just a stale read.
+  // Confirmed via a real e2e failure (marketplace-payouts.e2e-spec.ts)
+  // that only reproduced under concurrent e2e load, never in isolation.
   async findLatestSweepRun(): Promise<PayoutSweepRun | null> {
-    const entity = await this.sweepRunRepo.findOne({ where: {}, order: { windowEnd: 'DESC' } });
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entity: PayoutSweepRunEntity | null;
+    try {
+      entity = await queryRunner.manager.findOne(PayoutSweepRunEntity, { where: {}, order: { windowEnd: 'DESC' } });
+    } finally {
+      await queryRunner.release();
+    }
     return entity
       ? PayoutSweepRun.reconstitute({
           id: entity.id,
@@ -163,6 +257,10 @@ export class PayoutTypeOrmRepository implements PayoutPort {
       transferId: entity.transferId ?? undefined,
       transferInitiatedAt: entity.transferInitiatedAt ?? undefined,
       transferError: entity.transferError ?? undefined,
+      reserveTransferStatus: entity.reserveTransferStatus,
+      reserveTransferId: entity.reserveTransferId ?? undefined,
+      reserveTransferInitiatedAt: entity.reserveTransferInitiatedAt ?? undefined,
+      reserveTransferError: entity.reserveTransferError ?? undefined,
     });
   }
 }

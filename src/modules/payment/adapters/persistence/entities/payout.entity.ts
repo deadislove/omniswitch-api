@@ -45,6 +45,7 @@ export class PayoutEntity {
   transferStatus: PayoutTransferStatus;
 
   @Column({ name: 'transfer_id', type: 'varchar', nullable: true })
+  @Index()
   transferId?: string | null;
 
   @Column({ name: 'transfer_initiated_at', type: 'timestamptz', nullable: true })
@@ -52,6 +53,19 @@ export class PayoutEntity {
 
   @Column({ name: 'transfer_error', type: 'varchar', nullable: true })
   transferError?: string | null;
+
+  @Column({ name: 'reserve_transfer_status', type: 'varchar', default: 'NOT_INITIATED' })
+  reserveTransferStatus: PayoutTransferStatus;
+
+  @Column({ name: 'reserve_transfer_id', type: 'varchar', nullable: true })
+  @Index()
+  reserveTransferId?: string | null;
+
+  @Column({ name: 'reserve_transfer_initiated_at', type: 'timestamptz', nullable: true })
+  reserveTransferInitiatedAt?: Date | null;
+
+  @Column({ name: 'reserve_transfer_error', type: 'varchar', nullable: true })
+  reserveTransferError?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

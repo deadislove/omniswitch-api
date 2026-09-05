@@ -43,7 +43,6 @@ import {
 } from '../dto/charge-payment.dto';
 import { RefundPaymentDto, CapturePaymentDto } from '../dto/refund-payment.dto';
 import { Money } from '../../domain/value-objects/money.vo';
-import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { AcquirerRoutingService } from '../services/acquirer-routing.service';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
@@ -53,6 +52,8 @@ import { PaymentAggregate, PSPProvider } from '../../domain/aggregates/payment.a
 import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { FXRateProviderPort } from '../../ports/outbound/fx-rate-provider.port';
 import { DelegationService } from '../services/delegation.service';
+import { ChargeApprovalService } from '../services/charge-approval.service';
+import { buildCheckoutSagaInput } from '../services/build-checkout-saga-input';
 import * as csv from 'csv-parser';
 import { Readable } from 'stream';
 
@@ -101,6 +102,7 @@ export class PaymentController {
     private readonly paymentLifecycle: PaymentLifecycleService,
     private readonly fxRateProvider: FXRateProviderPort,
     private readonly delegationService: DelegationService,
+    private readonly chargeApprovalService: ChargeApprovalService,
     private readonly processorFactory: PaymentProcessorFactory,
     private readonly circuitBreaker: RedisCircuitBreakerService,
   ) {}
@@ -202,18 +204,6 @@ export class PaymentController {
         code: 'SPLIT_REQUIRES_AUTOMATIC_CAPTURE',
       });
     }
-    const splits = dto.splits?.map((s) => ({ merchantId: s.merchantId, amount: Money.of(s.amount, dto.currency) }));
-
-    let binInfo: BinInfo | undefined;
-    if (dto.binInfo) {
-      binInfo = new BinInfo({
-        bin: dto.binInfo.bin,
-        country: dto.binInfo.country,
-        cardBrand: dto.binInfo.cardBrand,
-        cardType: dto.binInfo.cardType,
-        issuingBank: dto.binInfo.issuingBank,
-      });
-    }
 
     // Presentment currency: what the customer's own statement will show,
     // if different from the currency actually charged/settled (`currency`
@@ -258,30 +248,55 @@ export class PaymentController {
           code: 'DELEGATION_MISSING',
         });
       }
-      await this.delegationService.reserveSpendOrThrow(delegationId, amount, dto.category, new Date());
+      const delegation = await this.delegationService.reserveSpendOrThrow(
+        delegationId,
+        amount,
+        dto.category,
+        new Date(),
+      );
       reservedDelegationId = delegationId;
+
+      // Above the delegation's own approval threshold (but still within
+      // perTransactionLimit, already checked by reserveSpendOrThrow above)
+      // — the spend is reserved (protects the monthly budget against a
+      // flurry of pending requests), but the actual PSP charge waits for
+      // a human operator. See ChargeApprovalService.approve()/deny().
+      if (delegation.spendPolicy.requiresApproval(amount)) {
+        const approval = await this.chargeApprovalService.createPendingApproval({
+          paymentId,
+          delegationId,
+          merchantId: delegation.merchantId,
+          amount,
+          idempotencyKey,
+          chargeRequest: dto as unknown as Record<string, unknown>,
+        });
+        this.logger.log(
+          `Charge ${paymentId} requires approval (${amount.toString()} exceeds delegation ${delegationId}'s requireApprovalAboveAmount) — approvalId=${approval.id}, spend reserved and held pending a decision`,
+        );
+        return {
+          paymentId,
+          status: 'PENDING_APPROVAL',
+          requiresAction: false,
+          usedFallback: false,
+          approvalId: approval.id,
+          createdAt: approval.createdAt.toISOString(),
+        };
+      }
     }
 
     let result;
     try {
-      result = await this.checkoutSaga.execute({
-        paymentId,
-        idempotencyKey,
-        amount,
-        merchantId,
-        customerId: dto.customerId,
-        orderId: dto.orderId,
-        description: dto.description,
-        binInfo,
-        paymentMethodId: dto.paymentMethodId,
-        cardToken: dto.cardToken,
-        preferredProvider: dto.preferredProvider,
-        captureMethod: dto.captureMethod,
-        splits,
-        initiatorMetadata: reservedDelegationId
-          ? { delegationId: reservedDelegationId, initiatedBy: 'agent' }
-          : undefined,
-      });
+      result = await this.checkoutSaga.execute(
+        buildCheckoutSagaInput({
+          paymentId,
+          merchantId,
+          idempotencyKey,
+          dto,
+          initiatorMetadata: reservedDelegationId
+            ? { delegationId: reservedDelegationId, initiatedBy: 'agent' }
+            : undefined,
+        }),
+      );
     } catch (err: unknown) {
       if (reservedDelegationId) {
         await this.delegationService.releaseReservation(reservedDelegationId, amount);

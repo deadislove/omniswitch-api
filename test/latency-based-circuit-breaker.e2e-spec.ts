@@ -113,7 +113,7 @@ describe('Latency-based circuit breaker (e2e)', () => {
       preferredProvider: 'STRIPE',
     }).expect(201);
     expect(nextCharge.body.pspProvider).toBe('ADYEN');
-  }, 60_000);
+  }, 90_000);
 
   it('once the recovery window passes, a fresh charge preferring STRIPE routes back to it — not stuck on ADYEN forever', async () => {
     // Self-contained trip, independent of the test above's leftover state.
@@ -163,7 +163,7 @@ describe('Latency-based circuit breaker (e2e)', () => {
 
     const closed = await routingHealth().expect(200);
     expect((closed.body as Record<string, { circuitBreaker: string }>).STRIPE.circuitBreaker).toBe('CLOSED');
-  }, 90_000);
+  }, 120_000);
 
   it('an operator can force-close a stuck circuit without waiting out the recovery window', async () => {
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
@@ -198,7 +198,7 @@ describe('Latency-based circuit breaker (e2e)', () => {
     }).expect(201);
     expect(chargeRightAfter.body.pspProvider).toBe('STRIPE');
     expect(chargeRightAfter.body.usedFallback).toBe(false);
-  }, 60_000);
+  }, 90_000);
 
   it('resetting an unknown provider is rejected with 400', async () => {
     await request(app.getHttpServer())

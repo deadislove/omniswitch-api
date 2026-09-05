@@ -20,6 +20,7 @@ import { PlanEntity } from './modules/payment/adapters/persistence/entities/plan
 import { PayoutEntity } from './modules/payment/adapters/persistence/entities/payout.entity';
 import { PayoutSweepRunEntity } from './modules/payment/adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from './modules/payment/adapters/persistence/entities/delegation.entity';
+import { ChargeApprovalEntity } from './modules/payment/adapters/persistence/entities/charge-approval.entity';
 import { MerchantEntity } from './modules/merchant/merchant.entity';
 import { HealthController } from './health/health.controller';
 import { MetricsController } from './observability/metrics.controller';
@@ -71,6 +72,7 @@ import { DeprecationHeaderInterceptor } from './shared/interceptors/deprecation-
           PayoutEntity,
           PayoutSweepRunEntity,
           DelegationEntity,
+          ChargeApprovalEntity,
         ],
         // Schema is owned by TypeORM migrations (src/database/migrations/,
         // run via `npm run migration:run` / the Docker image's startup

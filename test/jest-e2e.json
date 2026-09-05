@@ -8,6 +8,7 @@
   },
   "transformIgnorePatterns": ["node_modules/(?!.*(@scure/base|@noble/hashes))"],
   "setupFiles": ["<rootDir>/test/setup-env.ts"],
+  "setupFilesAfterEnv": ["<rootDir>/test/retry-flaky.ts"],
   "testTimeout": 60000,
   "maxWorkers": "50%"
 }

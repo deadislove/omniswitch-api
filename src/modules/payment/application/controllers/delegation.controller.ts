@@ -49,6 +49,7 @@ function toResponseDto(delegation: Delegation): DelegationResponseDto {
     monthlyLimit: delegation.spendPolicy.monthlyLimit.amount,
     currency: delegation.spendPolicy.currency,
     allowedCategories: delegation.spendPolicy.allowedCategories,
+    requireApprovalAboveAmount: delegation.spendPolicy.requireApprovalAboveAmount?.amount,
     currentMonthSpent: delegation.currentMonthSpent.amount,
     createdAt: delegation.createdAt.toISOString(),
     revokedAt: delegation.revokedAt?.toISOString(),
@@ -93,6 +94,10 @@ export class DelegationController {
       monthlyLimit: Money.of(dto.monthlyLimit, dto.currency),
       allowedCategories: dto.allowedCategories,
       tokenTtlSeconds: dto.tokenTtlSeconds,
+      requireApprovalAboveAmount:
+        dto.requireApprovalAboveAmount !== undefined
+          ? Money.of(dto.requireApprovalAboveAmount, dto.currency)
+          : undefined,
     });
     return { delegation: toResponseDto(delegation), agentToken, tokenType: 'Bearer', expiresIn, agentSigningKey };
   }

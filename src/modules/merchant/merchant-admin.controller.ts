@@ -7,6 +7,7 @@ import {
   UpdateFeeRateDto,
   UpdateFeeTiersDto,
   UpdateSettlementCurrencyDto,
+  UpdateDisputeNotificationChannelDto,
   UpdateReservePolicyDto,
   UpdatePayoutReservePolicyDto,
   UpdateRiskTierAutoDto,
@@ -53,12 +54,15 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     payoutReserveBps: merchant.payoutReserveBps,
     payoutReserveHoldDays: merchant.payoutReserveHoldDays,
     kycStatus: merchant.kycStatus,
+    kycApplicationId: merchant.kycApplicationId ?? null,
     enabledPspProviders: merchant.enabledPspProviders,
     ambiguousRiskFlagged: merchant.ambiguousRiskFlagged,
     ambiguousRiskFlaggedAt: merchant.ambiguousRiskFlaggedAt?.toISOString() ?? null,
     ambiguousRiskFlagReason: merchant.ambiguousRiskFlagReason ?? null,
     ambiguousRiskFlaggedBy: merchant.ambiguousRiskFlaggedBy ?? null,
     ambiguousRiskAutoManaged: merchant.ambiguousRiskAutoManaged,
+    disputeNotificationChannel: merchant.disputeNotificationChannel,
+    disputeNotificationTarget: merchant.disputeNotificationTarget ?? null,
     createdAt: merchant.createdAt.toISOString(),
     updatedAt: merchant.updatedAt.toISOString(),
   };
@@ -183,6 +187,25 @@ export class MerchantAdminController {
     return toSummary(merchant);
   }
 
+  @Patch(':merchantId/dispute-notification-channel')
+  @ApiOperation({
+    summary:
+      "Change which channel this merchant's dispute.created/dispute.resolved notifications go out on (EMAIL/SLACK/WEBHOOK), and the channel-specific destination. Omit/null target clears it — the merchant then receives no dispute notifications at all.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updateDisputeNotificationChannel(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateDisputeNotificationChannelDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updateDisputeNotificationChannel(
+      merchantId,
+      dto.channel,
+      dto.target ?? null,
+    );
+    return toSummary(merchant);
+  }
+
   @Patch(':merchantId/reserve-policy')
   @ApiOperation({
     summary:
@@ -252,7 +275,7 @@ export class MerchantAdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      "Submit (or re-submit) this merchant's KYC application — resolves synchronously against the (mock) KYC provider. Only meaningful for a CONNECTED merchant; gates payouts, not charges.",
+      "Submit (or re-submit) this merchant's KYC application — resolves synchronously against the mock provider (KYC_PROVIDER=mock, the default), or returns PENDING_REVIEW against a real one (KYC_PROVIDER=persona), with the final decision arriving later via POST /webhooks/kyc. Only meaningful for a CONNECTED merchant; gates payouts, not charges.",
   })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })

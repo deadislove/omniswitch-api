@@ -79,9 +79,9 @@ class PayoutSummaryDto {
   kycClearedAt?: string;
 
   @ApiProperty({
-    enum: ['NOT_INITIATED', 'INITIATED', 'FAILED'],
+    enum: ['NOT_INITIATED', 'PENDING_CONFIRMATION', 'INITIATED', 'FAILED'],
     description:
-      "Whether netAmount has actually been sent to the merchant's bank — see BankTransferPort. Never covers a later-released reserve.",
+      "Whether netAmount has actually been sent to the merchant's bank — see BankTransferPort. PENDING_CONFIRMATION only occurs on a real, async-settling rail (ach/wire); the mock rail goes straight to INITIATED. Never covers a later-released reserve — see reserveTransferStatus below.",
   })
   transferStatus: PayoutTransferStatus;
 
@@ -93,6 +93,22 @@ class PayoutSummaryDto {
 
   @ApiPropertyOptional()
   transferError?: string;
+
+  @ApiProperty({
+    enum: ['NOT_INITIATED', 'PENDING_CONFIRMATION', 'INITIATED', 'FAILED'],
+    description:
+      "Whether a released reserve has actually been sent to the merchant's bank, as a separate follow-up transfer independent of transferStatus above — see PayoutService.initiateReserveTransfer(). Only meaningful once reserveStatus is RELEASED.",
+  })
+  reserveTransferStatus: PayoutTransferStatus;
+
+  @ApiPropertyOptional()
+  reserveTransferId?: string;
+
+  @ApiPropertyOptional()
+  reserveTransferInitiatedAt?: string;
+
+  @ApiPropertyOptional()
+  reserveTransferError?: string;
 
   @ApiProperty()
   createdAt: string;
@@ -161,6 +177,10 @@ function toSummary(payout: Payout): PayoutSummaryDto {
     transferId: payout.transferId,
     transferInitiatedAt: payout.transferInitiatedAt?.toISOString(),
     transferError: payout.transferError,
+    reserveTransferStatus: payout.reserveTransferStatus,
+    reserveTransferId: payout.reserveTransferId,
+    reserveTransferInitiatedAt: payout.reserveTransferInitiatedAt?.toISOString(),
+    reserveTransferError: payout.reserveTransferError,
     createdAt: payout.createdAt.toISOString(),
   };
 }
@@ -291,5 +311,35 @@ export class MarketplacePayoutAdminController {
   @ApiResponse({ status: 200, type: TransferSweepResultDto })
   async initiateEligibleTransfers(): Promise<TransferSweepResultDto> {
     return this.payoutService.initiateEligibleTransfers();
+  }
+
+  @Post('payouts/:id/initiate-reserve-transfer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Initiate a bank transfer for this payout's *released reserve* — the follow-up transfer that's independent of (and doesn't require) the netAmount transfer's own status. See BankTransferPort.",
+  })
+  @ApiResponse({ status: 200, type: PayoutSummaryDto })
+  @ApiResponse({ status: 404, description: 'Payout not found' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Payout is KYC-blocked, has no reserve, the reserve is not yet released, or its reserve transfer is already initiated',
+  })
+  @ApiResponse({ status: 422, description: 'The bank declined the transfer' })
+  async initiateReserveTransfer(@Param('id') id: string): Promise<PayoutSummaryDto> {
+    const payout = await this.payoutService.initiateReserveTransfer(id);
+    return toSummary(payout);
+  }
+
+  @Post('initiate-eligible-reserve-transfers')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Run the reserve-transfer-initiation sweep now instead of waiting for the daily schedule — initiates a reserve transfer for every eligible payout (reserve released, has a reserve amount, not KYC-blocked, not already initiated)',
+  })
+  @ApiResponse({ status: 200, type: TransferSweepResultDto })
+  async initiateEligibleReserveTransfers(): Promise<TransferSweepResultDto> {
+    return this.payoutService.initiateEligibleReserveTransfers();
   }
 }

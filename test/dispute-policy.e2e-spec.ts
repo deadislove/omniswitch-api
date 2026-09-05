@@ -149,7 +149,7 @@ describe('Dispute resolution policy layer (e2e)', () => {
     expect(unknownReasonDispute.evidenceGuidance).toContain('No specific guidance');
   });
 
-  it('emits a structured dispute.created event (a real notification integration point, even though nothing subscribes today)', async () => {
+  it('emits a structured dispute.created event (DisputeNotificationListener is the real subscriber — see dispute-notification.e2e-spec.ts)', async () => {
     const payment = await chargeImmediate(9.99);
 
     const received: any[] = [];

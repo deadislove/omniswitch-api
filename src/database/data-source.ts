@@ -11,6 +11,7 @@ import { PlanEntity } from '../modules/payment/adapters/persistence/entities/pla
 import { PayoutEntity } from '../modules/payment/adapters/persistence/entities/payout.entity';
 import { PayoutSweepRunEntity } from '../modules/payment/adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from '../modules/payment/adapters/persistence/entities/delegation.entity';
+import { ChargeApprovalEntity } from '../modules/payment/adapters/persistence/entities/charge-approval.entity';
 import { MerchantEntity } from '../modules/merchant/merchant.entity';
 
 /**
@@ -55,6 +56,7 @@ export const AppDataSource = new DataSource({
     PayoutEntity,
     PayoutSweepRunEntity,
     DelegationEntity,
+    ChargeApprovalEntity,
   ],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   migrationsTableName: 'typeorm_migrations',

@@ -26,6 +26,8 @@ export interface CreateDelegationParams {
   monthlyLimit: Money;
   allowedCategories?: string[];
   tokenTtlSeconds?: number;
+  /** See SpendPolicy.create()'s docblock — undefined means no approval gate, every charge within limits auto-executes. */
+  requireApprovalAboveAmount?: Money;
 }
 
 /**
@@ -68,6 +70,7 @@ export class DelegationService {
       perTransactionLimit: params.perTransactionLimit,
       monthlyLimit: params.monthlyLimit,
       allowedCategories: params.allowedCategories,
+      requireApprovalAboveAmount: params.requireApprovalAboveAmount,
     });
 
     const id = randomUUID();
@@ -144,14 +147,19 @@ export class DelegationService {
    * actual race-safe reservation via DelegationPort.tryReserveSpend() — see
    * that port method's docblock for why both layers exist. Throws (nothing
    * reserved) on any violation; the caller must call releaseReservation()
-   * if the charge it went on to attempt subsequently fails.
+   * if the charge it went on to attempt subsequently fails. Returns the
+   * loaded `Delegation` (spend already reserved against it) so the caller
+   * can check `spendPolicy.requiresApproval(amount)` without a second
+   * query — reservation happens either way, before approval-gating is
+   * even decided, so a flurry of pending-approval requests can't
+   * collectively bust the monthly limit before any of them is approved.
    */
   async reserveSpendOrThrow(
     delegationId: string,
     amount: Money,
     category: string | undefined,
     now: Date,
-  ): Promise<void> {
+  ): Promise<Delegation> {
     const delegation = await this.getOrThrow(delegationId);
 
     if (delegation.status !== 'ACTIVE') {
@@ -201,6 +209,8 @@ export class DelegationService {
         code: 'DELEGATION_SPEND_LIMIT_EXCEEDED',
       });
     }
+
+    return delegation;
   }
 
   /** Compensating release — see DelegationPort.releaseSpend()'s docblock. */

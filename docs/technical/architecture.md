@@ -76,10 +76,14 @@ src/
 │   │   │                          # applyAutoAmbiguousRiskFlag, setAmbiguousRiskFlagManual,
 │   │   │                          # setAmbiguousRiskAutoManaged
 │   │   ├── mfa.service.ts         # TOTP enroll/confirm/verify/disable (PCI DSS Req 8.4.2)
-│   │   ├── kyc-provider.port.ts + mock-kyc-provider.adapter.ts  # Connected-account KYC review
-│   │   │                          # (real HTTP call to an external verifier — mocked here)
+│   │   ├── kyc-provider.port.ts    # Mock/PersonaKycProviderAdapter — connected-account
+│   │   │                          # KYC review, selected via KYC_PROVIDER; KycWebhookGuard
+│   │   │                          # verifies Persona's async review-decision callback
 │   │   ├── auth.controller.ts     # POST /auth/token (+ mfa/enroll,confirm,verify,disable), /auth/revoke
-│   │   └── merchant-admin.controller.ts  # ADMIN-only onboarding/rotation/revocation/policy/KYC
+│   │   ├── merchant-admin.controller.ts  # ADMIN-only onboarding/rotation/revocation/policy/KYC
+│   │   └── kyc-webhook.controller.ts  # POST /webhooks/kyc — kept here, not in payment/'s
+│   │       │                      # WebhookController, since KYC is a MerchantModule concern
+│   │       │                      # and MerchantModule must never depend on PaymentModule
 │   └── payment/                   # Owns anything that moves money — payments, disputes,
 │       │                          # reconciliation, reserves, subscriptions, plans, marketplace
 │       │                          # payouts, risk tiering, agentic-payment delegations all live
@@ -88,14 +92,15 @@ src/
 │       ├── domain/                # Pure business logic, zero external dependencies
 │       │   ├── aggregates/        # PaymentAggregate, LedgerOutboxEvent, ReconciliationRun,
 │       │   │                      # Dispute, ReserveHold, Subscription, Plan, Payout,
-│       │   │                      # PayoutSweepRun, Delegation
+│       │   │                      # PayoutSweepRun, Delegation, ChargeApproval
 │       │   ├── value-objects/     # Money, Currency, BinInfo, PaymentStatus, SpendPolicy
 │       │   ├── events/            # Domain events (PaymentCharged, PaymentDisputed, ...)
 │       │   └── services/          # SmartRoutingStrategy, DisputePolicy
 │       ├── ports/outbound/        # One port per aggregate's persistence contract
 │       │                          # (PaymentRepositoryPort, LedgerOutboxPort,
 │       │                          # ReconciliationPort, DisputePort, ReserveHoldPort,
-│       │                          # SubscriptionPort, PlanPort, PayoutPort, DelegationPort),
+│       │                          # SubscriptionPort, PlanPort, PayoutPort, DelegationPort,
+│       │                          # ChargeApprovalPort),
 │       │                          # plus PSPAdapterPort, CachePort, FXRateProviderPort,
 │       │                          # BankTransferPort — interfaces the domain depends on
 │       ├── adapters/
@@ -105,8 +110,10 @@ src/
 │       │   ├── circuit-breaker/   # RedisCircuitBreakerService — per-PSP health, shared
 │       │   │                      # across replicas (see "A note on shared state")
 │       │   ├── fx/                # FXRateProviderAdapter — calls mock-psp's /fx/rates
-│       │   ├── bank/              # MockBankTransferAdapter — calls mock-psp's /bank/transfers
-│       │   │                      # for marketplace payout transfer initiation
+│       │   ├── bank/              # Mock/Ach/WireBankTransferAdapter — payout transfer
+│       │   │                      # initiation, selected via BANK_TRANSFER_PROVIDER;
+│       │   │                      # BankTransferWebhookGuard verifies the two real
+│       │   │                      # rails' async settlement callback
 │       │   └── psp/
 │       │       ├── stripe/        # StripePSPAdapter + StripeWebhookGuard
 │       │       ├── adyen/         # AdyenPSPAdapter + AdyenWebhookGuard
@@ -115,7 +122,9 @@ src/
 │           ├── controllers/       # PaymentController (also the entry point for an AGENT
 │           │                      # token's delegated charge), WebhookController,
 │           │                      # SubscriptionController, PlanController,
-│           │                      # DelegationController, plus 10 focused admin controllers
+│           │                      # DelegationController, ChargeApprovalController (the
+│           │                      # PENDING_APPROVAL hold state for an above-threshold
+│           │                      # agent charge), plus 10 focused admin controllers
 │           │                      # (Outbox/Reconciliation/Dispute/Reserve/Subscription/
 │           │                      # RiskTiering/MarketplacePayout/LegalHold/AmbiguousPayment/
 │           │                      # AmbiguousRisk — LegalHold is

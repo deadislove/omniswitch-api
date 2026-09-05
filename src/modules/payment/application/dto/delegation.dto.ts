@@ -72,6 +72,17 @@ export class CreateDelegationDto {
   @Min(60)
   @Max(30 * 24 * 3600)
   tokenTtlSeconds?: number;
+
+  @ApiPropertyOptional({
+    example: 200,
+    description:
+      'If set, a charge above this amount (but still within perTransactionLimit) does not auto-execute — it creates a ChargeApproval and waits for a human operator to approve/deny via POST /charge-approvals/:id/approve|deny. Omit for no approval gate (the default): every charge within the other limits auto-executes exactly as before. Cannot exceed perTransactionLimit.',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 8 })
+  @IsPositive()
+  @Max(1_000_000_000)
+  requireApprovalAboveAmount?: number;
 }
 
 export class DelegationResponseDto {
@@ -98,6 +109,13 @@ export class DelegationResponseDto {
 
   @ApiPropertyOptional({ type: [String] })
   allowedCategories?: string[];
+
+  @ApiPropertyOptional({
+    example: 200,
+    description:
+      'A charge above this amount requires human approval instead of auto-executing — absent means no approval gate',
+  })
+  requireApprovalAboveAmount?: number;
 
   @ApiProperty({ example: 123.45, description: 'Amount spent so far in the current rolling calendar month' })
   currentMonthSpent: number;

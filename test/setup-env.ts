@@ -136,6 +136,23 @@ setDefault('ADYEN_HMAC_KEY', '00112233445566778899aabbccddeeff001122334455667788
 setDefault('FX_RATE_PROVIDER_URL', 'http://localhost:4000/fx');
 setDefault('KYC_PROVIDER_URL', 'http://localhost:4000/kyc');
 setDefault('BANK_TRANSFER_PROVIDER_URL', 'http://localhost:4000/bank');
+// BANK_TRANSFER_PROVIDER intentionally left unset here (defaults to
+// 'mock' — see payment.module.ts's useFactory) so the bulk of the e2e
+// suite keeps using the synchronous mock rail. bank-transfer-rail.e2e-spec.ts
+// posts directly to POST /webhooks/bank-transfer (same pattern
+// webhooks.e2e-spec.ts already uses for Stripe/Adyen) rather than relying
+// on mock-psp's own async callback, since the app under test here runs
+// in-process (Jest/Supertest), not as a container mock-psp could reach.
+setDefault('ACH_PROVIDER_URL', 'http://localhost:4000/ach');
+setDefault('WIRE_PROVIDER_URL', 'http://localhost:4000/wire');
+setDefault('BANK_TRANSFER_WEBHOOK_SECRET', 'bts_e2e_test_placeholder');
+setDefault('EMAIL_PROVIDER_URL', 'http://localhost:4000/v1/email');
+// KYC_PROVIDER intentionally left unset here (defaults to 'mock' — see
+// merchant.module.ts's useFactory), same reasoning as BANK_TRANSFER_PROVIDER
+// above — kyc-review.e2e-spec.ts posts directly to POST /webhooks/kyc
+// rather than relying on mock-psp's own async callback.
+setDefault('PERSONA_PROVIDER_URL', 'http://localhost:4000/persona');
+setDefault('KYC_WEBHOOK_SECRET', 'kyc_e2e_test_placeholder');
 
 setDefault('CORS_ORIGINS', 'http://localhost:3000');
 setDefault('APP_VERSION', 'e2e-test');

@@ -97,9 +97,29 @@ services:
       # serves a /fx/rates endpoint (see docs/business-domain/ledger-and-settlement.md).
       FX_RATE_PROVIDER_URL: http://mock-psp:4000/fx
       # Same pattern again — mock-psp also serves /kyc/verify and
-      # /bank/transfers (see docs/business-domain/ledger-and-settlement.md).
+      # /bank/transfers (see docs/business-domain/marketplace-and-payouts.md).
       KYC_PROVIDER_URL: http://mock-psp:4000/kyc
       BANK_TRANSFER_PROVIDER_URL: http://mock-psp:4000/bank
+      # BANK_TRANSFER_PROVIDER stays at its default (mock, synchronous
+      # /bank/transfers) here — set to "ach" or "wire" to exercise the two
+      # real, async-settling rails against mock-psp's /ach/transfers or
+      # /wire/transfers instead (see AchBankTransferAdapter/
+      # WireBankTransferAdapter). Both need BANK_TRANSFER_WEBHOOK_SECRET
+      # below to verify mock-psp's signed settlement callback.
+      ACH_PROVIDER_URL: http://mock-psp:4000/ach
+      WIRE_PROVIDER_URL: http://mock-psp:4000/wire
+      # EmailDisputeNotificationAdapter's target — mock-psp also serves
+      # /v1/email/send, mimicking a real transactional-email provider's
+      # {to, subject, body} shape (see docs/business-domain/disputes.md).
+      EMAIL_PROVIDER_URL: http://mock-psp:4000/v1/email
+      BANK_TRANSFER_WEBHOOK_SECRET: bts_dev_compose_placeholder_do_not_use_in_prod
+      # KYC_PROVIDER stays at its default (mock, synchronous /kyc/verify)
+      # here — set to "persona" to exercise the real, async-reviewing
+      # provider against mock-psp's /persona/kyc-applications instead
+      # (see PersonaKycProviderAdapter). Needs KYC_WEBHOOK_SECRET below to
+      # verify mock-psp's signed review-decision callback.
+      PERSONA_PROVIDER_URL: http://mock-psp:4000/persona
+      KYC_WEBHOOK_SECRET: kyc_dev_compose_placeholder_do_not_use_in_prod
       # CORS
       CORS_ORIGINS: "http://localhost:3000,http://localhost:4200"
       # App
@@ -400,6 +420,18 @@ services:
     volumes:
       - ./scripts/mock-psp/server.js:/app/server.js:ro
     command: ["node", "server.js"]
+    environment:
+      # Lets /ach/transfers and /wire/transfers call back with a real,
+      # signed settlement confirmation — see scheduleBankTransferSettlement()
+      # in server.js and BankTransferWebhookGuard. `api` is this compose
+      # network's DNS name for the app service above; must match that
+      # service's own BANK_TRANSFER_WEBHOOK_SECRET exactly, or every
+      # callback gets rejected with INVALID_SIGNATURE.
+      APP_BASE_URL: http://api:3000/api/v1
+      BANK_TRANSFER_WEBHOOK_SECRET: bts_dev_compose_placeholder_do_not_use_in_prod
+      # Same story for /persona/kyc-applications's signed review-decision
+      # callback — see scheduleKycDecision() and KycWebhookGuard.
+      KYC_WEBHOOK_SECRET: kyc_dev_compose_placeholder_do_not_use_in_prod
     networks:
       - omniswitch-net
     healthcheck:

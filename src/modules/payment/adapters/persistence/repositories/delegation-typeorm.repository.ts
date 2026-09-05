@@ -23,6 +23,8 @@ export class DelegationTypeOrmRepository implements DelegationPort {
     entity.monthlyLimitMinorUnits = delegation.spendPolicy.monthlyLimit.amountMinorUnits.toString();
     entity.currencyCode = delegation.spendPolicy.currency;
     entity.allowedCategories = delegation.spendPolicy.allowedCategories ?? null;
+    entity.requireApprovalAboveAmountMinorUnits =
+      delegation.spendPolicy.requireApprovalAboveAmount?.amountMinorUnits.toString() ?? null;
     entity.status = delegation.status;
     entity.currentMonthKey = delegation.currentMonthKey;
     entity.currentMonthSpentMinorUnits = delegation.currentMonthSpent.amountMinorUnits.toString();
@@ -95,6 +97,9 @@ export class DelegationTypeOrmRepository implements DelegationPort {
       perTransactionLimit: Money.fromMinorUnits(BigInt(entity.perTransactionLimitMinorUnits), entity.currencyCode),
       monthlyLimit: Money.fromMinorUnits(BigInt(entity.monthlyLimitMinorUnits), entity.currencyCode),
       allowedCategories: entity.allowedCategories ?? undefined,
+      requireApprovalAboveAmount: entity.requireApprovalAboveAmountMinorUnits
+        ? Money.fromMinorUnits(BigInt(entity.requireApprovalAboveAmountMinorUnits), entity.currencyCode)
+        : undefined,
     });
     return Delegation.reconstitute({
       id: entity.id,

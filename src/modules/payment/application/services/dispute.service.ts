@@ -109,11 +109,9 @@ export class DisputeService {
 
     await this.disputePort.save(dispute);
 
-    // Structured event, not just a log line — a real notification
-    // integration (email/Slack/paging) has something to subscribe to now,
-    // even though nothing does yet. Same stand-in posture as
-    // ReconciliationService/LedgerOutboxRelayService's alerting elsewhere
-    // in this codebase.
+    // Structured event, not just a log line — DisputeNotificationListener
+    // subscribes this to a real per-merchant email/Slack/webhook delivery
+    // (see dispute-notification.listener.ts).
     this.eventEmitter.emit('dispute.created', {
       disputeId: dispute.id,
       paymentId: dispute.paymentId,

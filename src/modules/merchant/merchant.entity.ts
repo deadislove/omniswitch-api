@@ -209,13 +209,15 @@ export class MerchantEntity {
    * just marked `kycBlocked`), the same `charges_enabled`/
    * `payouts_enabled` distinction real Stripe Connect draws. See
    * MerchantService.submitKyc() and
-   * docs/business-domain/ledger-and-settlement.md#connected-account-kyc.
-   * Deliberately a synchronous three-state model (no `PENDING` sitting
-   * in the database for days) — a real KYC provider review is genuinely
-   * async over days; this system's mock decision resolves immediately.
+   * docs/business-domain/marketplace-and-payouts.md#connected-account-kyc.
+   * `PENDING_REVIEW` sits between `NOT_STARTED` and `VERIFIED`/`REJECTED`
+   * for a real, async-reviewing provider (`PersonaKycProviderAdapter`) —
+   * `MockKYCProviderAdapter` skips it entirely (`NOT_STARTED` ->
+   * `VERIFIED`/`REJECTED` in one call, same as before this state
+   * existed) since it resolves synchronously.
    */
   @Column({ name: 'kyc_status', type: 'varchar', default: 'NOT_STARTED' })
-  kycStatus: 'NOT_STARTED' | 'VERIFIED' | 'REJECTED';
+  kycStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
 
   /** Captured at KYC submission time — never shown back except in the merchant's own summary, same posture as any other identity field. */
   @Column({ name: 'kyc_legal_name', type: 'varchar', nullable: true })
@@ -223,6 +225,42 @@ export class MerchantEntity {
 
   @Column({ name: 'kyc_tax_id', type: 'varchar', nullable: true })
   kycTaxId?: string | null;
+
+  /**
+   * Set when `kycStatus` becomes `PENDING_REVIEW` — the provider's own
+   * application id, used to look this merchant back up when
+   * `POST /webhooks/kyc` reports a decision (`MerchantService.confirmKyc()`).
+   * `null` whenever `kycStatus` isn't `PENDING_REVIEW` (a synchronous
+   * mock decision never sets this at all).
+   */
+  @Column({ name: 'kyc_application_id', type: 'varchar', nullable: true })
+  @Index()
+  kycApplicationId?: string | null;
+
+  /**
+   * Which channel `DisputeNotificationDispatcherService` uses for this
+   * merchant's `dispute.created`/`dispute.resolved` notifications.
+   * Defaults to `WEBHOOK` — the only channel that requires no
+   * merchant-side setup beyond a URL (unlike Slack, which needs an
+   * Incoming Webhook already configured in their workspace, or email,
+   * which needs a real transactional-email provider in production).
+   * See `disputeNotificationTarget` below and
+   * docs/business-domain/disputes.md.
+   */
+  @Column({ name: 'dispute_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  disputeNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  /**
+   * The channel-specific destination: a webhook URL, a Slack Incoming
+   * Webhook URL, or an email address, depending on
+   * `disputeNotificationChannel`. `null` (the default for every
+   * merchant created before this existed, and any merchant that hasn't
+   * configured one) means "nothing to notify" —
+   * `DisputeNotificationDispatcherService.notify()` skips silently
+   * rather than sending to an empty/wrong destination.
+   */
+  @Column({ name: 'dispute_notification_target', type: 'varchar', nullable: true })
+  disputeNotificationTarget?: string | null;
 
   /**
    * PSPs this merchant is allowed to route charges through — see

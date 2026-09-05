@@ -265,6 +265,15 @@ reuses the *existing* JWT jti-revocation mechanism verbatim (the same
 one `POST /auth/revoke` logout uses) — it takes effect on the agent's
 very next request, not after its token naturally expires.
 
+Optionally, `SpendPolicy.requireApprovalAboveAmount` sits strictly below
+`perTransactionLimit` — a charge above it doesn't auto-execute (or get
+outright rejected); it creates a `ChargeApproval`, reserves the spend
+immediately, and waits for an operator to
+`POST /charge-approvals/:id/approve` (executes the deferred charge in
+that same request) or `.../deny` (releases the reservation, the PSP is
+never called). The original "ask me first for anything above $200"
+framing, actually built.
+
 Full detail: [`../business-domain/future-directions.md#agentic-payments`](../business-domain/future-directions.md#agentic-payments).
 
 ## 11. What's deliberately not modeled yet
@@ -275,7 +284,7 @@ uncalibrated, or intentionally out of scope: risk-tiering thresholds
 that demonstrate the mechanism rather than reflect real fraud data,
 dispute auto-decision rules not calibrated against real chargeback
 win-rates, no VAT/tax modeling, no hedging product for cross-border FX
-risk, no human-approval step for above-threshold agent purchases. See
+risk. See
 the top-level [`README.md`](../../README.md#known-limitations)'s
 "Known Limitations" section for the full, current list, and
 [`future-directions.md`](../business-domain/future-directions.md) for

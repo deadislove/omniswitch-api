@@ -21,6 +21,22 @@ export function signStripeWebhook(webhookSecret: string, rawBody: string): strin
   return `t=${timestamp},v1=${signature}`;
 }
 
+/** Signs a bank-transfer-rail webhook body the same way BankTransferWebhookGuard verifies it — identical scheme to signStripeWebhook. */
+export function signBankTransferWebhook(webhookSecret: string, rawBody: string): string {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signedPayload = `${timestamp}.${rawBody}`;
+  const signature = createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
+  return `t=${timestamp},v1=${signature}`;
+}
+
+/** Signs a KYC webhook body the same way KycWebhookGuard verifies it — identical scheme to signStripeWebhook. */
+export function signKycWebhook(webhookSecret: string, rawBody: string): string {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signedPayload = `${timestamp}.${rawBody}`;
+  const signature = createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
+  return `t=${timestamp},v1=${signature}`;
+}
+
 interface AdyenNotificationFields {
   pspReference: string;
   originalReference?: string;

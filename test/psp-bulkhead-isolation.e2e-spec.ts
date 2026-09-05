@@ -18,7 +18,8 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * Deliberately uses real wall-clock delays (mock-psp's `forceslow`
  * marker, the same one Gap 3.2's circuit-breaker test uses) rather than
  * mocking time away — the whole point is to observe real queuing, so
- * this test takes ~12s to run. That's expected, not a bug.
+ * this test takes ~20s to run (2 delay-lengths — see FORCE_SLOW_DELAY_MS
+ * in scripts/mock-psp/server.js). That's expected, not a bug.
  *
  * PSP_BULKHEAD_MAX_CONCURRENT is set low (3) for this file only.
  * StripePSPAdapter/AdyenPSPAdapter read it fresh in their constructor
@@ -31,7 +32,7 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * only across files sequentially sharing one worker.
  *
  * The 5 concurrent `forceslow` calls below are also, incidentally,
- * exactly enough real-6-second-slow STRIPE calls to satisfy
+ * exactly enough real-slow STRIPE calls (see FORCE_SLOW_DELAY_MS) to satisfy
  * RedisCircuitBreakerService's independent slow-call-rate trigger
  * (SLOW_CALL_MIN_CALLS=5, 100% slow) — even though every one of them
  * succeeds, this can trip STRIPE's circuit breaker OPEN as a side
@@ -113,11 +114,12 @@ describe('PSP bulkhead isolation (e2e)', () => {
       expect(res.body.pspProvider).toBe('STRIPE');
     }
 
-    // Unbounded, all 5 would finish in ~1 mock-psp delay (~6s). Bounded
-    // to 3 concurrent, the 4th/5th have to wait for a permit freed by
-    // one of the first 3 — pushing this well past a single 6s delay.
-    // 10s is a conservative floor (2 delay-lengths minus scheduling
-    // slop), not a tight bound on the exact queuing math.
-    expect(elapsedMs).toBeGreaterThan(10_000);
-  }, 20_000);
+    // Unbounded, all 5 would finish in ~1 mock-psp delay (~10s — see
+    // FORCE_SLOW_DELAY_MS in scripts/mock-psp/server.js). Bounded to 3
+    // concurrent, the 4th/5th have to wait for a permit freed by one of
+    // the first 3 — pushing this well past a single delay. 15s is a
+    // conservative floor (1.5 delay-lengths), not a tight bound on the
+    // exact queuing math.
+    expect(elapsedMs).toBeGreaterThan(15_000);
+  }, 40_000);
 });

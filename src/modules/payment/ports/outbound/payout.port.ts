@@ -32,20 +32,59 @@ export abstract class PayoutPort {
   /** Atomic, conditional on kycBlocked currently being true — same reasoning as markReserveReleased(). */
   abstract markKycCleared(id: string, clearedAt: Date): Promise<boolean>;
 
-  /** Every Payout eligible for transfer initiation: not KYC-blocked, net amount > 0, transfer not already INITIATED. */
+  /** Every Payout eligible for transfer initiation: not KYC-blocked, net amount > 0, transfer not already INITIATED or PENDING_CONFIRMATION. */
   abstract findTransferEligible(): Promise<Payout[]>;
+
+  /**
+   * Atomic, conditional on transferStatus currently being neither
+   * INITIATED nor PENDING_CONFIRMATION — a real ACH/wire transfer is
+   * money genuinely in flight once submitted, so two concurrent
+   * submission attempts (an operator's manual call racing the scheduled
+   * sweep) succeeding would mean sending the same payout twice. Returns
+   * false if the condition didn't hold, same pattern as
+   * markReserveReleased(). See `Payout.recordTransferPending()`.
+   */
+  abstract markTransferPending(id: string, transferId: string, submittedAt: Date): Promise<boolean>;
 
   /**
    * Atomic, conditional on transferStatus currently *not* being
    * INITIATED — a real bank transfer is money genuinely leaving the
    * platform, so two concurrent initiation attempts (an operator's
-   * manual call racing the scheduled sweep) succeeding would mean
-   * sending the same payout twice. Returns false if the condition
-   * didn't hold, same pattern as markReserveReleased().
+   * manual call racing the scheduled sweep, or a duplicate webhook
+   * delivery) succeeding would mean sending the same payout twice.
+   * Returns false if the condition didn't hold, same pattern as
+   * markReserveReleased(). Called either straight from NOT_INITIATED
+   * (mock's synchronous SENT) or from PENDING_CONFIRMATION (a real
+   * rail's async webhook confirming settlement).
    */
   abstract markTransferInitiated(id: string, transferId: string, initiatedAt: Date): Promise<boolean>;
 
   abstract markTransferFailed(id: string, error: string): Promise<void>;
+
+  /** Looks up the Payout a real rail's async webhook confirmation refers to — see PayoutService.confirmTransfer(). Checks the netAmount transferId only; see findByReserveTransferId() for the reserve leg. */
+  abstract findByTransferId(transferId: string): Promise<Payout | null>;
+
+  /**
+   * Every Payout eligible for a *reserve* transfer: reserve released,
+   * reserve amount > 0, not KYC-blocked, reserve transfer not already
+   * INITIATED or PENDING_CONFIRMATION. Independent of the netAmount
+   * transfer's own status — a reserve released before, during, or long
+   * after the netAmount transfer is equally eligible the moment
+   * `reserveReleased` is true, since this is always a separate transfer
+   * action, not a merge into whatever already happened to netAmount.
+   */
+  abstract findReserveTransferEligible(): Promise<Payout[]>;
+
+  /** Same shape as markTransferPending(), for the reserve leg. See Payout.recordReserveTransferPending(). */
+  abstract markReserveTransferPending(id: string, transferId: string, submittedAt: Date): Promise<boolean>;
+
+  /** Same shape as markTransferInitiated(), for the reserve leg. */
+  abstract markReserveTransferInitiated(id: string, transferId: string, initiatedAt: Date): Promise<boolean>;
+
+  abstract markReserveTransferFailed(id: string, error: string): Promise<void>;
+
+  /** Looks up the Payout a real rail's async webhook confirmation refers to, by its *reserve* transferId — see PayoutService.confirmTransfer(). */
+  abstract findByReserveTransferId(transferId: string): Promise<Payout | null>;
 
   abstract saveSweepRun(run: PayoutSweepRun): Promise<void>;
 

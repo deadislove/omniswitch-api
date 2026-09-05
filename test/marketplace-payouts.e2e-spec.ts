@@ -5,6 +5,8 @@ import { createTestApp } from './utils/test-app';
 import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { PayoutService } from '../src/modules/payment/application/services/payout.service';
+import { CachePort } from '../src/modules/payment/ports/outbound/cache.port';
+import { forceSharedRedisDbForSweepLock, acquireExclusiveSweepTestSuite } from './utils/shared-redis-db';
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 
@@ -23,15 +25,20 @@ describe('Marketplace payout scheduling (e2e)', () => {
   let app: INestApplication;
   let adminToken: string;
   let payoutService: PayoutService;
+  const sharedRedisDb = forceSharedRedisDbForSweepLock();
+  let releaseSweepMutex: () => Promise<void>;
 
   beforeAll(async () => {
     app = await createTestApp();
+    releaseSweepMutex = await acquireExclusiveSweepTestSuite(app.get(CachePort));
     payoutService = app.get(PayoutService);
     ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
+    await releaseSweepMutex();
     await app.close();
+    sharedRedisDb.restore();
   });
 
   function signedRequest(m: SeededMerchant, t: string, method: 'post', path: string, body: object) {

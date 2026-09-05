@@ -418,16 +418,34 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
     return this.outboxRepo.count({ where: { status } });
   }
 
+  // Forced onto master, same reasoning as MerchantService's
+  // findMerchantOnMaster()/list() and PayoutTypeOrmRepository's
+  // findLatestSweepRun() — this is PayoutService.runSweepLocked()'s only
+  // source of which ledger events fall in its window. Because
+  // runSweepLocked() advances windowStart to this call's own windowEnd
+  // regardless of what it actually found, a replica-lagged read here
+  // isn't just a stale read — it's a *permanent* miss: an event created
+  // just before windowEnd but not yet replicated gets silently excluded,
+  // and no later sweep will ever re-check that already-passed window. A
+  // real e2e failure (`Received length: 0`, not just 2/3) surfaced this
+  // once the sweep's own distributed lock was fixed to actually serialize
+  // across concurrent callers (see test/utils/shared-redis-db.ts).
   async findCreatedBetween(since: Date, until: Date): Promise<LedgerOutboxEvent[]> {
-    // .toISOString() — same naive-TIMESTAMP-column reason as findStale()
-    // above: a raw JS Date gets serialized using the host process's local
-    // timezone by node-postgres, silently shifting the comparison.
-    const entities = await this.outboxRepo
-      .createQueryBuilder('o')
-      .where('o.createdAt >= :since', { since: since.toISOString() })
-      .andWhere('o.createdAt < :until', { until: until.toISOString() })
-      .orderBy('o.createdAt', 'ASC')
-      .getMany();
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: LedgerOutboxEntity[];
+    try {
+      // .toISOString() — same naive-TIMESTAMP-column reason as findStale()
+      // above: a raw JS Date gets serialized using the host process's local
+      // timezone by node-postgres, silently shifting the comparison.
+      entities = await queryRunner.manager
+        .createQueryBuilder(LedgerOutboxEntity, 'o')
+        .where('o.createdAt >= :since', { since: since.toISOString() })
+        .andWhere('o.createdAt < :until', { until: until.toISOString() })
+        .orderBy('o.createdAt', 'ASC')
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
     return entities.map(this.toDomain);
   }
 

@@ -197,6 +197,26 @@ export class UpdateSettlementCurrencyDto {
   settlementCurrency?: string | null;
 }
 
+export class UpdateDisputeNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel DisputeNotificationDispatcherService uses for this merchant's dispute events.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-disputes',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (DisputeNotificationDispatcherService then skips notifying this merchant entirely).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
 export class UpdateReservePolicyDto {
   @ApiProperty({
     example: 1000,
@@ -381,10 +401,19 @@ export class MerchantSummaryDto {
 
   @ApiProperty({
     example: 'NOT_STARTED',
-    enum: ['NOT_STARTED', 'VERIFIED', 'REJECTED'],
-    description: 'Onboarding/KYC review status — only meaningful for a CONNECTED merchant, gates payouts (not charges)',
+    enum: ['NOT_STARTED', 'PENDING_REVIEW', 'VERIFIED', 'REJECTED'],
+    description:
+      'Onboarding/KYC review status — only meaningful for a CONNECTED merchant, gates payouts (not charges). PENDING_REVIEW only occurs with KYC_PROVIDER=persona (a real async-reviewing provider); the mock provider always resolves straight to VERIFIED/REJECTED.',
   })
-  kycStatus: 'NOT_STARTED' | 'VERIFIED' | 'REJECTED';
+  kycStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      "The KYC provider's own application id — set while kycStatus is PENDING_REVIEW, used to look this merchant back up when POST /webhooks/kyc reports a decision.",
+  })
+  kycApplicationId: string | null;
 
   @ApiProperty({
     example: ['STRIPE', 'ADYEN'],
@@ -425,6 +454,20 @@ export class MerchantSummaryDto {
       "Whether AmbiguousRiskMonitoringService's automated flag/auto-clear logic may manage this merchant's ambiguousRiskFlagged",
   })
   ambiguousRiskAutoManaged: boolean;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel this merchant's dispute.created/dispute.resolved notifications go out on.",
+  })
+  disputeNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no notification is sent for this merchant.',
+  })
+  disputeNotificationTarget: string | null;
 
   @ApiProperty()
   createdAt: string;

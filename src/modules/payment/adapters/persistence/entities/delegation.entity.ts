@@ -25,6 +25,10 @@ export class DelegationEntity {
   @Column({ name: 'allowed_categories', type: 'simple-array', nullable: true })
   allowedCategories: string[] | null;
 
+  /** See SpendPolicy.requireApprovalAboveAmount's docblock. Null means no approval gate — every charge within the other limits auto-executes. */
+  @Column({ name: 'require_approval_above_amount_minor_units', type: 'bigint', nullable: true })
+  requireApprovalAboveAmountMinorUnits: string | null;
+
   @Column({ type: 'varchar', default: 'ACTIVE' })
   status: DelegationStatus;
 

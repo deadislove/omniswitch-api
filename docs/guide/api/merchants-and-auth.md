@@ -176,8 +176,12 @@ threshold. See
 ### `POST /admin/merchants/:id/kyc/submit`
 
 Submits (or re-submits) this merchant's KYC application — resolves
-**synchronously** against the (mocked) KYC provider. Only meaningful for
-a `CONNECTED` merchant; gates payout transfers, not charges.
+**synchronously** against the mock provider (`KYC_PROVIDER=mock`, the
+default), returning `kycStatus: 'VERIFIED'`/`'REJECTED'` immediately; a
+real provider (`KYC_PROVIDER=persona`) returns `'PENDING_REVIEW'`
+instead, with the final decision arriving later via `POST /webhooks/kyc`.
+Only meaningful for a `CONNECTED` merchant; gates payout transfers, not
+charges.
 
 - **Body**: `{ legalName: string, taxId: string }`
 

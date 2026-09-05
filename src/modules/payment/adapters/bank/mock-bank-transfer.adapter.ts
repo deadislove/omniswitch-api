@@ -7,8 +7,10 @@ import { BankTransferPort, BankTransferRequest, BankTransferResponse } from '../
  * Calls scripts/mock-psp/server.js's `/bank/transfers` endpoint — same
  * "point at a local mock in tests/dev" pattern as every other adapter in
  * this codebase, not a real bank/ACH/wire rail. Resolves synchronously
- * ("sent"); a real transfer settles over days and would need its own
- * webhook-driven confirmation the way dispute resolution/3DS do.
+ * (`status: 'SENT'`) — the default (`BANK_TRANSFER_PROVIDER` unset or
+ * `mock`) so local dev/e2e don't need a webhook round trip. See
+ * `AchBankTransferAdapter`/`WireBankTransferAdapter` for the two real,
+ * async-settling rails this same port also supports.
  */
 @Injectable()
 export class MockBankTransferAdapter extends BankTransferPort {
@@ -34,15 +36,22 @@ export class MockBankTransferAdapter extends BankTransferPort {
 
     const body = await response.json();
     if (!response.ok) {
-      return { success: false, rawResponse: body, errorMessage: body.error ?? 'Bank transfer request failed' };
+      return {
+        success: false,
+        status: 'FAILED',
+        rawResponse: body,
+        errorMessage: body.error ?? 'Bank transfer request failed',
+      };
     }
 
     this.logger.log(`Bank transfer for merchant ${request.merchantId}: ${body.status} (transferId=${body.id})`);
+    const sent = body.status === 'sent';
     return {
-      success: body.status === 'sent',
+      success: sent,
+      status: sent ? 'SENT' : 'FAILED',
       transferId: body.id,
       rawResponse: body,
-      errorMessage: body.status !== 'sent' ? body.reason : undefined,
+      errorMessage: sent ? undefined : body.reason,
     };
   }
 }

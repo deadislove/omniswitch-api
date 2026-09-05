@@ -182,11 +182,10 @@ receiving payouts, which a real marketplace can't skip (payment
 processors have real regulatory obligations here — see
 [`compliance-and-security.md`](./compliance-and-security.md#amlkyc-why-payouts-are-gated-and-charges-arent)
 for the business framing). `MerchantEntity.kycStatus`
-(`NOT_STARTED` | `VERIFIED` | `REJECTED`) now gates that, via
-`POST /admin/merchants/:id/kyc/submit` (`{ legalName, taxId }`) calling
-`KYCProviderPort.verify()` — a real HTTP call to an external verification
-service (a mock one, in this reference system), not a database flag an
-operator flips by hand.
+(`NOT_STARTED` | `PENDING_REVIEW` | `VERIFIED` | `REJECTED`) now gates
+that, via `POST /admin/merchants/:id/kyc/submit` (`{ legalName, taxId }`)
+calling `KYCProviderPort.verify()` — a real HTTP call to an external
+verification service, not a database flag an operator flips by hand.
 
 **KYC gates payouts, not charges** — a `CONNECTED` merchant with
 `kycStatus: 'NOT_STARTED'` can still be a split recipient and accumulate
@@ -199,13 +198,31 @@ platform from routing money to a seller just because that seller hasn't
 finished onboarding yet) would be a real, unnecessary restriction this
 system has no reason to impose. What KYC *does* gate is described next.
 
-Deliberately a synchronous, three-state decision — no `PENDING` sitting
-in the database for days — since a real KYC provider's review is
-genuinely asynchronous (often over days, sometimes needing a human), and
-mocking that out fully would mean building a whole webhook-callback
-flow for a decision this reference system has no real reviewer to make
-anyway. `POST /admin/merchants/:id/kyc/submit` is re-callable after a
-`REJECTED` decision (a merchant re-applying with corrected information).
+**Two interchangeable providers, one real async review.**
+`KYCProviderPort` has two implementations — `MockKYCProviderAdapter`
+(synchronous, local dev/test default) and `PersonaKycProviderAdapter` (a
+real, async-reviewing provider) — selected by `KYC_PROVIDER`
+(`mock`/`persona`) at DI-container build time
+(`merchant.module.ts`'s `useFactory` binding), the same idiom
+`BankTransferPort` uses for `BANK_TRANSFER_PROVIDER`. The mock still
+resolves straight to `VERIFIED`/`REJECTED` in the same call — no
+`PENDING` sitting in the database for days — but the real adapter
+doesn't pretend to review instantly: `verify()` returns `PENDING`, the
+merchant sits in `kycStatus: 'PENDING_REVIEW'` (with
+`kycApplicationId` set, so the eventual decision can find it again), and
+the actual decision (`VERIFIED`/`REJECTED`) arrives later via
+`POST /webhooks/kyc`, verified by `KycWebhookGuard` — the same
+"accept now, confirm later, verify the confirmation's signature" shape
+this codebase already uses for the ACH/wire bank-transfer rails and PSP
+webhooks. `scripts/mock-psp/server.js`'s `/persona/kyc-applications`
+endpoint exercises this real, two-phase flow end-to-end (including a
+real signed async callback) — same honest posture as
+`docs/technical/tests/contract-testing.md` toward the Stripe/Adyen
+sandbox: the mechanism is real and genuinely runnable, but no real
+Persona/Onfido account has ever actually been called with real
+credentials. `POST /admin/merchants/:id/kyc/submit` is re-callable
+after a `REJECTED` decision (a merchant re-applying with corrected
+information) against either provider.
 
 ### Payout KYC gating and real transfer initiation
 
@@ -223,60 +240,132 @@ Two more `Payout` fields close the two gaps this section used to end on:
   `Payout` against the recipient's *current* `kycStatus` and clears the
   block once it's `VERIFIED` — including a `Payout` created *before* KYC
   was ever submitted.
-- **`transferStatus`** (`NOT_INITIATED` | `INITIATED` | `FAILED`) — a
-  real (mocked) bank-transfer call via the new `BankTransferPort`,
-  actually sending `netAmount` to the merchant instead of `Payout` being
-  a pure accounting record with no rail to move real money.
-  `POST /admin/marketplace/payouts/:id/initiate-transfer` (single
-  payout, throws on a decline) and `POST /admin/marketplace/initiate-eligible-transfers`
-  (daily `@Cron`/on-demand sweep, catches per-payout so one decline
-  doesn't block the rest) both refuse a `kycBlocked` payout
+- **`transferStatus`** (`NOT_INITIATED` | `PENDING_CONFIRMATION` |
+  `INITIATED` | `FAILED`) — a real bank-transfer call via
+  `BankTransferPort`, actually sending `netAmount` to the merchant
+  instead of `Payout` being a pure accounting record with no rail to
+  move real money. `POST /admin/marketplace/payouts/:id/initiate-transfer`
+  (single payout, throws on a decline) and
+  `POST /admin/marketplace/initiate-eligible-transfers` (daily
+  `@Cron`/on-demand sweep, catches per-payout so one decline doesn't
+  block the rest) both refuse a `kycBlocked` payout
   (`PAYOUT_KYC_BLOCKED`, 409) and refuse initiating the same payout's
-  transfer twice (`PAYOUT_TRANSFER_ALREADY_INITIATED`, 409 —
-  `PayoutPort.markTransferInitiated()`'s conditional update makes this
-  race-safe, the same posture `markReserveReleased()` already has, since
-  this is money genuinely leaving the platform).
+  transfer twice, whether it's already confirmed or merely pending
+  confirmation (`PAYOUT_TRANSFER_ALREADY_INITIATED`, 409 —
+  `PayoutPort.markTransferInitiated()`/`markTransferPending()`'s
+  conditional updates make this race-safe, the same posture
+  `markReserveReleased()` already has, since this is money genuinely
+  leaving the platform).
 
-**Deliberately scoped to `netAmount` only — never a later-released
-reserve.** If a `Payout`'s reserve is released *after* its `netAmount`
-was already transferred, this system has no mechanism to send a
-follow-up transfer for just the released reserve amount — a real
-implementation would either delay transfer initiation until any reserve
-has settled, or model transfers as a running ledger against a payout
-rather than a single one-shot action. Documented, not built, in this
-pass — see "What genuinely remains" below.
+**Three interchangeable adapters, one real rail switch.** `BankTransferPort`
+has three implementations — `MockBankTransferAdapter` (synchronous,
+local dev/test default), and two real, async-settling rails,
+`AchBankTransferAdapter`/`WireBankTransferAdapter` — selected by
+`BANK_TRANSFER_PROVIDER` (`mock`/`ach`/`wire`) at DI-container build
+time (`payment.module.ts`'s `useFactory` binding), the same
+"env var picks the concrete adapter" idiom
+`scripts/jobs/backup-storage/get-backup-storage.ts` uses for
+`DELETION_BACKUP_STORAGE`. The two real rails don't pretend to settle
+instantly the way the mock does: `initiateTransfer()` returns `PENDING`,
+the `Payout` sits in `PENDING_CONFIRMATION`, and final settlement
+(`INITIATED`) or failure (`FAILED`) arrives later via
+`POST /webhooks/bank-transfer`, verified by `BankTransferWebhookGuard`
+— the same "accept now, confirm later, verify the confirmation's
+signature" shape this codebase already uses for PSP webhooks and
+dispute resolution. `scripts/mock-psp/server.js`'s `/ach/transfers` and
+`/wire/transfers` endpoints exercise this real, two-phase flow
+end-to-end (including a real signed async callback — see
+`scheduleBankTransferSettlement()` there) — same honest posture as
+`docs/technical/tests/contract-testing.md` toward the Stripe/Adyen
+sandbox: the mechanism is real and genuinely runnable, but no real
+ACH/wire provider has ever actually been called with real credentials,
+since none exist in this repository or its CI.
+
+**The reserve follow-up transfer — a second, independent transfer.**
+`Payout.reserveTransferStatus`/`reserveTransferId`/`reserveTransferInitiatedAt`/
+`reserveTransferError` are a completely separate quad from the netAmount
+ones above — a reserve released before, during, or long after the
+netAmount transfer is equally eligible for its own transfer the moment
+`reserveReleased` is true (`PayoutPort.findReserveTransferEligible()`
+doesn't check the netAmount transfer's status at all). Same rail, same
+`PENDING_CONFIRMATION`/`INITIATED`/`FAILED` shape, same
+`BankTransferPort` — `PayoutService.initiateReserveTransfer()` sends
+`reserveAmount` instead of `netAmount`, and
+`POST /admin/marketplace/payouts/:id/initiate-reserve-transfer`
+(single payout) plus `POST /admin/marketplace/initiate-eligible-reserve-transfers`
+(daily `@Cron`/on-demand sweep) mirror the netAmount endpoints exactly.
+A real rail's `POST /webhooks/bank-transfer` confirmation doesn't know
+which of a payout's two transfers a given `transferId` belongs to, so
+`PayoutService.confirmTransfer()` checks the netAmount transferId first,
+then the reserve one — same idempotent, log-and-ignore posture toward
+an unrecognized or already-resolved `transferId` either way.
 
 Verified against real infrastructure in `test/marketplace-payouts.e2e-spec.ts`
-(14 tests): a sweep withholds the exact configured rolling-reserve
-percentage and computes gross/reserve/net correctly; a merchant with no
-rolling reserve configured gets a `reserveStatus: 'NONE'` payout with no
-`releaseEligibleAt`; running the sweep twice with no new activity between
-runs creates no duplicate `Payout` (the cursor advances correctly, no
-double-counting), and a new charge after that produces exactly one more;
-a `PLATFORM` merchant's own proceeds are never swept into a `Payout`; the
-reserve-release sweep releases an eligible reserve (`holdDays: 0`) and
-leaves an ineligible one (`holdDays: 90`) alone; a manual force-release
-works before eligibility and a second release attempt is rejected with
-409; `PATCH .../payout-reserve-policy` changes the rate a later sweep
-actually uses; a fresh `CONNECTED` merchant defaults to `NOT_STARTED`
-and its payouts are created `kycBlocked`; a rejected KYC submission
-(`legalName` containing "reject", the mock provider's decline marker)
-leaves payouts blocked; a verified merchant's payout transfers
-successfully (real `transferId` recorded) and a second initiation
-attempt on the same payout is rejected with 409; initiating a transfer
-for a KYC-blocked payout is rejected with 409 before the bank is ever
-called; the recheck sweep clears a payout created *before* KYC was
-submitted once the merchant becomes `VERIFIED`; a bank decline
-(`merchantId` containing "transferfail") is recorded `FAILED` with a 422
-response and doesn't block a later retry; and the transfer-sweep
-correctly initiates every eligible payout while skipping KYC-blocked
-ones.
+(15 tests, the mock rail/mock KYC provider), `test/bank-transfer-rail.e2e-spec.ts`
+(11 tests, the two real bank-transfer rails), and `test/kyc-review.e2e-spec.ts`
+(9 tests, the real async KYC provider — submitting an application
+against it returns `PENDING_REVIEW` with a real `kycApplicationId`, not
+an immediate decision; a correctly-signed `approved`/`rejected` webhook
+resolves it to `VERIFIED`/`REJECTED`; redelivering the same webhook
+twice is idempotent; a webhook for an unknown `applicationId` is a
+no-op `200`; a missing/invalid `X-KYC-Signature` is rejected `401`; and
+the provider's outright-rejection marker fails synchronously without
+ever reaching `PENDING_REVIEW`): a sweep withholds the exact configured
+rolling-reserve percentage and computes gross/reserve/net correctly; a
+merchant with no rolling reserve configured gets a `reserveStatus: 'NONE'`
+payout with no `releaseEligibleAt`; running the sweep twice with no new
+activity between runs creates no duplicate `Payout` (the cursor advances
+correctly, no double-counting), and a new charge after that produces
+exactly one more; a `PLATFORM` merchant's own proceeds are never swept
+into a `Payout`; the reserve-release sweep releases an eligible reserve
+(`holdDays: 0`) and leaves an ineligible one (`holdDays: 90`) alone; a
+manual force-release works before eligibility and a second release
+attempt is rejected with 409; `PATCH .../payout-reserve-policy` changes
+the rate a later sweep actually uses; a fresh `CONNECTED` merchant
+defaults to `NOT_STARTED` and its payouts are created `kycBlocked`; a
+rejected KYC submission (`legalName` containing "reject", the mock
+provider's decline marker) leaves payouts blocked; a verified merchant's
+payout transfers successfully on the mock rail (real `transferId`
+recorded, `INITIATED` immediately) and a second initiation attempt on
+the same payout is rejected with 409; initiating a transfer for a
+KYC-blocked payout is rejected with 409 before the bank is ever called;
+the recheck sweep clears a payout created *before* KYC was submitted
+once the merchant becomes `VERIFIED`; a mock-rail decline (`merchantId`
+containing "transferfail") is recorded `FAILED` with a 422 response and
+doesn't block a later retry; the transfer-sweep correctly initiates
+every eligible payout while skipping KYC-blocked ones; on the ACH/Wire
+rails specifically, `initiateTransfer()` lands the payout in
+`PENDING_CONFIRMATION` (not `INITIATED`) with a real `transferId`; a
+second initiation attempt while pending is rejected with 409; a
+correctly-signed `settled` webhook confirms it to `INITIATED`, a
+correctly-signed `failed` webhook moves it to `FAILED` with the given
+reason; redelivering the same `settled` webhook twice is idempotent (no
+error, no double-processing); a webhook for an unknown `transferId` is a
+no-op `200`, not an error; a missing or invalid `X-Bank-Transfer-Signature`
+is rejected with 401; and an outright rail rejection (`merchantId`
+containing "transferreject") fails synchronously without ever reaching
+`PENDING_CONFIRMATION`. `test/reserve-followup-transfer.e2e-spec.ts`
+(8 tests) covers the reserve follow-up transfer specifically, always
+releasing the reserve *after* the netAmount transfer already ran (the
+exact ordering the gap used to name): initiating a reserve transfer
+before the reserve is released is rejected `409`
+(`PAYOUT_RESERVE_NOT_RELEASED`) even though netAmount's own transfer
+already succeeded; releasing the reserve and then initiating its
+transfer produces a real, separate `reserveTransferId` distinct from
+`transferId`, with netAmount's own transfer completely untouched; a
+second reserve-transfer attempt is rejected `409`; a reserve-transfer
+decline is recorded `FAILED` independent of `transferStatus`; the
+reserve-transfer sweep picks up a payout whose reserve was released
+after its netAmount transfer already ran; a KYC-blocked payout can't
+have its reserve transfer initiated even once the reserve is released;
+and, against the real ACH rail specifically, a reserve transfer lands
+`PENDING_CONFIRMATION` and a signed webhook confirms it to `INITIATED`
+independent of the netAmount leg's own confirmation.
 
-**What genuinely remains**: no real KYC review (the mock decision is
-synchronous and marker-driven, not an actual human/AI reviewer over
-days); no follow-up transfer for a reserve released after its payout's
-`netAmount` was already sent (see above); and this is still a mocked
-bank rail — `BankTransferPort`'s real-world equivalent (ACH, SEPA, a
-wire) settles over days and would need its own webhook-driven
-confirmation the way dispute resolution/3DS do, not the synchronous
-"sent" this mock resolves with immediately.
+**What genuinely remains**: nothing from this section's original list —
+the "no real KYC review," "still a mocked bank rail," and "no follow-up
+transfer for a released reserve" gaps this section used to end on are
+all now real, switchable, tested mechanisms. See
+[`future-directions.md`](./future-directions.md#marketplace--split-payments)
+for what's still missing at the marketplace-splits level (multi-party
+splits with per-recipient FX).

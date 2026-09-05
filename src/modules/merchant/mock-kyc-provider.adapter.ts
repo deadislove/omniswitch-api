@@ -7,7 +7,10 @@ import { KYCProviderPort, KYCVerificationResult } from './kyc-provider.port';
  * Calls scripts/mock-psp/server.js's `/kyc/verify` endpoint — same
  * "point at a local mock in tests/dev" pattern as FXRateProviderAdapter/
  * the PSP adapters' configurable base URLs, not a real identity-verification
- * provider (Persona, Onfido, Stripe Identity, ...).
+ * provider. Resolves synchronously (`APPROVED`/`REJECTED`, never
+ * `PENDING`) — the default (`KYC_PROVIDER` unset or `mock`) so local
+ * dev/e2e don't need a webhook round trip. See `PersonaKycProviderAdapter`
+ * for the real, async-reviewing alternative this same port also supports.
  */
 @Injectable()
 export class MockKYCProviderAdapter extends KYCProviderPort {
@@ -33,9 +36,8 @@ export class MockKYCProviderAdapter extends KYCProviderPort {
     }
 
     const body = await response.json();
-    this.logger.log(
-      `KYC verification for "${params.legalName}": ${body.approved ? 'approved' : 'declined'} (applicationId=${body.applicationId})`,
-    );
-    return { approved: body.approved === true, applicationId: body.applicationId, reason: body.reason };
+    const status = body.approved === true ? 'APPROVED' : 'REJECTED';
+    this.logger.log(`KYC verification for "${params.legalName}": ${status} (applicationId=${body.applicationId})`);
+    return { status, applicationId: body.applicationId, reason: body.reason };
   }
 }

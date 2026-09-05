@@ -94,13 +94,17 @@ Non-secret configuration, organized by concern:
 - **PSP configuration** — `ADYEN_BASE_URL` points at the real
   `checkout-live.adyen.com`; `STRIPE_BASE_URL` is deliberately absent
   (the adapter defaults to the real Stripe API when unset).
-  `FX_RATE_PROVIDER_URL`/`KYC_PROVIDER_URL`/`BANK_TRANSFER_PROVIDER_URL`
-  are also absent — their adapters are literally named
-  `FXRateProviderAdapter`/`MockKycProviderAdapter`/
-  `MockBankTransferAdapter`, with no real third-party integration behind
-  any of them yet. Leaving them unset (rather than pointing at a
-  realistic-looking URL) is the honest state until a real provider is
-  integrated. See
+  `FX_RATE_PROVIDER_URL` is also absent — `FXRateProviderAdapter` has no
+  real third-party integration behind it at all. `KYC_PROVIDER`/
+  `KYC_PROVIDER_URL`/`PERSONA_PROVIDER_URL` and `BANK_TRANSFER_PROVIDER`/
+  `BANK_TRANSFER_PROVIDER_URL`/`ACH_PROVIDER_URL`/`WIRE_PROVIDER_URL` are
+  absent too — unlike FX, real adapters do exist for both of these
+  (`PersonaKycProviderAdapter`; `AchBankTransferAdapter`/
+  `WireBankTransferAdapter`), but this reference deployment leaves both
+  at their `mock` default, since no real Persona/Onfido or ACH/wire
+  provider credentials exist to configure either with. Leaving these
+  unset (rather than pointing at a realistic-looking URL) is the honest
+  state until a real provider is integrated. See
   [`../deployment/charge-latency-test-environment.md`](../deployment/charge-latency-test-environment.md)
   for how to temporarily redirect these at a mock PSP for testing,
   without editing this file.

@@ -43,19 +43,6 @@ and [`../../DEV_README.md`](../../DEV_README.md#marketplace--split-payments-phas
 for the mechanism.
 
 What's still genuinely missing:
-- **A real KYC review.** The mock decision is synchronous and
-  marker-driven (a `legalName` substring), not an actual human/AI
-  reviewer working over days the way a real provider (Persona, Onfido,
-  Stripe Identity) does.
-- **A follow-up transfer for a reserve released after its payout's net
-  amount was already sent.** Transfer initiation only ever covers
-  `netAmount` — if the reserve is released later, this system has no
-  mechanism to send it in a subsequent transfer. See
-  [`marketplace-and-payouts.md`](./marketplace-and-payouts.md#payout-kyc-gating-and-real-transfer-initiation)
-  for the fuller reasoning.
-- **A real bank/ACH/wire rail.** `BankTransferPort`'s mock resolves
-  "sent" synchronously; a real transfer settles over days and would need
-  its own webhook-driven confirmation the way dispute resolution/3DS do.
 - **Multi-party splits with per-recipient FX.** A split charge can't be
   combined with the platform's own settlement-currency conversion at all
   today, let alone give each connected account its own settlement
@@ -181,10 +168,6 @@ what was built is explicitly a mechanism demonstration, same posture as
 - **No decline-code-nuanced learning.** The policy is static; a real
   system would adjust its auto-contestable reason-code list over time
   based on which reasons this specific platform's merchants actually win.
-- **No real notification integration.** The event hook exists, but
-  nothing is actually subscribed to it yet — no email, no Slack, no
-  paging. The *merchant* still has no path telling them a dispute needs
-  attention, only an operator polling `GET /admin/disputes`.
 
 ## Cross-Border Settlement & Tax
 
@@ -233,6 +216,25 @@ principal's full authority, and the principal typically wants to grant a
 their full account access — closer to a limited power of attorney than
 to an employee/RBAC role. That's the relationship a `Delegation` models.
 
+### Human-approval hold for above-threshold purchases
+
+The business framing this section originally described — "ask me first
+for anything above $200" — is now a real mechanism, not just a policy
+number: `SpendPolicy.requireApprovalAboveAmount` sits strictly below
+`perTransactionLimit`. A charge under that threshold auto-executes
+exactly as before; a charge above it (but still within the hard
+per-transaction cap) doesn't reach a PSP at all — it creates a
+`ChargeApproval`, reserves the spend against the delegation immediately
+(so a flurry of pending requests can't collectively bust the monthly
+budget before any of them is decided), and waits. An operator decides
+via `POST /charge-approvals/:id/approve` (executes the deferred charge
+in that same request — there's no further async step after approval) or
+`POST /charge-approvals/:id/deny` (releases the reservation; the PSP is
+never called). `perTransactionLimit`/`monthlyLimit`/category violations
+are unaffected — those still reject outright, never routed to approval;
+this only inserts a hold *inside* the range a charge would otherwise
+have auto-executed in.
+
 ### What's still genuinely missing
 
 - **Liability and dispute attribution.** If an agent makes an incorrect
@@ -252,14 +254,6 @@ to an employee/RBAC role. That's the relationship a `Delegation` models.
   velocity, has this exact agent/principal pairing transacted with this
   merchant before); none of that exists today — an agent-initiated charge
   is scored identically to a human-initiated one.
-- **A human-approval step for above-threshold purchases.** The business
-  framing this section originally described ("ask me first for anything
-  above $200") isn't built — a charge either fits the delegation's
-  policy or it's rejected outright; there's no "hold for human approval"
-  intermediate state. `Delegation`'s spend-policy check is the natural
-  place this would plug in, but it's a genuinely new async flow (the
-  charge request would need to pause, not just succeed/fail), not an
-  extension of the current synchronous reserve-then-charge path.
 - **Standards alignment.** Stripe's agentic commerce tooling, Google's
   Agent Payments Protocol, and various agent-to-agent authorization
   proposals are all still evolving; `Delegation`/`SpendPolicy` implement

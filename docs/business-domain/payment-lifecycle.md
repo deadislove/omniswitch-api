@@ -243,12 +243,12 @@ accurate regardless of *why* the money left, and a payment that was
 already partially refunded before the dispute started is never
 double-counted between the earlier refund and the dispute-loss clawback.
 
-**Notification**: creation and resolution now emit structured
-`dispute.created`/`dispute.resolved` events via `EventEmitter2`, not just
-a log line — a real notification integration (email/Slack/paging) has
-something to subscribe to, even though nothing does yet. Still a stand-in,
-same posture as `ReconciliationService`'s/the outbox relay's alerting
-elsewhere in this codebase — but a real *hook* now, not only a log line.
+**Notification**: creation and resolution emit structured
+`dispute.created`/`dispute.resolved` events via `EventEmitter2`, and
+`DisputeNotificationListener` actually delivers them to the merchant now
+— email, Slack, or webhook, per-merchant configurable
+(`MerchantEntity.disputeNotificationChannel`), defaulting to webhook. See
+[`disputes.md`](./disputes.md#resolution) for the delivery mechanism.
 
 **Not modeled**: partial-amount disputes (a dispute is always assumed to
 cover the full charged amount — real-world chargebacks usually are, but

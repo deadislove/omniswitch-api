@@ -200,8 +200,18 @@ export class ChargePaymentResponseDto {
   @ApiProperty({ example: 'pay_abc123' })
   paymentId: string;
 
-  @ApiProperty({ example: 'SUCCEEDED' })
+  @ApiProperty({
+    example: 'SUCCEEDED',
+    description:
+      "PENDING_APPROVAL is a special case: only returned for an AGENT charge above the delegation's requireApprovalAboveAmount — no Payment exists yet (the PSP was never called), only a ChargeApproval (see approvalId). Every other value is PaymentStatus as usual.",
+  })
   status: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Only present when status is PENDING_APPROVAL — the ChargeApproval id to approve/deny via POST /charge-approvals/:id/approve|deny',
+  })
+  approvalId?: string;
 
   @ApiPropertyOptional({ example: 'pi_stripe_abc123' })
   pspTransactionId?: string;

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 // Entities
 import { PaymentEntity } from './adapters/persistence/entities/payment.entity';
@@ -13,6 +13,7 @@ import { PlanEntity } from './adapters/persistence/entities/plan.entity';
 import { PayoutEntity } from './adapters/persistence/entities/payout.entity';
 import { PayoutSweepRunEntity } from './adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from './adapters/persistence/entities/delegation.entity';
+import { ChargeApprovalEntity } from './adapters/persistence/entities/charge-approval.entity';
 
 // Repositories
 import {
@@ -26,7 +27,11 @@ import { SubscriptionTypeOrmRepository } from './adapters/persistence/repositori
 import { PlanTypeOrmRepository } from './adapters/persistence/repositories/plan-typeorm.repository';
 import { PayoutTypeOrmRepository } from './adapters/persistence/repositories/payout-typeorm.repository';
 import { MockBankTransferAdapter } from './adapters/bank/mock-bank-transfer.adapter';
+import { AchBankTransferAdapter } from './adapters/bank/ach-bank-transfer.adapter';
+import { WireBankTransferAdapter } from './adapters/bank/wire-bank-transfer.adapter';
+import { BankTransferWebhookGuard } from './adapters/bank/bank-transfer-webhook.guard';
 import { DelegationTypeOrmRepository } from './adapters/persistence/repositories/delegation-typeorm.repository';
+import { ChargeApprovalTypeOrmRepository } from './adapters/persistence/repositories/charge-approval-typeorm.repository';
 
 // Ports
 import { PaymentRepositoryPort } from './ports/outbound/payment-repository.port';
@@ -41,6 +46,7 @@ import { PlanPort } from './ports/outbound/plan.port';
 import { PayoutPort } from './ports/outbound/payout.port';
 import { BankTransferPort } from './ports/outbound/bank-transfer.port';
 import { DelegationPort } from './ports/outbound/delegation.port';
+import { ChargeApprovalPort } from './ports/outbound/charge-approval.port';
 
 // Adapters
 import { RedisCacheAdapter } from './adapters/cache/redis-cache.adapter';
@@ -68,11 +74,17 @@ import { RiskTieringService } from './application/services/risk-tiering.service'
 import { PlanService } from './application/services/plan.service';
 import { PayoutService } from './application/services/payout.service';
 import { DelegationService } from './application/services/delegation.service';
+import { ChargeApprovalService } from './application/services/charge-approval.service';
 import { LegalHoldService } from './application/services/legal-hold.service';
 import { AmbiguousPaymentService } from './application/services/ambiguous-payment.service';
 import { AmbiguousRiskMonitoringService } from './application/services/ambiguous-risk-monitoring.service';
 import { PspFeeScheduleService } from './application/services/psp-fee-schedule.service';
 import { PspCostReconciliationService } from './application/services/psp-cost-reconciliation.service';
+import { DisputeNotificationDispatcherService } from './application/services/dispute-notification-dispatcher.service';
+import { DisputeNotificationListener } from './application/services/dispute-notification.listener';
+import { EmailDisputeNotificationAdapter } from './adapters/notifications/email-dispute-notification.adapter';
+import { SlackDisputeNotificationAdapter } from './adapters/notifications/slack-dispute-notification.adapter';
+import { WebhookDisputeNotificationAdapter } from './adapters/notifications/webhook-dispute-notification.adapter';
 
 // Controller
 import { PaymentController } from './application/controllers/payment.controller';
@@ -87,6 +99,7 @@ import { RiskTieringAdminController } from './application/controllers/risk-tieri
 import { PlanController } from './application/controllers/plan.controller';
 import { MarketplacePayoutAdminController } from './application/controllers/marketplace-payout-admin.controller';
 import { DelegationController } from './application/controllers/delegation.controller';
+import { ChargeApprovalController } from './application/controllers/charge-approval.controller';
 import { LegalHoldAdminController } from './application/controllers/legal-hold-admin.controller';
 import { AmbiguousPaymentAdminController } from './application/controllers/ambiguous-payment-admin.controller';
 import { AmbiguousRiskAdminController } from './application/controllers/ambiguous-risk-admin.controller';
@@ -125,6 +138,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
       PayoutEntity,
       PayoutSweepRunEntity,
       DelegationEntity,
+      ChargeApprovalEntity,
     ]),
     // No separate ThrottlerModule registration here: @nestjs/throttler's
     // ThrottlerModule is @Global(), so there is exactly one
@@ -164,6 +178,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     PlanController,
     MarketplacePayoutAdminController,
     DelegationController,
+    ChargeApprovalController,
     LegalHoldAdminController,
     AmbiguousPaymentAdminController,
     AmbiguousRiskAdminController,
@@ -221,13 +236,43 @@ import { VaultModule } from '../../shared/vault/vault.module';
       provide: PayoutPort,
       useClass: PayoutTypeOrmRepository,
     },
+    // Real adapters as ordinary providers (each has its own ConfigService
+    // dependency), then a useFactory picks which one BankTransferPort
+    // actually resolves to at DI-container build time — BANK_TRANSFER_PROVIDER
+    // ('mock' (default) / 'ach' / 'wire'). Every existing caller of
+    // BankTransferPort (PayoutService) is unaffected by which one wins.
+    MockBankTransferAdapter,
+    AchBankTransferAdapter,
+    WireBankTransferAdapter,
     {
       provide: BankTransferPort,
-      useClass: MockBankTransferAdapter,
+      useFactory: (
+        mock: MockBankTransferAdapter,
+        ach: AchBankTransferAdapter,
+        wire: WireBankTransferAdapter,
+        config: ConfigService,
+      ) => {
+        const provider = config.get<string>('BANK_TRANSFER_PROVIDER', 'mock');
+        switch (provider) {
+          case 'mock':
+            return mock;
+          case 'ach':
+            return ach;
+          case 'wire':
+            return wire;
+          default:
+            throw new Error(`Unknown BANK_TRANSFER_PROVIDER: "${provider}" (expected mock/ach/wire)`);
+        }
+      },
+      inject: [MockBankTransferAdapter, AchBankTransferAdapter, WireBankTransferAdapter, ConfigService],
     },
     {
       provide: DelegationPort,
       useClass: DelegationTypeOrmRepository,
+    },
+    {
+      provide: ChargeApprovalPort,
+      useClass: ChargeApprovalTypeOrmRepository,
     },
 
     // Application Services
@@ -247,11 +292,21 @@ import { VaultModule } from '../../shared/vault/vault.module';
     PlanService,
     PayoutService,
     DelegationService,
+    ChargeApprovalService,
     LegalHoldService,
     AmbiguousPaymentService,
     AmbiguousRiskMonitoringService,
     PspFeeScheduleService,
     PspCostReconciliationService,
+
+    // Dispute notification channel adapters + the @OnEvent listener that
+    // actually subscribes dispute.created/dispute.resolved to something,
+    // for the first time (see DisputeNotificationListener's docblock).
+    EmailDisputeNotificationAdapter,
+    SlackDisputeNotificationAdapter,
+    WebhookDisputeNotificationAdapter,
+    DisputeNotificationDispatcherService,
+    DisputeNotificationListener,
 
     // Auth
     JwtAuthGuard,
@@ -263,6 +318,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // Webhook signature guards
     StripeWebhookGuard,
     AdyenWebhookGuard,
+    BankTransferWebhookGuard,
   ],
   exports: [
     PaymentRepositoryPort,

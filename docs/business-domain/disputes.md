@@ -119,9 +119,35 @@ something this platform or the merchant decides directly.
   the ledger mechanics this reuses (a lost dispute books like a refund,
   because economically it is one — just not merchant-initiated).
 
-Both `dispute.created` and `dispute.resolved` are structured events, so a
-real notification integration has something to subscribe to — nothing
-does yet; see [`future-directions.md`](./future-directions.md#dispute-resolution-workflow).
+Both `dispute.created` and `dispute.resolved` are structured events, and
+`DisputeNotificationListener` (an `@OnEvent` subscriber) now actually
+delivers them to the merchant — the first real subscriber either event
+ever had. Delivery channel is per-merchant
+(`MerchantEntity.disputeNotificationChannel`, defaulting to `WEBHOOK` —
+the only channel that needs no merchant-side setup beyond a URL) via
+`DisputeNotificationDispatcherService`, one of three adapters:
+
+- **`WEBHOOK`** (default) — POSTs to `disputeNotificationTarget`, signed
+  with the merchant's own `hmacSecretCiphertext` (the same key that
+  signs their *inbound* requests via `HmacSignatureGuard`) so they can
+  verify it genuinely came from this platform without a second
+  credential — `X-OmniSwitch-Signature`, same HMAC scheme
+  `StripeWebhookGuard` verifies incoming PSP webhooks with, just
+  outbound.
+- **`SLACK`** — POSTs Slack's own `{text}` shape straight to a Slack
+  Incoming Webhook URL; no separate credential needed, since the URL's
+  secrecy already is the access control.
+- **`EMAIL`** — genuinely needs a real transactional-email provider
+  integration (unlike webhook/Slack, a plain HTTP POST isn't itself a
+  working email mechanism) — `EMAIL_PROVIDER_URL` points at one, mocked
+  by `scripts/mock-psp/server.js`'s `/v1/email/send` in dev/test.
+
+A merchant with no `disputeNotificationTarget` configured (every
+merchant created before this existed) is skipped silently, not sent to
+an empty destination — see
+`PATCH /admin/merchants/:id/dispute-notification-channel` to configure
+one. A delivery failure is logged, never allowed to break dispute
+processing itself.
 
 ## Not modeled
 

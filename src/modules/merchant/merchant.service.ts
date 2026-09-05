@@ -87,8 +87,23 @@ export class MerchantService {
     return this.merchantRepo.findOne({ where: { merchantId, isActive: true } });
   }
 
+  // Forced onto master, same reasoning as findMerchantOnMaster() above —
+  // this is only called by GET /admin/merchants and the ambiguous-risk/
+  // risk-tiering sweeps, all low-frequency admin/ops paths (unlike
+  // findByMerchantId(), which also backs per-request guards and stays
+  // replica-routed on purpose). An admin flagging/clearing a merchant and
+  // immediately re-listing — or a sweep reading right after its own prior
+  // write — is exactly the "write then read moments later" shape that
+  // races replica lag; confirmed via a real e2e failure
+  // (ambiguous-risk-monitoring.e2e-spec.ts's daily-volume trigger test)
+  // that only reproduced under concurrent e2e load, never in isolation.
   async list(): Promise<MerchantEntity[]> {
-    return this.merchantRepo.find({ order: { createdAt: 'DESC' } });
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager.find(MerchantEntity, { order: { createdAt: 'DESC' } });
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   /**
@@ -136,7 +151,15 @@ export class MerchantService {
           code: 'PLATFORM_MERCHANT_ID_REQUIRED',
         });
       }
-      const platform = await this.merchantRepo.findOne({ where: { merchantId: params.platformMerchantId } });
+      // Forced onto master — same real, previously-hit race
+      // findMerchantOnMaster()'s own docblock describes: a platform
+      // merchant created moments earlier (its own createMerchant() call,
+      // committed to master) and immediately referenced here as
+      // platformMerchantId races the replica's ~1s streaming lag. Found
+      // live via an intermittent "Platform merchant not found" 404 when
+      // running e2e files back-to-back in the same worker — passed every
+      // time in isolation, which is exactly this race's signature.
+      const platform = await this.findMerchantOnMaster({ merchantId: params.platformMerchantId });
       if (!platform) {
         throw new NotFoundException({
           statusCode: 404,
@@ -280,6 +303,24 @@ export class MerchantService {
     return merchant;
   }
 
+  async updateDisputeNotificationChannel(
+    merchantId: string,
+    channel: 'EMAIL' | 'SLACK' | 'WEBHOOK',
+    target: string | null,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = `${merchant.disputeNotificationChannel}:${merchant.disputeNotificationTarget ?? '(none)'}`;
+    merchant.disputeNotificationChannel = channel;
+    // null, not undefined — same "TypeORM save() silently skips undefined"
+    // reasoning as updateSettlementCurrency() above.
+    merchant.disputeNotificationTarget = target;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `Dispute notification channel for merchant ${merchantId} changed from ${previous} to ${channel}:${target ?? '(none)'}`,
+    );
+    return merchant;
+  }
+
   /** Operator-initiated — see riskTierAutoManaged's docblock for why this always disables auto-management, unlike applyAutoRiskTier() below. */
   async updateReservePolicy(merchantId: string, reserveBps: number, reserveHoldDays: number): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
@@ -318,20 +359,54 @@ export class MerchantService {
    * either; there's no real harm in a platform submitting business info
    * that nothing ever reads, and rejecting it here would just be an
    * arbitrary restriction this system has no real reason to enforce.
-   * Resolves synchronously against the mock KYC provider (see
-   * KYCProviderPort's docblock for why a real provider wouldn't).
+   * Resolves synchronously against the mock provider (`KYC_PROVIDER=mock`,
+   * the default) or asynchronously against a real one (`=persona`) — see
+   * `confirmKyc()` for the async completion path.
    */
   async submitKyc(merchantId: string, legalName: string, taxId: string): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
-    const { approved, applicationId, reason } = await this.kycProvider.verify({ legalName, taxId });
-    merchant.kycStatus = approved ? 'VERIFIED' : 'REJECTED';
+    const { status, applicationId, reason } = await this.kycProvider.verify({ legalName, taxId });
     merchant.kycLegalName = legalName;
     merchant.kycTaxId = taxId;
+    if (status === 'PENDING') {
+      merchant.kycStatus = 'PENDING_REVIEW';
+      merchant.kycApplicationId = applicationId;
+    } else {
+      merchant.kycStatus = status === 'APPROVED' ? 'VERIFIED' : 'REJECTED';
+      merchant.kycApplicationId = null;
+    }
     await this.merchantRepo.save(merchant);
     this.logger.log(
       `KYC for merchant ${merchantId}: ${merchant.kycStatus} (applicationId=${applicationId}${reason ? `, reason=${reason}` : ''})`,
     );
     return merchant;
+  }
+
+  /**
+   * Called from `POST /webhooks/kyc` (see `KycWebhookGuard`) once a real
+   * provider's async review resolves a `PENDING_REVIEW` application.
+   * Idempotent — a duplicate webhook delivery for an already-decided
+   * application, or one for an unrecognized `applicationId`, is logged
+   * and ignored rather than throwing, same posture as
+   * `PayoutService.confirmTransfer()`.
+   */
+  async confirmKyc(applicationId: string, outcome: 'VERIFIED' | 'REJECTED', reason?: string): Promise<void> {
+    const merchant = await this.merchantRepo.findOne({ where: { kycApplicationId: applicationId } });
+    if (!merchant) {
+      this.logger.warn(`KYC webhook: no merchant found for applicationId=${applicationId}, ignoring`);
+      return;
+    }
+    if (merchant.kycStatus !== 'PENDING_REVIEW') {
+      this.logger.log(
+        `KYC webhook: merchant ${merchant.merchantId} (applicationId=${applicationId}) is already ${merchant.kycStatus}, ignoring duplicate confirmation`,
+      );
+      return;
+    }
+    merchant.kycStatus = outcome;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `KYC for merchant ${merchant.merchantId} confirmed ${outcome} (applicationId=${applicationId}${reason ? `, reason=${reason}` : ''})`,
+    );
   }
 
   /**

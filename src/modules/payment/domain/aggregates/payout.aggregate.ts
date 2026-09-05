@@ -19,7 +19,17 @@ import { Money } from '../value-objects/money.vo';
  * somewhere real is a separate action — see `recordTransferInitiated()`.
  */
 export type PayoutReserveStatus = 'NONE' | 'HELD' | 'RELEASED';
-export type PayoutTransferStatus = 'NOT_INITIATED' | 'INITIATED' | 'FAILED';
+/**
+ * `PENDING_CONFIRMATION` sits between `NOT_INITIATED` and `INITIATED` for
+ * a real, async-settling rail (`AchBankTransferAdapter`/
+ * `WireBankTransferAdapter`) — the rail accepted the transfer but hasn't
+ * settled it yet, so `INITIATED` isn't true yet either.
+ * `MockBankTransferAdapter` skips this state entirely (`NOT_INITIATED` ->
+ * `INITIATED` in one call, same as before this state existed) since it
+ * settles synchronously. See `recordTransferPending()`/
+ * `recordTransferInitiated()`.
+ */
+export type PayoutTransferStatus = 'NOT_INITIATED' | 'PENDING_CONFIRMATION' | 'INITIATED' | 'FAILED';
 
 export class Payout {
   private constructor(
@@ -39,6 +49,10 @@ export class Payout {
     private _transferId: string | undefined,
     private _transferInitiatedAt: Date | undefined,
     private _transferError: string | undefined,
+    private _reserveTransferStatus: PayoutTransferStatus,
+    private _reserveTransferId: string | undefined,
+    private _reserveTransferInitiatedAt: Date | undefined,
+    private _reserveTransferError: string | undefined,
   ) {}
 
   static create(params: {
@@ -88,6 +102,10 @@ export class Payout {
       undefined,
       undefined,
       undefined,
+      'NOT_INITIATED',
+      undefined,
+      undefined,
+      undefined,
     );
   }
 
@@ -108,6 +126,10 @@ export class Payout {
     transferId?: string;
     transferInitiatedAt?: Date;
     transferError?: string;
+    reserveTransferStatus: PayoutTransferStatus;
+    reserveTransferId?: string;
+    reserveTransferInitiatedAt?: Date;
+    reserveTransferError?: string;
   }): Payout {
     return new Payout(
       params.id,
@@ -126,6 +148,10 @@ export class Payout {
       params.transferId,
       params.transferInitiatedAt,
       params.transferError,
+      params.reserveTransferStatus,
+      params.reserveTransferId,
+      params.reserveTransferInitiatedAt,
+      params.reserveTransferError,
     );
   }
 
@@ -156,12 +182,41 @@ export class Payout {
   }
 
   /**
+   * Records that the rail *accepted* the transfer for processing but
+   * hasn't settled it yet (`AchBankTransferAdapter`/
+   * `WireBankTransferAdapter`) — final outcome arrives later via
+   * `PayoutService.confirmTransfer()`, called from the
+   * `POST /webhooks/bank-transfer` receiver. `MockBankTransferAdapter`
+   * never calls this — it goes straight to `recordTransferInitiated()`.
+   */
+  recordTransferPending(transferId: string, now: Date): void {
+    if (this._kycBlocked) {
+      throw new Error(`Payout ${this._id} is KYC-blocked, cannot initiate a transfer`);
+    }
+    if (this._netAmount.isZero()) {
+      throw new Error(`Payout ${this._id} has no net amount to transfer`);
+    }
+    if (this._transferStatus === 'INITIATED' || this._transferStatus === 'PENDING_CONFIRMATION') {
+      throw new Error(`Payout ${this._id}'s transfer is already ${this._transferStatus.toLowerCase()}`);
+    }
+    this._transferStatus = 'PENDING_CONFIRMATION';
+    this._transferId = transferId;
+    this._transferInitiatedAt = now;
+    this._transferError = undefined;
+  }
+
+  /**
    * Records that `netAmount` was actually sent to the merchant's bank —
-   * see BankTransferPort. Deliberately only ever covers `netAmount`, not
-   * any *later*-released reserve — see this aggregate's file-level
-   * docblock and docs/business-domain/ledger-and-settlement.md for why
-   * that's a real, documented gap rather than something this method
-   * silently gets wrong.
+   * see BankTransferPort. Called either immediately (`MockBankTransferAdapter`'s
+   * synchronous `SENT`, straight from `NOT_INITIATED`) or later, from
+   * `PENDING_CONFIRMATION`, once a real rail's async webhook confirms
+   * settlement (`PayoutService.confirmTransfer()`) — both paths land in
+   * the same terminal `INITIATED` state. Deliberately only ever covers
+   * `netAmount`, not any *later*-released reserve — see this aggregate's
+   * file-level docblock and
+   * docs/business-domain/marketplace-and-payouts.md for why that's a
+   * real, documented gap rather than something this method silently gets
+   * wrong.
    */
   recordTransferInitiated(transferId: string, now: Date): void {
     if (this._kycBlocked) {
@@ -179,10 +234,62 @@ export class Payout {
     this._transferError = undefined;
   }
 
-  /** The bank/PSP declined the transfer — recorded, not thrown, so a sweep can move on to the next payout (see PayoutService.initiateEligibleTransfers()'s per-item try/catch). */
+  /** The bank/PSP declined the transfer — recorded, not thrown, so a sweep can move on to the next payout (see PayoutService.initiateEligibleTransfers()'s per-item try/catch). Also used from PENDING_CONFIRMATION when a real rail's async webhook reports settlement failure. */
   recordTransferFailed(error: string): void {
     this._transferStatus = 'FAILED';
     this._transferError = error;
+  }
+
+  /**
+   * The follow-up transfer this aggregate's file-level docblock used to
+   * name as a real, documented gap: once a reserve is released, its
+   * amount needs its own transfer, independent of whatever already
+   * happened to `netAmount` — same rail (`BankTransferPort`), same
+   * `PENDING_CONFIRMATION`/`INITIATED`/`FAILED` shape, just a second,
+   * separate transfer against a different amount. Requires the reserve
+   * to actually be released first (`releaseReserve()`) — there is
+   * nothing to transfer otherwise.
+   */
+  private assertReserveTransferable(): void {
+    if (this._kycBlocked) {
+      throw new Error(`Payout ${this._id} is KYC-blocked, cannot initiate a reserve transfer`);
+    }
+    if (this._reserveAmount.isZero()) {
+      throw new Error(`Payout ${this._id} has no reserve to transfer`);
+    }
+    if (!this._reserveReleased) {
+      throw new Error(`Payout ${this._id}'s reserve has not been released yet`);
+    }
+  }
+
+  /** Same shape as recordTransferPending(), for the reserve leg. */
+  recordReserveTransferPending(transferId: string, now: Date): void {
+    this.assertReserveTransferable();
+    if (this._reserveTransferStatus === 'INITIATED' || this._reserveTransferStatus === 'PENDING_CONFIRMATION') {
+      throw new Error(`Payout ${this._id}'s reserve transfer is already ${this._reserveTransferStatus.toLowerCase()}`);
+    }
+    this._reserveTransferStatus = 'PENDING_CONFIRMATION';
+    this._reserveTransferId = transferId;
+    this._reserveTransferInitiatedAt = now;
+    this._reserveTransferError = undefined;
+  }
+
+  /** Same shape as recordTransferInitiated(), for the reserve leg. */
+  recordReserveTransferInitiated(transferId: string, now: Date): void {
+    this.assertReserveTransferable();
+    if (this._reserveTransferStatus === 'INITIATED') {
+      throw new Error(`Payout ${this._id}'s reserve transfer is already initiated`);
+    }
+    this._reserveTransferStatus = 'INITIATED';
+    this._reserveTransferId = transferId;
+    this._reserveTransferInitiatedAt = now;
+    this._reserveTransferError = undefined;
+  }
+
+  /** Same shape as recordTransferFailed(), for the reserve leg. */
+  recordReserveTransferFailed(error: string): void {
+    this._reserveTransferStatus = 'FAILED';
+    this._reserveTransferError = error;
   }
 
   get id(): string {
@@ -232,6 +339,19 @@ export class Payout {
   }
   get transferError(): string | undefined {
     return this._transferError;
+  }
+
+  get reserveTransferStatus(): PayoutTransferStatus {
+    return this._reserveTransferStatus;
+  }
+  get reserveTransferId(): string | undefined {
+    return this._reserveTransferId;
+  }
+  get reserveTransferInitiatedAt(): Date | undefined {
+    return this._reserveTransferInitiatedAt;
+  }
+  get reserveTransferError(): string | undefined {
+    return this._reserveTransferError;
   }
 
   get reserveStatus(): PayoutReserveStatus {
