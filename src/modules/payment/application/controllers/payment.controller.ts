@@ -239,6 +239,7 @@ export class PaymentController {
     // REQUIRES_CAPTURE outcome stays booked; only a definite FAILED result
     // (or the saga throwing) releases it below.
     let reservedDelegationId: string | undefined;
+    let agentPercentOfRemainingMonthlyBudget: number | undefined;
     if (req.user?.roles?.includes(UserRole.AGENT)) {
       const delegationId = req.user?.delegationId;
       if (!delegationId) {
@@ -248,13 +249,22 @@ export class PaymentController {
           code: 'DELEGATION_MISSING',
         });
       }
-      const delegation = await this.delegationService.reserveSpendOrThrow(
-        delegationId,
-        amount,
-        dto.category,
-        new Date(),
-      );
+      const now = new Date();
+      const delegation = await this.delegationService.reserveSpendOrThrow(delegationId, amount, dto.category, now);
       reservedDelegationId = delegationId;
+
+      // The Delegation returned above reflects state *before*
+      // reserveSpendOrThrow()'s reservation (see its own docblock — the
+      // in-memory object it returns is never mutated by the atomic DB
+      // reservation) — exactly the "remaining budget before this charge"
+      // PaymentAggregate.calculateRiskScore()'s agent-context signal
+      // needs. Safe from division-by-zero/negative: reserveSpendOrThrow()
+      // already threw above if spentBefore + amount would exceed
+      // monthlyLimit, so remainingBeforeThisCharge is always >= amount > 0
+      // by the time this line runs.
+      const spentBefore = delegation.spentThisMonth(now);
+      const remainingBeforeThisCharge = delegation.spendPolicy.monthlyLimit.subtract(spentBefore);
+      agentPercentOfRemainingMonthlyBudget = (amount.amount / remainingBeforeThisCharge.amount) * 100;
 
       // Above the delegation's own approval threshold (but still within
       // perTransactionLimit, already checked by reserveSpendOrThrow above)
@@ -292,9 +302,9 @@ export class PaymentController {
           merchantId,
           idempotencyKey,
           dto,
-          initiatorMetadata: reservedDelegationId
-            ? { delegationId: reservedDelegationId, initiatedBy: 'agent' }
-            : undefined,
+          delegationId: reservedDelegationId,
+          initiatedBy: reservedDelegationId ? 'agent' : undefined,
+          agentPercentOfRemainingMonthlyBudget,
         }),
       );
     } catch (err: unknown) {
@@ -459,6 +469,8 @@ export class PaymentController {
         amount: c.amount.amount,
         createdAt: c.createdAt.toISOString(),
       })),
+      metadata: payment.metadata.metadata,
+      statementDescriptor: payment.metadata.statementDescriptor,
       createdAt: payment.createdAt.toISOString(),
       updatedAt: payment.updatedAt.toISOString(),
     };

@@ -70,6 +70,7 @@ function toResponseDto(subscription: Subscription): SubscriptionResponseDto {
     failedAttempts: subscription.failedAttempts,
     nextRetryAt: subscription.nextRetryAt?.toISOString(),
     lastDeclineCode: subscription.lastDeclineCode,
+    lastDeclinePspProvider: subscription.lastDeclinePspProvider,
     pendingCredit: subscription.pendingCredit?.amount,
     orderId: subscription.orderId,
     description: subscription.description,

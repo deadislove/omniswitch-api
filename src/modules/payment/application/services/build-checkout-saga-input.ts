@@ -2,6 +2,7 @@ import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { ChargePaymentDto } from '../dto/charge-payment.dto';
 import { CheckoutSagaInput } from '../sagas/payment-checkout.saga';
+import { PaymentInitiator } from '../../domain/aggregates/payment.aggregate';
 
 /**
  * Derives `PaymentCheckoutSaga.execute()`'s input from a `ChargePaymentDto`
@@ -18,9 +19,12 @@ export function buildCheckoutSagaInput(params: {
   merchantId: string;
   idempotencyKey: string;
   dto: ChargePaymentDto;
-  initiatorMetadata?: Record<string, string>;
+  delegationId?: string;
+  initiatedBy?: PaymentInitiator;
+  agentPercentOfRemainingMonthlyBudget?: number;
 }): CheckoutSagaInput {
-  const { paymentId, merchantId, idempotencyKey, dto, initiatorMetadata } = params;
+  const { paymentId, merchantId, idempotencyKey, dto, delegationId, initiatedBy, agentPercentOfRemainingMonthlyBudget } =
+    params;
   const amount = Money.of(dto.amount, dto.currency);
   const splits = dto.splits?.map((s) => ({ merchantId: s.merchantId, amount: Money.of(s.amount, dto.currency) }));
 
@@ -43,12 +47,16 @@ export function buildCheckoutSagaInput(params: {
     customerId: dto.customerId,
     orderId: dto.orderId,
     description: dto.description,
+    statementDescriptor: dto.statementDescriptor,
+    metadata: dto.metadata,
     binInfo,
     paymentMethodId: dto.paymentMethodId,
     cardToken: dto.cardToken,
     preferredProvider: dto.preferredProvider,
     captureMethod: dto.captureMethod,
     splits,
-    initiatorMetadata,
+    delegationId,
+    initiatedBy,
+    agentPercentOfRemainingMonthlyBudget,
   };
 }

@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createHmac } from 'crypto';
 import { DisputeNotificationPort, DisputeNotificationPayload } from '../../ports/outbound/dispute-notification.port';
 import { MerchantService } from '../../../merchant/merchant.service';
 import { VaultTransitService } from '../../../../shared/vault/vault-transit.service';
+import { postJsonNotification, signOmniSwitchPayload } from './notification-delivery.util';
 
 /**
  * Webhook Dispute Notification Adapter (default channel)
@@ -37,22 +37,8 @@ export class WebhookDisputeNotificationAdapter extends DisputeNotificationPort {
       return;
     }
     const secret = await this.vaultTransit.decrypt(merchant.hmacSecretCiphertext);
+    const signatureHeader = signOmniSwitchPayload(secret, JSON.stringify(payload));
 
-    const bodyStr = JSON.stringify(payload);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const signature = createHmac('sha256', secret).update(`${timestamp}.${bodyStr}`).digest('hex');
-
-    const response = await fetch(target, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-OmniSwitch-Signature': `t=${timestamp},v1=${signature}`,
-      },
-      body: bodyStr,
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!response.ok) {
-      throw new Error(`Dispute webhook to ${target} for merchant ${payload.merchantId} got HTTP ${response.status}`);
-    }
+    await postJsonNotification(target, payload, { 'X-OmniSwitch-Signature': signatureHeader });
   }
 }

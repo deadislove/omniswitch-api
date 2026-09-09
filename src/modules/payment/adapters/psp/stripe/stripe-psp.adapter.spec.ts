@@ -70,3 +70,58 @@ describe('StripePSPAdapter — ambiguous outcome tagging', () => {
     expect(circuitBreaker.recordFailure).not.toHaveBeenCalled();
   });
 });
+
+describe('StripePSPAdapter — custom metadata forwarding', () => {
+  let adapter: StripePSPAdapter;
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    const circuitBreaker = {
+      assertAvailable: jest.fn().mockResolvedValue(undefined),
+      recordSuccess: jest.fn().mockResolvedValue(undefined),
+      recordFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const configService = { get: (_key: string, def?: string) => def } as any;
+    adapter = new StripePSPAdapter(configService, circuitBreaker as unknown as RedisCircuitBreakerService);
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'pi_123', status: 'succeeded' }),
+    }) as any;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('forwards ChargePaymentDto.metadata to Stripe as metadata[<key>] form fields', async () => {
+    await adapter.charge({
+      paymentId: 'pay_1',
+      idempotencyKey: 'idem_1',
+      amount: Money.of(10, 'USD'),
+      currency: 'USD',
+      merchantId: 'merchant_1',
+      metadata: { campaign: 'summer_sale' },
+    });
+
+    const sentBody = new URLSearchParams((global.fetch as jest.Mock).mock.calls[0][1].body as string);
+    expect(sentBody.get('metadata[campaign]')).toBe('summer_sale');
+  });
+
+  it("a merchant-supplied metadata key can't overwrite the reserved payment_id/merchant_id/bin_country keys", async () => {
+    await adapter.charge({
+      paymentId: 'pay_1',
+      idempotencyKey: 'idem_1',
+      amount: Money.of(10, 'USD'),
+      currency: 'USD',
+      merchantId: 'merchant_1',
+      binCountry: 'US',
+      metadata: { payment_id: 'spoofed', merchant_id: 'spoofed', bin_country: 'spoofed' },
+    });
+
+    const sentBody = new URLSearchParams((global.fetch as jest.Mock).mock.calls[0][1].body as string);
+    expect(sentBody.get('metadata[payment_id]')).toBe('pay_1');
+    expect(sentBody.get('metadata[merchant_id]')).toBe('merchant_1');
+    expect(sentBody.get('metadata[bin_country]')).toBe('US');
+  });
+});

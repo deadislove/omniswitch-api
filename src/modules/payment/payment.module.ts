@@ -78,13 +78,24 @@ import { ChargeApprovalService } from './application/services/charge-approval.se
 import { LegalHoldService } from './application/services/legal-hold.service';
 import { AmbiguousPaymentService } from './application/services/ambiguous-payment.service';
 import { AmbiguousRiskMonitoringService } from './application/services/ambiguous-risk-monitoring.service';
+import { AmlReviewMonitoringService } from './application/services/aml-review-monitoring.service';
+import { AmlReviewNotificationDispatcherService } from './application/services/aml-review-notification-dispatcher.service';
+import { EmailAmlReviewNotificationAdapter } from './adapters/notifications/email-aml-review-notification.adapter';
+import { SlackAmlReviewNotificationAdapter } from './adapters/notifications/slack-aml-review-notification.adapter';
+import { WebhookAmlReviewNotificationAdapter } from './adapters/notifications/webhook-aml-review-notification.adapter';
 import { PspFeeScheduleService } from './application/services/psp-fee-schedule.service';
 import { PspCostReconciliationService } from './application/services/psp-cost-reconciliation.service';
+import { ReservePolicyEscalationListener } from './application/services/reserve-policy-escalation.listener';
 import { DisputeNotificationDispatcherService } from './application/services/dispute-notification-dispatcher.service';
 import { DisputeNotificationListener } from './application/services/dispute-notification.listener';
 import { EmailDisputeNotificationAdapter } from './adapters/notifications/email-dispute-notification.adapter';
 import { SlackDisputeNotificationAdapter } from './adapters/notifications/slack-dispute-notification.adapter';
 import { WebhookDisputeNotificationAdapter } from './adapters/notifications/webhook-dispute-notification.adapter';
+import { SubscriptionNotificationDispatcherService } from './application/services/subscription-notification-dispatcher.service';
+import { SubscriptionNotificationListener } from './application/services/subscription-notification.listener';
+import { EmailSubscriptionNotificationAdapter } from './adapters/notifications/email-subscription-notification.adapter';
+import { SlackSubscriptionNotificationAdapter } from './adapters/notifications/slack-subscription-notification.adapter';
+import { WebhookSubscriptionNotificationAdapter } from './adapters/notifications/webhook-subscription-notification.adapter';
 
 // Controller
 import { PaymentController } from './application/controllers/payment.controller';
@@ -103,6 +114,7 @@ import { ChargeApprovalController } from './application/controllers/charge-appro
 import { LegalHoldAdminController } from './application/controllers/legal-hold-admin.controller';
 import { AmbiguousPaymentAdminController } from './application/controllers/ambiguous-payment-admin.controller';
 import { AmbiguousRiskAdminController } from './application/controllers/ambiguous-risk-admin.controller';
+import { AmlReviewAdminController } from './application/controllers/aml-review-admin.controller';
 import { PspCostReconciliationAdminController } from './application/controllers/psp-cost-reconciliation-admin.controller';
 
 // Webhook Guards
@@ -182,6 +194,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     LegalHoldAdminController,
     AmbiguousPaymentAdminController,
     AmbiguousRiskAdminController,
+    AmlReviewAdminController,
     PspCostReconciliationAdminController,
   ],
   providers: [
@@ -298,6 +311,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     AmbiguousRiskMonitoringService,
     PspFeeScheduleService,
     PspCostReconciliationService,
+    ReservePolicyEscalationListener,
 
     // Dispute notification channel adapters + the @OnEvent listener that
     // actually subscribes dispute.created/dispute.resolved to something,
@@ -307,6 +321,26 @@ import { VaultModule } from '../../shared/vault/vault.module';
     WebhookDisputeNotificationAdapter,
     DisputeNotificationDispatcherService,
     DisputeNotificationListener,
+
+    // Subscription notification channel adapters + the @OnEvent listener
+    // that actually subscribes subscription.past_due/subscription.canceled
+    // to something, for the first time (see SubscriptionNotificationListener's
+    // docblock) — a separate channel/target pair per merchant from disputes.
+    EmailSubscriptionNotificationAdapter,
+    SlackSubscriptionNotificationAdapter,
+    WebhookSubscriptionNotificationAdapter,
+    SubscriptionNotificationDispatcherService,
+    SubscriptionNotificationListener,
+
+    // AML-review notification channel adapters + dispatcher — called
+    // directly by AmlReviewMonitoringService, not via an @OnEvent
+    // listener (see AmlReviewNotificationDispatcherService's docblock
+    // for why this event family doesn't need one).
+    EmailAmlReviewNotificationAdapter,
+    SlackAmlReviewNotificationAdapter,
+    WebhookAmlReviewNotificationAdapter,
+    AmlReviewNotificationDispatcherService,
+    AmlReviewMonitoringService,
 
     // Auth
     JwtAuthGuard,

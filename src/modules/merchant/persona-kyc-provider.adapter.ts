@@ -1,26 +1,32 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { KYCProviderPort, KYCVerificationResult } from './kyc-provider.port';
+import { mapPersonaInquiryStatus } from './persona-inquiry-status';
 
 /**
  * Persona KYC Provider Adapter
- * A real, async-reviewing identity/business-verification provider
- * (modeled on the shape Persona/Onfido actually expose: `POST` an
- * application, get `202 { id, status: 'pending' }` back immediately,
- * then the provider's own review — sometimes involving a human — decides
- * `approved`/`declined` and reports it later via `POST /webhooks/kyc`,
- * verified by `KycWebhookGuard`). Selected via `KYC_PROVIDER=persona`
+ * A real, async-reviewing identity/business-verification provider — an
+ * Inquiry is `POST`ed, the provider's own review (sometimes a human)
+ * decides `approved`/`declined` later, reported via `POST /webhooks/kyc`
+ * (verified by `KycWebhookGuard`). Selected via `KYC_PROVIDER=persona`
  * (see `merchant.module.ts`'s `useFactory` binding for `KYCProviderPort`).
  *
- * Same honest posture as the ACH/wire bank-transfer rails and
- * `test/contract/stripe.contract-spec.ts`: this is a real, runnable
- * adapter — `scripts/mock-psp/server.js`'s `/persona/kyc-applications`
- * endpoint exercises it end to end, including the async signed webhook
- * callback — but nothing in this repo has ever called a real Persona/
- * Onfido account with real credentials. `PERSONA_PROVIDER_URL` would
- * point at that real provider's API in a real deployment; nothing else
- * about this class would need to change, since the mock speaks the same
- * `{id, status}` shape.
+ * Response shape confirmed against Persona's own published API docs
+ * (docs.withpersona.com/integration-guide-understanding-a-persona-api-payload,
+ * docs.withpersona.com/errors), not guessed — earlier revisions of this
+ * adapter assumed a flat `{id, status}` body, which is **not** what
+ * Persona's real API actually returns. A real Inquiry response is
+ * JSON:API-shaped: `{data: {type: 'inquiry', id, attributes: {status}}}`;
+ * a real error response is `{errors: [{title, details}]}`. Persona's own
+ * real status vocabulary is also richer than a binary
+ * pending/approved/declined — see `mapPersonaInquiryStatus()`'s docblock
+ * for the full list and why `completed` specifically is *not* a decision.
+ * `scripts/mock-psp/server.js`'s `/persona/kyc-applications` endpoint now
+ * speaks this same real shape, so this adapter exercises its actual
+ * parsing logic end to end, not a shape that happens to be convenient —
+ * but nothing in this repo has ever called a real Persona account with
+ * real credentials, so field names beyond what's cited above (e.g. the
+ * exact attribute a real decline reason lives under) are not verified.
  */
 @Injectable()
 export class PersonaKycProviderAdapter extends KYCProviderPort {
@@ -41,15 +47,24 @@ export class PersonaKycProviderAdapter extends KYCProviderPort {
     });
 
     const body = await response.json();
-    if (!response.ok || body.status === 'declined') {
-      return {
-        status: 'REJECTED',
-        applicationId: body.id ?? 'unknown',
-        reason: body.error ?? body.reason ?? 'Application rejected',
-      };
+    if (!response.ok) {
+      const detail = body.errors?.[0]?.details ?? body.errors?.[0]?.title ?? 'Application submission rejected';
+      return { status: 'REJECTED', applicationId: 'unknown', reason: detail };
     }
 
-    this.logger.log(`KYC application submitted for "${params.legalName}": applicationId=${body.id} (pending review)`);
-    return { status: 'PENDING', applicationId: body.id };
+    const applicationId: string = body.data?.id ?? 'unknown';
+    const status = mapPersonaInquiryStatus(body.data?.attributes?.status);
+    if (status !== 'PENDING') {
+      // A real Inquiry-creation response is never anything but a fresh,
+      // undecided status — this branch only exists because the mock's
+      // synchronous-rejection marker (a malformed submission a real
+      // provider could reject immediately, before any review starts)
+      // needs somewhere to surface as a decision without waiting for the
+      // async webhook path below.
+      return { status, applicationId, reason: status === 'REJECTED' ? 'Application rejected' : undefined };
+    }
+
+    this.logger.log(`KYC application submitted for "${params.legalName}": applicationId=${applicationId} (pending review)`);
+    return { status: 'PENDING', applicationId };
   }
 }

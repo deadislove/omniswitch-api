@@ -40,9 +40,9 @@ export class ReserveService {
     private readonly dataSource: DataSource,
   ) {}
 
-  /** Called in the same DB transaction as the ledger outbox event that funded this hold — see the three ledger-booking call sites. */
+  /** Called in the same DB transaction as the ledger outbox event that funded this hold — see the four ledger-booking call sites. */
   async recordHold(
-    params: { paymentId: string; merchantId: string; amount: Money; holdDays: number },
+    params: { paymentId: string; merchantId: string; amount: Money; netAmount: Money; holdDays: number },
     transactionManager?: unknown,
   ): Promise<ReserveHold> {
     const hold = ReserveHold.create({
@@ -50,6 +50,7 @@ export class ReserveService {
       paymentId: params.paymentId,
       merchantId: params.merchantId,
       amount: params.amount,
+      netAmount: params.netAmount,
       holdDays: params.holdDays,
     });
     await this.reserveHoldPort.save(hold, transactionManager);
@@ -164,5 +165,58 @@ export class ReserveService {
       this.logger.log(`Reserve release sweep: ${released} released, ${failed} failed, ${holds.length} eligible`);
     }
     return { released, failed };
+  }
+
+  /**
+   * Called only by RiskTieringService when a merchant's tier *escalates*
+   * — never on de-escalation (see that service's own docblock). Recomputes
+   * each currently-HELD hold's target amount at `newReserveBps` against
+   * the hold's own `netAmount` (not the current `amount` — a hold created
+   * under a since-changed rate can't be scaled relative to itself) and
+   * tops up the difference, one hold/one ledger entry/one DB transaction
+   * at a time — a failure partway through leaves the remaining holds at
+   * their old (still-valid, just not-yet-escalated) amount rather than a
+   * half-applied batch. Holds whose target at the new rate isn't actually
+   * higher than what they already hold (the new rate is lower, or this
+   * specific hold already exceeds it for some other reason) are skipped,
+   * not topped up to a smaller number — this method only ever adds.
+   */
+  async topUpHeldReservesForMerchant(
+    merchantId: string,
+    newReserveBps: number,
+  ): Promise<{ toppedUp: number; failed: number }> {
+    const holds = await this.reserveHoldPort.findHeldByMerchant(merchantId);
+    let toppedUp = 0;
+    let failed = 0;
+
+    for (const hold of holds) {
+      try {
+        const targetAmount = hold.netAmount.multiply(newReserveBps / 10_000);
+        if (!targetAmount.isGreaterThan(hold.amount)) continue;
+        const additionalAmount = targetAmount.subtract(hold.amount);
+
+        await this.dataSource.transaction(async (manager) => {
+          hold.topUp(additionalAmount);
+          await this.reserveHoldPort.save(hold, manager);
+          const topUpEvent = LedgerOutboxEvent.createReserveTopUpEntries({
+            id: uuidv4(),
+            paymentId: hold.paymentId,
+            merchantId: hold.merchantId,
+            amount: additionalAmount,
+          });
+          await this.ledgerOutbox.saveWithPayment(hold.paymentId, topUpEvent, manager);
+        });
+        toppedUp++;
+        this.logger.log(
+          `Reserve hold ${hold.id} topped up by ${additionalAmount.toString()} (tier escalation) for merchant ${merchantId}`,
+        );
+      } catch (err: unknown) {
+        failed++;
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Reserve top-up: failed to top up hold ${hold.id} for merchant ${merchantId}: ${msg}`);
+      }
+    }
+
+    return { toppedUp, failed };
   }
 }

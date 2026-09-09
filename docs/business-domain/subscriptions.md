@@ -152,8 +152,16 @@ Both `subscription.past_due` (on every failure that doesn't cancel) and
 `SubscriptionService` — not just a log line — the same "closes the
 *emission* gap, not the *someone's listening* gap" posture
 `DisputeService`'s `dispute.created`/`dispute.resolved` events already
-established. Nothing in this codebase actually subscribes to either
-yet. Both payloads now carry the decline code where relevant:
+established. `SubscriptionNotificationListener` now subscribes both to
+a real per-merchant email/Slack/webhook delivery (Phase 1) — see
+`docs/business-domain/disputes.md`'s notification-channel section for
+the shared delivery mechanics (`src/modules/payment/adapters/
+notifications/notification-delivery.util.ts`), reused as-is; only the
+per-merchant channel fields (`subscriptionNotificationChannel`/
+`subscriptionNotificationTarget`, set via
+`PATCH /admin/merchants/:id/subscription-notification-channel`) are
+independent from dispute notifications' own. Both payloads now carry
+the decline code where relevant:
 `subscription.past_due` always includes `declineCode` (possibly
 `undefined`, e.g. for a routing-exception failure), and
 `subscription.canceled` includes a `reason` of `'hard_decline'` (with
@@ -163,18 +171,24 @@ re-deriving it from `lastDeclineCode`.
 
 This is a real, working dunning policy, but still a simplified one —
 worth being explicit about what's still missing:
-- **The hard-decline code set is illustrative, not calibrated.**
-  `HARD_DECLINE_CODES` is a small, reasonable-looking set of Stripe/Adyen-
-  style codes, not validated against real-world decline-code taxonomies
-  or acquirer-specific variations (a real system would likely need this
-  configurable per-PSP, and to handle codes neither mock PSP currently
-  returns, e.g. `do_not_honor`).
-- **No real notification integration.** The events exist and are really
-  emitted, but nothing is actually subscribed to them — no email, no
-  Slack, no paging. The same stand-in posture as every other "alert
-  on-call in production" gap already documented elsewhere in this
-  codebase (`ReconciliationService`, `LedgerOutboxRelayService`, the
-  `Dispute` creation/resolution flow).
+- **The hard-decline code set is illustrative, per-PSP but not
+  calibrated (Phase 1).** `HARD_DECLINE_CODES` is now keyed by
+  `PSPProvider` (`Record<PSPProvider, Set<string>>`), not one shared
+  set — `errorCode` reaching `classifyDeclineCode()` is each PSP
+  adapter's raw, unnormalized decline code (Stripe's own `decline_code`
+  strings vs Adyen's own numeric `refusalReasonCode` strings), and a
+  single shared set only ever matched Stripe's vocabulary — every real
+  Adyen hard decline silently fell through to `RETRYABLE`. Fixed by
+  threading `pspProvider` through `recordFailedCharge()`/
+  `classifyDeclineCode()` from the saga's own result. Each PSP's set is
+  still a small, reasonable-looking one, not validated against
+  real-world decline-code taxonomies or every acquirer-specific
+  variation (e.g. `do_not_honor`) — illustrative, same posture as the
+  risk-tier thresholds or the dispute auto-decision reason-code table.
+  See `src/modules/payment/domain/aggregates/subscription.aggregate.spec.ts`.
+- **No real notification integration — ✅ resolved (Phase 1).** See
+  above — `SubscriptionNotificationListener` now delivers both events to
+  a real per-merchant email/Slack/webhook channel.
 
 ## Trials
 
@@ -312,9 +326,9 @@ hold their own copy of the terms rather than a live reference.
 
 See [`future-directions.md`](./future-directions.md#recurring-billing--subscriptions)
 for the fuller business framing — in short: a real notification
-integration subscribed to the `subscription.past_due`/
-`subscription.canceled` events this system now actually emits, and a
-properly calibrated (rather than illustrative) hard-decline code set.
+integration is now wired up (Phase 1, see above); what's still missing
+is a properly calibrated (rather than illustrative) hard-decline code
+set.
 
 One more concrete, code-level simplification worth flagging: interval
 math for `'month'`/`'year'` uses JavaScript's native

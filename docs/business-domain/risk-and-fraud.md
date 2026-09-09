@@ -57,29 +57,75 @@ a meaningless "33%") — evaluation is skipped entirely and the existing
 reserve policy is left untouched rather than reacting to too small a
 sample.
 
-**Moves in both directions.** Every sweep recomputes from the current
-90-day window from scratch — a merchant whose chargeback rate climbs
-gets escalated; one that cleans up its history tapers back down on its
-own, on the next tick. This isn't a one-way ratchet.
+**The lost-dispute-rate base signal moves in both directions.** Every
+sweep recomputes from the current 90-day window from scratch — a
+merchant whose chargeback rate climbs gets escalated; one that cleans up
+its history tapers back down on its own, on the next tick. The MCC/
+account-age/KYC modifiers layered on top (below) are different:
+escalation-only, one step at a time, never lowering what the base signal
+alone would say.
 
 **A manual override always wins.** An operator's own
 `PATCH /admin/merchants/:id/reserve-policy` call sets a merchant's
 reserve directly *and* flips `riskTierAutoManaged` to `false` — the next
 sweep leaves that merchant alone until an operator explicitly
 re-enables automation via `PATCH /admin/merchants/:id/risk-tier-auto`. A
-hand-tuned reserve is never silently overwritten.
+hand-tuned reserve is never silently overwritten by the sweep. A manual
+*escalation* through this endpoint also tops up already-`HELD` reserves
+to the new rate, the same way the automated sweep's own escalation does
+(see "Escalation now reaches back to already-booked reserves" below) —
+an operator's own judgment that risk has increased is, if anything, a
+more deliberate signal than an automated one, and there's no reason it
+should only reach *future* charges. `MerchantService.updateReservePolicy()`
+emits `merchant.reserve_policy.escalated` (only when the new rate is
+higher than the previous one) and `ReservePolicyEscalationListener` (in
+`PaymentModule`, which `MerchantModule` can't call directly — see that
+listener's own docblock for why this crosses module boundaries via an
+event, the same seam dispute/subscription notifications already use)
+reacts to it.
 
 **On demand or scheduled.** The sweep runs daily
 (`EVERY_DAY_AT_2AM`), or immediately via `POST /admin/risk-tiering/run`
 — the same dual on-demand-plus-scheduled shape
 `ReconciliationService`/`ReserveService` use elsewhere in this codebase.
 
-**What this deliberately doesn't consider**: MCC code, account tenure,
-industry risk category, KYC/verification status, or dispute *reason*
-code (a `fraudulent` `LOST` dispute counts identically to a
-`product_not_received` one, even though they carry very different risk
-signal). A tier change also never retroactively touches reserves already
-withheld from earlier charges — only future charges are affected. See
+**MCC code, account age, and KYC status now escalate the tier
+(Phase 1)** — each one step up, never down, and only ever on top of
+whatever the lost-dispute-rate base signal already computed:
+- A `HIGH`-classified MCC (`PATCH .../mcc-code`, looked up via
+  `src/modules/merchant/mcc-risk-lookup.ts`'s real, public MCC risk
+  table) escalates one tier.
+- An account younger than `RISK_TIER_NEW_MERCHANT_AGE_DAYS` (default 30)
+  escalates one tier — no track record yet isn't "safe," the
+  lost-dispute-rate signal just hasn't caught up.
+- An unverified `kycStatus` forces `HIGH` outright, but only for
+  `CONNECTED` merchants — `kycStatus` stays `NOT_STARTED` forever for a
+  `PLATFORM` merchant by design (see `MerchantEntity`'s own docblock), so
+  this check is skipped entirely for those.
+
+**Dispute reason code now feeds the base signal too (Phase 1).** The
+lost-dispute-rate calculation itself weights each `LOST` dispute by
+reason (`src/modules/payment/domain/services/dispute-risk-weight.ts`)
+instead of counting every one identically: `fraudulent` at full weight,
+`product_not_received`/`subscription_canceled` at half,
+`duplicate` at a quarter — the same reason-code vocabulary
+`dispute-policy.ts`'s auto-contest table already uses. Two merchants
+with the same raw *count* of `LOST` disputes can land in different
+tiers depending on why those disputes were lost.
+
+**Escalation now reaches back to already-booked reserves (Phase 1) —
+both when the sweep escalates and when an operator manually escalates
+via `PATCH .../reserve-policy`.** Whenever a merchant's effective tier
+*escalates* (never on de-escalation, whether that escalation came from
+the sweep's own computation or a manual PATCH — see "A manual override
+always wins" above for the manual path's event-based wiring),
+`ReserveService.topUpHeldReservesForMerchant()` tops up every
+still-`HELD` reserve for that merchant to the new rate — a real risk
+event shouldn't leave an older, already-in-flight charge under-reserved
+just because it was booked before the escalation. A hold already
+`RELEASED` by the time the escalation happens is untouched (its funds
+already left the reserve account), and a later de-escalation never
+reverses a top-up that already happened. See
 [`future-directions.md`](./future-directions.md#merchant-risk-tiering--reserves)
 for the fuller list, including the real (synthetic-data) calibration
 exercise this platform has actually run against these thresholds.
@@ -124,6 +170,64 @@ risk tiering, too: `PATCH /admin/merchants/:id/ambiguous-risk` sets the
 flag by hand and disables automation for that merchant, until
 `PATCH /admin/merchants/:id/ambiguous-risk-auto` re-enables it.
 
+## AML review observation (HIGH-industry hard-decline signal)
+
+Every industry classification carries some potential money-laundering
+exposure, but a `HIGH`-`industryRiskCategory` merchant (gambling, dating/
+escort services, telemarketing, cryptocurrency — see
+`mcc-risk-lookup.ts`) racking up hard-declines (stolen/lost/fraudulent-
+card-class outcomes, not just any decline — see
+`decline-code-classifier.ts`) in a short window is exactly the kind of
+cross-referenceable signal that's too hard to fully automate a judgment
+from, but easy to surface for a human reviewer. `AmlReviewMonitoringService`
+implements that: a warning flag, not an automated block — the actual
+judgment of whether a given HIGH-industry merchant poses real AML risk
+still requires a human to look, the same posture every other MCC-risk
+decision in this codebase already takes (manual onboarding review, not a
+programmatic accept/reject).
+
+**Evaluated inline**, right after a charge is marked `FAILED` — same
+"evaluate synchronously on the triggering event, no separate detection
+sweep" shape ambiguous-risk monitoring uses. Because a subscription's
+recurring charge goes through the exact same `PaymentCheckoutSaga` a
+one-off charge does, a subscription's hard-declines are covered by this
+same single integration point — no separate wiring for recurring vs.
+one-off charges.
+
+**Trigger**: `AML_REVIEW_HARD_DECLINE_THRESHOLD` (default 5) hard-decline
+events within a trailing `AML_REVIEW_WINDOW_DAYS` window (default 30),
+for a `HIGH`-industry merchant only — a `LOW`/`MEDIUM`/`UNKNOWN`-industry
+merchant's hard-decline is treated as ordinary card-testing/fraud noise,
+not an AML-adjacent signal.
+
+**Purely observational, same as ambiguous-risk monitoring** — sets
+`MerchantEntity.amlReviewFlagged`, visible via `GET /admin/merchants`,
+but does not throttle, block, or re-route that merchant's charges.
+Same manual-override posture too: `PATCH /admin/merchants/:id/aml-review`
+sets the flag by hand (reason required, audited) and disables
+`amlReviewAutoManaged` until `PATCH /admin/merchants/:id/aml-review-auto`
+re-enables it. Unlike ambiguous-risk monitoring, there is **no auto-clear
+sweep** — a HIGH-industry merchant's hard-decline history doesn't "age
+out" the way a PSP-reliability incident does; the flag stays live until a
+human actually clears it.
+
+**Fires a real notification.** Unlike ambiguous-risk monitoring
+(deliberately silent), a HIGH-industry merchant crossing this threshold
+is compliance-relevant enough to page someone in real time —
+`PATCH /admin/merchants/:id/aml-review-notification-channel` configures
+EMAIL/Slack/webhook delivery per merchant, reusing the same
+`postJsonNotification`/HMAC-signing mechanism dispute and subscription
+notifications already use. Sent once per trip, not re-sent on every
+subsequent hard-decline while already flagged.
+
+**Scoped deliberately narrow.** This only cross-references decline
+behavior against a merchant's already-known industry classification —
+it does not attempt to calibrate a numeric threshold the way risk
+tiering's reserve tiers do (see `docs/technical/tests/threshold-
+calibration.md` for why an MCC risk table is a categorical, not
+statistical, judgment), and it does not introduce a second industry-risk
+taxonomy alongside `industryRiskCategory`.
+
 ## Not modeled
 
 - **No connection between the two signals.** A merchant with a run of
@@ -131,9 +235,11 @@ flag by hand and disables automation for that merchant, until
   escalation, even though a pattern of failed PSP calls could plausibly
   correlate with other risk. They stay genuinely independent today.
 - **No fraud-scoring model of any kind at charge time.**
-  `PaymentAggregate.calculateRiskScore()` exists but is a simple
-  amount/card-origin heuristic recorded for visibility, not something
-  that gates or routes a charge differently — see
-  [`payment-lifecycle.md`](./payment-lifecycle.md) for what it actually
-  does. Neither risk-tiering nor ambiguous-risk monitoring feeds back
-  into it.
+  `PaymentAggregate.calculateRiskScore()` is a simple amount/card-origin
+  heuristic (plus, for an agent-initiated charge only, two agent-context
+  signals — see
+  [`future-directions.md`](./future-directions.md#agentic-payments))
+  recorded for visibility, not something that gates or routes a charge
+  differently — see [`payment-lifecycle.md`](./payment-lifecycle.md) for
+  what it actually does. Neither risk-tiering nor ambiguous-risk
+  monitoring feeds back into it.

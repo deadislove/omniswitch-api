@@ -46,6 +46,22 @@ export class DisputeEntity {
   @Column({ name: 'auto_decision', type: 'varchar', nullable: true })
   autoDecision?: DisputeAutoDecision;
 
+  /**
+   * Snapshotted from PaymentEntity.delegationId/initiatedBy at
+   * DisputeService.recordDispute() time — a snapshot, not a live join,
+   * because "was this the result of an agent-initiated charge" is a
+   * question about the payment's state *at charge time*, not whatever a
+   * future migration/backfill might change it to later. `null` when the
+   * underlying payment record couldn't be found (shouldn't happen — a
+   * dispute is always reported against an existing SUCCEEDED payment —
+   * but this service reacts to whatever a PSP webhook claims).
+   */
+  @Column({ name: 'delegation_id', type: 'uuid', nullable: true })
+  delegationId?: string;
+
+  @Column({ name: 'initiated_by', type: 'varchar', nullable: true })
+  initiatedBy?: 'human' | 'agent';
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

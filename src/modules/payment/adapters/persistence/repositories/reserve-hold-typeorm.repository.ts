@@ -19,6 +19,7 @@ export class ReserveHoldTypeOrmRepository implements ReserveHoldPort {
     entity.paymentId = hold.paymentId;
     entity.merchantId = hold.merchantId;
     entity.amountMinorUnits = hold.amount.amountMinorUnits.toString();
+    entity.netAmountMinorUnits = hold.netAmount.amountMinorUnits.toString();
     entity.currencyCode = hold.amount.currency.code;
     entity.status = hold.status;
     entity.releaseEligibleAt = hold.releaseEligibleAt;
@@ -58,6 +59,15 @@ export class ReserveHoldTypeOrmRepository implements ReserveHoldPort {
     return entities.map((e) => this.toDomain(e));
   }
 
+  /** Uncapped, same "true set, not a page of it" reasoning as findReleaseEligible() — a tier-escalation top-up sweep must not silently miss holds past whatever page size findMany() would cap at. */
+  async findHeldByMerchant(merchantId: string): Promise<ReserveHold[]> {
+    const entities = await this.repo.find({
+      where: { merchantId, status: 'HELD' },
+      order: { createdAt: 'ASC' },
+    });
+    return entities.map((e) => this.toDomain(e));
+  }
+
   async markReleased(id: string, releasedAt: Date, transactionManager?: unknown): Promise<boolean> {
     const repo = transactionManager ? (transactionManager as any).getRepository(ReserveHoldEntity) : this.repo;
     const result = await repo
@@ -76,6 +86,7 @@ export class ReserveHoldTypeOrmRepository implements ReserveHoldPort {
       paymentId: entity.paymentId,
       merchantId: entity.merchantId,
       amount: Money.fromMinorUnits(BigInt(entity.amountMinorUnits), entity.currencyCode),
+      netAmount: Money.fromMinorUnits(BigInt(entity.netAmountMinorUnits), entity.currencyCode),
       status: entity.status,
       releaseEligibleAt: entity.releaseEligibleAt,
       createdAt: entity.createdAt,

@@ -79,7 +79,21 @@ export class DisputeService {
     // to call, so 'ACCEPT' just tells the operator not to bother, it
     // doesn't take an action a human wouldn't otherwise need to.
     const autoDecision = decideAutoDisposition(params.amount, params.reason);
-    const dispute = Dispute.create({ id: uuidv4(), ...params, autoDecision });
+    // Forced onto master, not the ambient replica-routed connection — a
+    // dispute can arrive (in tests, and in principle in production too)
+    // moments after the charge that created this exact payment record,
+    // which can lose the race against the replica's ~1s streaming lag and
+    // read back a payment that doesn't exist yet. Same class of bug as
+    // findMany()'s own docblock above and the several replica-lag fixes
+    // elsewhere in this codebase (see docs/technical/ci-cd.md).
+    const payment = await this.paymentRepository.findByIdOnMaster(params.paymentId);
+    const dispute = Dispute.create({
+      id: uuidv4(),
+      ...params,
+      autoDecision,
+      delegationId: payment?.delegationId,
+      initiatedBy: payment?.initiatedBy,
+    });
 
     if (autoDecision === 'CONTEST') {
       const evidence = autoContestEvidenceFor(params.reason);

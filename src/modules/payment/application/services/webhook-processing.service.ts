@@ -12,6 +12,7 @@ import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper
 import { DisputeService } from './dispute.service';
 import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
+import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 
 /**
  * Webhook Processing Service
@@ -175,6 +176,8 @@ export class WebhookProcessingService {
         rate: settlementConversion.rate,
         provider: settlementConversion.provider,
       });
+      const taxRecord = buildCrossBorderTaxRecord(payment.amount, payment.binInfo);
+      if (taxRecord) payment.recordTaxRecord(taxRecord);
     }
     const outboxEvent = LedgerOutboxEvent.createChargeEntries({
       id: uuidv4(),
@@ -196,6 +199,7 @@ export class WebhookProcessingService {
             paymentId: payment.id,
             merchantId: payment.metadata.merchantId,
             amount: reserveHold.amount,
+            netAmount: reserveHold.netAmount,
             holdDays: reserveHold.holdDays,
           },
           manager,

@@ -33,7 +33,7 @@ for the full internal flow.
 | `statementDescriptor` | string | no | Max 22 chars |
 | `binInfo` | object | no | `{ bin, country, cardBrand, cardType, issuingBank? }` — feeds smart routing (3DS/EU heuristics) |
 | `preferredProvider` | `'STRIPE'\|'ADYEN'\|'PAYPAL'\|'CHASE'` | no | Overrides smart routing (only Stripe/Adyen have adapters implemented). Rejected with `422` if outside the merchant's PSP entitlement — see [`merchants-and-auth.md`](./merchants-and-auth.md#patch-adminmerchantsidpsp-entitlement) |
-| `metadata` | object | no | Free-form key-value pairs |
+| `metadata` | object | no | Free-form key-value pairs — stored on the payment (`GET /payments/:id` echoes it back) and forwarded to the PSP's own metadata concept (Stripe `metadata[<key>]`, Adyen `metadata`); reserved keys the PSP adapters use internally (e.g. `payment_id`/`merchant_id`) can't be overwritten |
 | `category` | string | no | Only enforced for an `AGENT` caller against its delegation's `allowedCategories` — ignored otherwise |
 | `captureMethod` | `'automatic'\|'manual'` | no | `'manual'` authorizes without capturing; default `'automatic'` |
 | `presentmentCurrency` | string | no | Purely informational display conversion — never changes what's charged |
@@ -90,7 +90,9 @@ useful for a frontend polling a 3DS challenge's resolution.
 
 ## `GET /payments/:id`
 
-Full payment detail, including refund/capture history.
+Full payment detail, including refund/capture history, and the exact
+`metadata`/`statementDescriptor` sent at charge time (echoed back, not
+re-derived) — see `PaymentDetailResponseDto`.
 
 - **Roles**: `MERCHANT`, `ADMIN`, `READONLY`
 - **Errors**: `403` belongs to a different merchant; `404` not found.

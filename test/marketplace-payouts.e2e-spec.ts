@@ -150,18 +150,18 @@ describe('Marketplace payout scheduling (e2e)', () => {
     await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 10);
 
     await payoutService.runSweep();
-    const afterFirst = await payoutService.findMany({ merchantId: connected.merchantId });
+    const afterFirst = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(afterFirst).toHaveLength(1);
 
     // No new charges happened — a second sweep should find nothing new for this merchant.
     await payoutService.runSweep();
-    const afterSecond = await payoutService.findMany({ merchantId: connected.merchantId });
+    const afterSecond = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(afterSecond).toHaveLength(1);
 
     // A new charge after the second sweep produces exactly one more Payout, not a re-sum of history.
     await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 10);
     await payoutService.runSweep();
-    const afterThird = await payoutService.findMany({ merchantId: connected.merchantId });
+    const afterThird = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(afterThird).toHaveLength(2);
     expect(afterThird.every((p) => p.grossAmount.amount === 10)).toBe(true);
   });
@@ -186,7 +186,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
     expect(results.filter((r) => r !== null)).toHaveLength(1);
     expect(results.filter((r) => r === null)).toHaveLength(1);
 
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(payouts).toHaveLength(1);
   });
 
@@ -202,7 +202,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
     }).expect(201);
 
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: merchant.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: merchant.merchantId });
     expect(payouts).toHaveLength(0);
   });
 
@@ -220,9 +220,9 @@ describe('Marketplace payout scheduling (e2e)', () => {
     expect(sweepRes.body.released).toBeGreaterThanOrEqual(1);
     expect(sweepRes.body.failed).toBe(0);
 
-    const eligiblePayouts = await payoutService.findMany({ merchantId: eligible.connected.merchantId });
+    const eligiblePayouts = await payoutService.findManyOnMaster({ merchantId: eligible.connected.merchantId });
     expect(eligiblePayouts[0].reserveStatus).toBe('RELEASED');
-    const ineligiblePayouts = await payoutService.findMany({ merchantId: ineligible.connected.merchantId });
+    const ineligiblePayouts = await payoutService.findManyOnMaster({ merchantId: ineligible.connected.merchantId });
     expect(ineligiblePayouts[0].reserveStatus).toBe('HELD');
   });
 
@@ -230,7 +230,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
     const { platform, platformToken, connected } = await platformWithConnected(1000, 90);
     await chargeWithSplit(platform, platformToken, connected.merchantId, 40, 20);
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     const payoutId = payouts[0].id;
 
     const releaseRes = await request(app.getHttpServer())
@@ -257,7 +257,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
     await chargeWithSplit(platform, platformToken, connected.merchantId, 100, 50);
     await payoutService.runSweep();
 
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(payouts).toHaveLength(1);
     expect(payouts[0].reserveAmount.amount).toBe(10); // 20% of $50
     expect(payouts[0].netAmount.amount).toBe(40);
@@ -277,7 +277,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       await chargeWithSplit(platform, platformToken, connected.merchantId, 40, 20);
       await payoutService.runSweep();
 
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts).toHaveLength(1);
       expect(payouts[0].kycBlocked).toBe(true);
       // Gross/net/reserve math is computed exactly as usual — KYC blocks
@@ -293,7 +293,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
 
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts[0].kycBlocked).toBe(true);
     });
 
@@ -305,7 +305,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
 
       await chargeWithSplit(platform, platformToken, connected.merchantId, 40, 25);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts[0].kycBlocked).toBe(false);
 
       const transferRes = await request(app.getHttpServer())
@@ -327,7 +327,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       const { platform, platformToken, connected } = await platformWithConnected(0, 0);
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts[0].kycBlocked).toBe(true);
 
       const res = await request(app.getHttpServer())
@@ -342,7 +342,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       // Payout created BEFORE KYC is ever submitted — starts blocked.
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const before = await payoutService.findMany({ merchantId: connected.merchantId });
+      const before = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(before[0].kycBlocked).toBe(true);
 
       await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
@@ -353,7 +353,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
         .expect(200);
       expect(recheckRes.body.cleared).toBeGreaterThanOrEqual(1);
 
-      const after = await payoutService.findMany({ merchantId: connected.merchantId });
+      const after = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(after[0].kycBlocked).toBe(false);
       expect(after[0].kycClearedAt).toBeTruthy();
     });
@@ -370,7 +370,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
 
       const failRes = await request(app.getHttpServer())
         .post(`/api/v1/admin/marketplace/payouts/${payouts[0].id}/initiate-transfer`)
@@ -378,7 +378,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
         .expect(422);
       expect(failRes.body.code).toBe('PAYOUT_TRANSFER_FAILED');
 
-      const afterFail = await payoutService.findById(payouts[0].id);
+      const afterFail = await payoutService.findByIdOnMaster(payouts[0].id);
       expect(afterFail!.transferStatus).toBe('FAILED');
       expect(afterFail!.transferError).toBeTruthy();
     });
@@ -398,9 +398,9 @@ describe('Marketplace payout scheduling (e2e)', () => {
         .expect(200);
       expect(sweepRes.body.initiated).toBeGreaterThanOrEqual(1);
 
-      const verifiedPayouts = await payoutService.findMany({ merchantId: verified.connected.merchantId });
+      const verifiedPayouts = await payoutService.findManyOnMaster({ merchantId: verified.connected.merchantId });
       expect(verifiedPayouts[0].transferStatus).toBe('INITIATED');
-      const blockedPayouts = await payoutService.findMany({ merchantId: blocked.connected.merchantId });
+      const blockedPayouts = await payoutService.findManyOnMaster({ merchantId: blocked.connected.merchantId });
       expect(blockedPayouts[0].transferStatus).toBe('NOT_INITIATED');
     });
   });

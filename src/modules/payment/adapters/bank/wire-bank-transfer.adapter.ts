@@ -1,19 +1,32 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { BankTransferPort, BankTransferRequest, BankTransferResponse } from '../../ports/outbound/bank-transfer.port';
+import {
+  BankTransferPort,
+  BankTransferRequest,
+  BankTransferResponse,
+  BankTransferStatusResult,
+} from '../../ports/outbound/bank-transfer.port';
 
 /**
  * Wire Bank Transfer Adapter
  * Same shape as `AchBankTransferAdapter` — `POST /transfers` accepted
- * synchronously (`pending`), final `settled`/`failed` reported later via
- * `POST /webhooks/bank-transfer` — but a distinct rail (wire transfers
- * clear same-day, not over ACH's multi-day cycle, and use a different
- * provider API in reality). Kept as its own adapter rather than a
- * `railType` flag on `AchBankTransferAdapter` because a real wire
- * integration (Fedwire/SWIFT-shaped) and a real ACH integration
- * (NACHA-shaped) are genuinely different provider APIs with different
- * required fields, not the same request shape wearing a different label.
- * Selected via `BANK_TRANSFER_PROVIDER=wire`.
+ * synchronously (`pending`), final `settled`/`failed` learned later via
+ * a lightweight webhook notification plus a follow-up `GET` — but a
+ * distinct rail (wire transfers clear same-day, not over ACH's multi-day
+ * cycle, and use a different provider API in reality). Kept as its own
+ * adapter rather than a `railType` flag on `AchBankTransferAdapter`
+ * because a real wire integration (Fedwire/SWIFT-shaped) and a real ACH
+ * integration (NACHA-shaped) are genuinely different provider APIs with
+ * different required fields, not the same request shape wearing a
+ * different label. Selected via `BANK_TRANSFER_PROVIDER=wire`.
+ *
+ * Same real-shape fix as `AchBankTransferAdapter`'s own docblock
+ * describes for Dwolla's lightweight-notification-plus-follow-up-GET
+ * pattern — see that class for the citation. Wire transfers have no
+ * single dominant real API the way Dwolla is a concrete, named example
+ * for ACH, so this adapter's async *shape* now matches the same real
+ * pattern without being committed to any one named wire provider's exact
+ * field set.
  */
 @Injectable()
 export class WireBankTransferAdapter extends BankTransferPort {
@@ -51,5 +64,20 @@ export class WireBankTransferAdapter extends BankTransferPort {
       `Wire transfer submitted for merchant ${request.merchantId}: transferId=${body.id} (pending settlement)`,
     );
     return { success: true, status: 'PENDING', transferId: body.id, rawResponse: body };
+  }
+
+  async getTransferStatus(transferId: string): Promise<BankTransferStatusResult | null> {
+    const response = await fetch(`${this.baseUrl}/transfers/${encodeURIComponent(transferId)}`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(15000),
+    });
+    if (response.status === 404) {
+      return null;
+    }
+    const body = await response.json();
+    if (!response.ok || (body.status !== 'settled' && body.status !== 'failed')) {
+      return null;
+    }
+    return { status: body.status === 'settled' ? 'SETTLED' : 'FAILED', reason: body.reason };
   }
 }

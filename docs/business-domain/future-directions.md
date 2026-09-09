@@ -25,16 +25,35 @@ See [`subscriptions.md`](./subscriptions.md) and
 for the mechanism.
 
 What's still genuinely missing:
-- **The hard-decline code set is illustrative, not calibrated.** It's a
-  small, reasonable-looking set of Stripe/Adyen-style codes, not
-  validated against real-world decline-code taxonomies or
-  acquirer-specific variations — a real system would likely need this
-  configurable per-PSP.
-- **A real notification integration.** `subscription.past_due`/
-  `subscription.canceled` are genuinely emitted events, but nothing in
-  this codebase is actually subscribed to them yet — no email, no
-  Slack, no paging. The same stand-in posture as this codebase's other
-  "alert on-call in production" gaps.
+- **The hard-decline code set is illustrative, per-PSP but not
+  calibrated (Phase 1).** `HARD_DECLINE_CODES` used to be one shared
+  `Set<string>` — but `errorCode` reaching `classifyDeclineCode()` was
+  never normalized between PSPs (Stripe's own `decline_code` strings vs
+  Adyen's own numeric `refusalReasonCode` strings), so a shared set only
+  ever matched Stripe's vocabulary; every real Adyen hard decline
+  silently fell through to `RETRYABLE`. Now `Record<PSPProvider,
+  Set<string>>`, with `pspProvider` threaded through
+  `recordFailedCharge()`/`classifyDeclineCode()` from the saga's own
+  result. Each PSP's set is still a small, reasonable-looking one, not
+  validated against real-world decline-code taxonomies or every
+  acquirer-specific variation — same illustrative-not-calibrated posture
+  as the risk-tier thresholds themselves. See
+  `subscription.aggregate.spec.ts`.
+- **A real notification integration — ✅ resolved (Phase 1).**
+  `SubscriptionNotificationListener` now subscribes
+  `subscription.past_due`/`subscription.canceled` to a real
+  per-merchant email/Slack/webhook delivery
+  (`PATCH /admin/merchants/:id/subscription-notification-channel`),
+  the same three-channel shape `DisputeNotificationDispatcherService`
+  already established for dispute events — the actual HTTP-send/HMAC-
+  signing mechanics are shared code
+  (`src/modules/payment/adapters/notifications/
+  notification-delivery.util.ts`), not copy-pasted per event family,
+  but the channel/target fields themselves
+  (`subscriptionNotificationChannel`/`subscriptionNotificationTarget`)
+  are independent of disputes' own — a merchant can reasonably want
+  Slack for disputes and email for billing. See
+  `test/subscription-notification.e2e-spec.ts`.
 
 ## Marketplace & Split Payments
 
@@ -80,8 +99,8 @@ built is explicitly a mechanism demonstration, not a calibrated one:
 
   | | precision | recall |
   |---|---|---|
-  | Current fixed (HIGH >1%) | 22.7% | 90.2% |
-  | Data-derived (HIGH >2.56%, the 95th percentile) | 45.5% | 78.4% |
+  | Current fixed (HIGH >1%) | 20.1% | 77.8% |
+  | Data-derived (HIGH >2.13%, the 95th percentile) | 36.0% | 71.1% |
 
   No clean winner — the fixed threshold catches more true high-risk
   merchants (higher recall) at the cost of far more false positives
@@ -107,18 +126,106 @@ built is explicitly a mechanism demonstration, not a calibrated one:
   that model too). See
   [`../technical/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
   for how to run it.
-- **Missing signals.** A real risk tiering system would also weigh MCC
-  code, account tenure, industry risk category, and KYC/verification
-  status — none of which this platform tracks in a form this service
-  reads today.
-- **No dispute *reason*-code awareness.** A `fraudulent` dispute and a
-  `product_not_received` dispute carry very different risk signal; this
-  service treats every `LOST` dispute identically regardless of why it
-  was lost.
-- **No retroactive question answered.** A tier change only ever affects
-  charges going forward (same posture as a manual `reserve-policy` PATCH)
-  — there's no policy for whether a sudden risk change should also affect
-  reserves already withheld from earlier charges.
+- **The new-merchant-age escalation (below) is now calibrated against
+  the same synthetic population, not just plausibility-argued.** The
+  synthetic generator now also assigns each merchant an `accountAgeDays`
+  independent of its true risk label, with `settledCharges` capped by
+  how much volume that age could plausibly have accumulated — modeling
+  the actual claim the age-escalation feature makes: a new account's low
+  observed rate is less trustworthy, not necessarily lower-risk. Scored
+  against the same fixed seed:
+
+  | | precision | recall |
+  |---|---|---|
+  | MEDIUM+, without age escalation | 45.5% | 43.1% |
+  | MEDIUM+, with age escalation (accountAgeDays < 30) | 40.9% | 45.7% |
+
+  On this synthetic population, escalating new accounts trades 4.6
+  points of precision for only 2.6 points of recall — a real,
+  measured cost, not a clearly-favorable trade. It does catch some
+  genuinely-risky new merchants a pure rate threshold would have missed
+  (validating the sample-size argument the feature is based on), but not
+  by enough margin on this population to call it an unambiguous win. As
+  with the thresholds above, this scores the *methodology* and the
+  *feature's own internal logic*, not a claim about whether 30 days is
+  the right real-world cutoff — see
+  [`threshold-calibration.md`](../technical/tests/threshold-calibration.md#what-else-was-considered-and-what-wasnt-added-here)
+  for which other Phase 1 risk signals (MCC categories, dispute
+  reason-code weights, agent risk-scoring bumps) were considered for
+  this same treatment and why they weren't extended here.
+- **Missing signals — ✅ resolved (Phase 1).** `RiskTieringService.evaluateMerchant()`
+  now factors in three additional, escalation-only modifiers on top of
+  the lost-dispute-rate base signal: a merchant's MCC code (operator-set
+  via `PATCH .../mcc-code`, mapped to an `industryRiskCategory` via a
+  real, public MCC risk classification table —
+  `src/modules/merchant/mcc-risk-lookup.ts`) escalates one tier when
+  `HIGH`; account age under `RISK_TIER_NEW_MERCHANT_AGE_DAYS` (default
+  30) escalates one tier; and an unverified `kycStatus` forces `HIGH`
+  outright for `CONNECTED` merchants specifically (meaningless for
+  `PLATFORM` merchants, same scope `kycStatus` itself already had).
+  Escalation-only by design — a good MCC or long tenure never *lowers*
+  what the dispute-rate signal alone would say, only a bad one raises it.
+  See `test/risk-tiering.e2e-spec.ts` for the full escalation matrix.
+- **Dispute *reason*-code awareness — ✅ resolved (Phase 1), and now
+  calibrated against the same synthetic population, not just
+  plausibility-argued.** `RiskTieringService` now weights each `LOST`
+  dispute by reason code instead of counting them identically
+  (`src/modules/payment/domain/services/dispute-risk-weight.ts`):
+  `fraudulent` counts at full weight, `product_not_received`/
+  `subscription_canceled` at half, `duplicate` at a quarter — reusing the
+  exact reason-code vocabulary `dispute-policy.ts`'s auto-contest table
+  already established, not a new taxonomy. Two merchants with the
+  identical *count* of `LOST` disputes can now land in different tiers
+  depending on why those disputes were lost — see
+  `test/risk-tiering.e2e-spec.ts`'s reason-code test. The synthetic
+  generator now also breaks each merchant's lost disputes down by reason
+  code, using a mix correlated with true risk (a genuinely high-risk
+  merchant's disputes skew toward `fraudulent`; a genuinely low-risk
+  merchant's skew toward benign `duplicate`/`subscription_canceled`
+  mixups) — scored against the same fixed seed, importing
+  `getDisputeRiskWeight()` directly from production code (not a copy):
+
+  | | precision | recall |
+  |---|---|---|
+  | HIGH, raw (unweighted) count | 20.1% | 77.8% |
+  | HIGH, weighted by reason code | 34.7% | 73.3% |
+
+  A 14.6-point precision gain for a 4.4-point recall cost on this
+  synthetic population — a real, measured case for reason-code
+  awareness, not just a plausible-sounding idea. As with every other
+  exercise here, the *size* of the reason-code/true-risk correlation
+  this models is itself an assumption that would need real data to
+  confirm.
+- **The retroactive question — ✅ resolved for escalation (Phase 1).**
+  A manual `reserve-policy` PATCH still only ever affects future charges.
+  But when `RiskTieringService`'s own sweep *escalates* a merchant's tier,
+  `ReserveService.topUpHeldReservesForMerchant()` now tops up every
+  still-`HELD` (not yet released) reserve to the new, higher rate —
+  computed against each hold's own original net amount
+  (`ReserveHold.netAmount`, added for this), not re-derived from the
+  hold's already-withheld slice. One-way by design: only escalation tops
+  up; a de-escalation (the merchant's history improved) never claws back
+  a reserve already withheld, and a hold already `RELEASED` before the
+  escalation is untouched — its funds already left the reserve account.
+  See `test/risk-tiering.e2e-spec.ts`'s top-up test for the full
+  escalate → release-one-hold → escalate-further → de-escalate sequence.
+- **MCC risk category × hard-decline pattern — ✅ resolved, outside the
+  calibration framework by design.** A `HIGH`-`industryRiskCategory`
+  merchant's tier escalation (above) is a single static signal; it says
+  nothing about a *pattern* of hard-declines over time the way ambiguous-
+  risk monitoring does for PSP-reliability incidents.
+  `AmlReviewMonitoringService` closes that gap: flags a `HIGH`-industry
+  merchant once it crosses `AML_REVIEW_HARD_DECLINE_THRESHOLD`
+  hard-declines (see `decline-code-classifier.ts`, generalized from
+  subscription-only dunning to cover one-off charges too) in a trailing
+  `AML_REVIEW_WINDOW_DAYS` window — purely observational, and (unlike
+  every other risk signal here) fires a real notification the moment it
+  trips, since a HIGH-industry AML-adjacent signal is compliance-relevant
+  enough to page someone rather than wait for an operator to next check
+  `GET /admin/merchants`. See
+  [`risk-and-fraud.md`](./risk-and-fraud.md#aml-review-observation-high-industry-hard-decline-signal)
+  for the full design and `test/aml-review-monitoring.e2e-spec.ts` for
+  the threshold/notification/manual-override coverage.
 
 ## Dispute Resolution Workflow
 
@@ -185,10 +292,17 @@ What genuinely remains:
   charge-time rate and reusing it verbatim for that payment's captures/
   refunds/dispute losses) — but that's a mechanical consequence of a
   refund-netting fix, not a considered hedging policy.
-- **VAT/tax handling** varies by jurisdiction and is arguably out of
-  scope for this system to compute itself (usually delegated to a
-  specialized tax-calculation service), but the domain model would still
-  need a place to record what was charged and why.
+- **VAT/tax handling — ✅ partially resolved (Phase 1).** Real tax
+  *calculation* (rates, returns, nexus determination) is still out of
+  scope for this system and arguably always will be — but the "the
+  domain model would still need a place to record what was charged and
+  why" gap this bullet used to flag is closed: `PaymentAggregate` now
+  records a `taxRecord` (jurisdiction, derived from the cardholder's
+  `BinInfo.country`; the amount actually collected from the customer;
+  when) for every cross-border charge, at the same call sites and under
+  the same condition as `settlementConversion`. See
+  [`fx-conversion.md`](./fx-conversion.md#cross-border-tax-record-phase-1)
+  — explicitly an audit record, not a tax-nexus determination.
 
 ---
 
@@ -237,23 +351,83 @@ have auto-executed in.
 
 ### What's still genuinely missing
 
-- **Liability and dispute attribution.** If an agent makes an incorrect
-  or unauthorized purchase, who is responsible for resolving it — the
-  platform, the merchant that got paid, or whoever operates the agent?
-  The dispute model has no concept of a non-human initiator at all, let
-  alone how liability should be attributed when one is involved. This is
-  a real open question in the industry right now, not something this
-  project can resolve unilaterally — the audit trail (which delegation,
-  under what policy) is a necessary building block for answering it
-  later, not an answer itself.
-- **A different risk posture for agent-initiated charges.**
+- **Liability and dispute attribution — ✅ data capture resolved
+  (Phase 1), the policy question is not.** If an agent makes an
+  incorrect or unauthorized purchase, who is responsible for resolving
+  it — the platform, the merchant that got paid, or whoever operates the
+  agent? That's a real, unresolved industry question this project can't
+  answer unilaterally, and still doesn't attempt to. What's now fixed:
+  the dispute model previously had **no concept of a non-human initiator
+  at all** — `delegationId`/`initiatedBy` used to live in a free-form
+  jsonb bag with no query surface; both are now real, indexed
+  `PaymentEntity` columns, and `DisputeService.recordDispute()`
+  snapshots them onto the `Dispute` record at creation time (so
+  `GET /admin/disputes` can actually answer "was this an agent-initiated
+  charge" — see [`disputes.md`](./disputes.md)). Deliberately scoped as
+  audit-trail plumbing only, not a liability-decision policy engine.
+
+- **A different risk posture for agent-initiated charges — ✅ two
+  signals resolved (Phase 1), not a full model.**
   `PaymentAggregate.calculateRiskScore()` still reasons about amount and
-  card origin — signals that make sense for a human, card-present-adjacent
-  transaction. An agent transacting autonomously has different risk
-  signals entirely (is this purchase consistent with the agent's normal
-  velocity, has this exact agent/principal pairing transacted with this
-  merchant before); none of that exists today — an agent-initiated charge
-  is scored identically to a human-initiated one.
+  card origin exactly as before for every charge — but now takes an
+  optional `agentContext`, populated only for an agent-initiated one
+  (never a human charge, which scores identically to before this
+  existed): (1) whether this is the delegation's first-ever charge to
+  this specific merchant (an agent repeatedly charging a merchant it
+  already knows — e.g. a subscription-like recurring purchase — is
+  normal, unlike the implicit "high frequency = suspicious" a human
+  charge is treated with elsewhere; novelty relative to *this
+  delegation's own history* is what's actually risk-relevant, not raw
+  velocity); (2) whether this charge alone consumes a large share
+  (≥50%) of what's left in the delegation's rolling monthly budget,
+  using `Delegation`/`SpendPolicy`'s existing `currentMonthSpent`/
+  `monthlyLimit` — no new fields needed. Still not modeled: agent/
+  principal-pairing history *across* merchants, or anything resembling a
+  real fraud model — these are two concrete, testable heuristics, not a
+  scoring system. See `test/agent-risk-scoring.e2e-spec.ts`.
+  **A real, non-rare gap — now closed.** The budget-pressure signal (2)
+  used to only be computed on `PaymentController.charge()`'s
+  immediate-execution path — `ChargeApprovalService.approve()` (the
+  human-approval-hold path, `SpendPolicy.requireApprovalAboveAmount`)
+  left it permanently absent, which mattered more than a typical missing
+  signal would: a `ChargeApproval` only ever exists for a charge *above*
+  that threshold, so by construction every charge going through
+  `approve()` is one of the delegation's largest — exactly where
+  budget-pressure would be most informative. `approve()` now re-derives
+  the signal from the delegation's *current* state at approval time
+  (`ChargeApprovalService.deriveAgentPercentOfRemainingMonthlyBudget()`)
+  instead of needing a frozen creation-time snapshot — arguably a better
+  number than the immediate-execution path's own snapshot, since it
+  reflects everything the delegation has actually spent in the days
+  between creating the approval and an operator deciding it, not a stale
+  read. Still legitimately absent in two edge cases (see that method's
+  own docblock: the calendar month rolled over between creation and
+  approval, or the numbers leave no room for a meaningful percentage) —
+  both cases a frozen-snapshot approach could never have handled either.
+  `isFirstChargeToMerchant` (1) is unaffected and still applies on this
+  path. See `test/charge-approval.e2e-spec.ts` for the regression
+  coverage.
+  **Now calibrated against a dedicated synthetic population** (a
+  genuinely separate domain from the merchant-dispute-history one above,
+  so it uses its own generator —
+  `scripts/calibration/generate-synthetic-agent-charges.ts`/
+  `calibrate-agent-risk-scoring.ts`): 5,000 synthetic agent charges, 3%
+  genuinely `PROBLEMATIC` (rare, by construction), scored by calling
+  `calculateRiskScore()` directly on a real, minimal `PaymentAggregate`:
+
+  | Threshold | precision | recall |
+  |---|---|---|
+  | No signal (flag nothing/everything) | 3.2% | 100.0% |
+  | Score ≥15 (either signal alone) | 13.2% | 95.0% |
+  | Score ≥30 (both signals required) | 65.3% | 61.6% |
+
+  A real, measured 10-point precision lift over having no signal at all
+  while still catching 95% of genuinely problematic charges — the two
+  heuristics do better than nothing on this synthetic population, not
+  just a plausible-sounding idea. Same caveat as everywhere else: the
+  *size* of the assumed correlation between each signal and genuine
+  anomaly has no real delegation/agent transaction history behind it in
+  this repository.
 - **Standards alignment.** Stripe's agentic commerce tooling, Google's
   Agent Payments Protocol, and various agent-to-agent authorization
   proposals are all still evolving; `Delegation`/`SpendPolicy` implement

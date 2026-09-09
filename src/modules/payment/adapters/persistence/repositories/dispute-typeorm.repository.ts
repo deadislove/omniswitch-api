@@ -28,6 +28,8 @@ export class DisputeTypeOrmRepository implements DisputePort {
     entity.respondBy = dispute.respondBy;
     entity.evidence = dispute.evidence;
     entity.autoDecision = dispute.autoDecision;
+    entity.delegationId = dispute.delegationId;
+    entity.initiatedBy = dispute.initiatedBy;
     await this.repo.save(entity);
   }
 
@@ -84,6 +86,21 @@ export class DisputeTypeOrmRepository implements DisputePort {
       .getCount();
   }
 
+  async findReasonsByMerchantStatusSince(
+    merchantId: string,
+    status: DisputeStatus,
+    since: Date,
+  ): Promise<(string | null)[]> {
+    const rows = await this.repo
+      .createQueryBuilder('d')
+      .select('d.reason', 'reason')
+      .where('d.merchantId = :merchantId', { merchantId })
+      .andWhere('d.status = :status', { status })
+      .andWhere('d.createdAt >= :since', { since: since.toISOString() })
+      .getRawMany<{ reason: string | null }>();
+    return rows.map((r) => r.reason);
+  }
+
   private toDomain(entity: DisputeEntity): Dispute {
     return Dispute.reconstitute({
       id: entity.id,
@@ -99,6 +116,8 @@ export class DisputeTypeOrmRepository implements DisputePort {
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
       autoDecision: entity.autoDecision,
+      delegationId: entity.delegationId,
+      initiatedBy: entity.initiatedBy,
     });
   }
 }

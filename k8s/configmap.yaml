@@ -22,7 +22,16 @@ data:
   DB_REPLICA_HOST: "pgbouncer-replica.payments.svc.cluster.local"
   DB_REPLICA_PORT: "5432"
   DB_NAME: "omniswitch_payments"
-  DB_SSL: "true"
+  # "false" — matches reality: postgres.yaml is a self-hosted Postgres
+  # StatefulSet with no TLS configured (no cert, no `ssl = on` in
+  # postgresql.conf, pgbouncer.yaml's listener is plaintext too), so
+  # `DB_SSL: "true"` here would make app.module.ts's `rejectUnauthorized:
+  # true` connection attempt fail at boot against a server that never
+  # negotiates TLS at all. A real production deployment against a
+  # managed Postgres (RDS/Cloud SQL, which terminate TLS themselves)
+  # should set this back to "true" and point `DB_SSL_CA` at that
+  # provider's CA bundle.
+  DB_SSL: "false"
 
   # Streaming-replication role postgres.yaml's postgres-master creates and
   # postgres-replica authenticates as (scripts/postgres/init-master.sql's
@@ -91,18 +100,40 @@ data:
   # be needed to point at a non-default endpoint (e.g. mock-psp, which
   # docker-compose.yml does for local dev).
   #
-  # FX_RATE_PROVIDER_URL / KYC_PROVIDER_URL / BANK_TRANSFER_PROVIDER_URL
-  # are also absent, but for a different reason than STRIPE_BASE_URL
-  # above: their adapters are literally named `FXRateProviderAdapter`
-  # (mock-only, per its own docblock — "not a real market-data
-  # provider"), `MockKycProviderAdapter`, and
-  # `MockBankTransferAdapter` — there is no real third-party integration
-  # behind any of these three yet, only `scripts/mock-psp/server.js`.
-  # Setting these to a real-looking URL here would misrepresent that as
-  # solved; leaving them unset (falling back to each adapter's
-  # `http://localhost:4000/...` default, which resolves to nothing in a
-  # real cluster) is the honest state until a real FX/KYC/bank-transfer
-  # provider is actually integrated.
+  # FX_RATE_PROVIDER_URL is absent for a different reason than
+  # STRIPE_BASE_URL above: `FXRateProviderAdapter` is mock-only per its
+  # own docblock ("not a real market-data provider") — there is no real
+  # third-party integration behind it at all yet. Setting this to a
+  # real-looking URL here would misrepresent that as solved; leaving it
+  # unset (falling back to the adapter's `http://localhost:4000/...`
+  # default, which resolves to nothing in a real cluster) is the honest
+  # state until a real FX provider is actually integrated.
+  #
+  # KYC_PROVIDER / BANK_TRANSFER_PROVIDER select which real adapter
+  # handles each — unlike FX, real adapters do exist
+  # (`PersonaKycProviderAdapter`; `AchBankTransferAdapter`/
+  # `WireBankTransferAdapter`), selectable via these two env vars (both
+  # default to `mock` when unset — see payment.module.ts/merchant.module.ts's
+  # useFactory). Left commented out below (not set to `mock` explicitly,
+  # and not set to a real value either) because there are no real
+  # Persona/ACH/Wire credentials to configure this reference deployment
+  # with yet — uncomment and fill in the matching `_URL` once real
+  # credentials exist; until then this must stay commented so the env
+  # var list doesn't imply a decision ("we chose mock") that was never
+  # actually made.
+  # KYC_PROVIDER: "persona"
+  # PERSONA_PROVIDER_URL: "https://withpersona.com/api/v1"
+  # BANK_TRANSFER_PROVIDER: "ach"
+  # ACH_PROVIDER_URL: "CHANGE_ME_REAL_ACH_PROVIDER_URL"
+  # WIRE_PROVIDER_URL: "CHANGE_ME_REAL_WIRE_PROVIDER_URL"
+  #
+  # EMAIL_PROVIDER_URL is absent for the same reason as
+  # KYC_PROVIDER_URL/BANK_TRANSFER_PROVIDER_URL above —
+  # `EmailDisputeNotificationAdapter`/`EmailSubscriptionNotificationAdapter`
+  # fall back to `http://localhost:4000/v1/email`, which resolves to
+  # nothing in a real cluster. Uncomment once a real transactional-email
+  # provider (SendGrid, Postmark, SES, ...) is chosen.
+  # EMAIL_PROVIDER_URL: "CHANGE_ME_REAL_EMAIL_PROVIDER_URL"
 
   # Vault — Transit-engine envelope encryption for `hmac_secret`
   # (see VaultTransitService and vault.yaml's Deployment/Service).
@@ -111,9 +142,9 @@ data:
   VAULT_ADDR: "http://vault.payments.svc.cluster.local:8200"
 
   # OTEL_EXPORTER_OTLP_ENDPOINT is deliberately absent, same reasoning as
-  # FX_RATE_PROVIDER_URL/KYC_PROVIDER_URL/BANK_TRANSFER_PROVIDER_URL above
-  # — unlike VAULT_ADDR/ADYEN_BASE_URL, there's no single real endpoint to
-  # point this at; a trace collector (Jaeger/Tempo/an OTel Collector/a
+  # FX_RATE_PROVIDER_URL above — unlike VAULT_ADDR/ADYEN_BASE_URL,
+  # there's no single real endpoint to point this at; a trace collector
+  # (Jaeger/Tempo/an OTel Collector/a
   # vendor agent) is infrastructure this specific deployment has to stand
   # up and choose, not something with one correct production URL. Leaving
   # this unset means src/tracing.ts's OTLPTraceExporter falls back to its

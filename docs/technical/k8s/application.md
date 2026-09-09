@@ -37,10 +37,17 @@ because getting any of them wrong fails in a way that isn't obvious from
   `replication` mode treats master+replica startup as one unit) and
   prevents the application from booting at all. Confirmed as the root
   cause of a real, deterministic boot failure.
-- **`DB_SSL`** — without this, `app.module.ts`'s `config.get('DB_SSL')`
-  reads as unset and silently falls back to `ssl: false` even though
-  `configmap.yaml`'s own `DB_SSL` value is `"true"` — TLS to the
-  database would be silently disabled, not fail loudly.
+- **`DB_SSL`** — `configmap.yaml`'s own value is `"false"`, matching
+  reality: `postgres.yaml` is a self-hosted Postgres `StatefulSet` with
+  no TLS configured at all (no cert, no `ssl = on`, `pgbouncer.yaml`'s
+  listener is plaintext too). Setting this to `"true"` against this
+  reference Postgres would make `app.module.ts`'s `rejectUnauthorized:
+  true` connection attempt fail at boot, since the server never
+  negotiates TLS. A real deployment against a managed Postgres (RDS/
+  Cloud SQL, which terminate TLS themselves) should flip this to
+  `"true"` and set `DB_SSL_CA` to that provider's CA bundle — this is
+  the one configmap value that's deployment-target-dependent rather than
+  a fixed "right" answer.
 - **`VAULT_ADDR`/`VAULT_TOKEN`** — without these, `VaultTransitService`
   falls back to `http://localhost:8200` with an empty token.
   `HmacSignatureGuard` calls it on every HMAC-signed request (charge,
@@ -96,15 +103,21 @@ Non-secret configuration, organized by concern:
   (the adapter defaults to the real Stripe API when unset).
   `FX_RATE_PROVIDER_URL` is also absent — `FXRateProviderAdapter` has no
   real third-party integration behind it at all. `KYC_PROVIDER`/
-  `KYC_PROVIDER_URL`/`PERSONA_PROVIDER_URL` and `BANK_TRANSFER_PROVIDER`/
-  `BANK_TRANSFER_PROVIDER_URL`/`ACH_PROVIDER_URL`/`WIRE_PROVIDER_URL` are
-  absent too — unlike FX, real adapters do exist for both of these
+  `PERSONA_PROVIDER_URL` and `BANK_TRANSFER_PROVIDER`/
+  `ACH_PROVIDER_URL`/`WIRE_PROVIDER_URL` are present but **commented
+  out** — unlike FX, real adapters do exist for both of these
   (`PersonaKycProviderAdapter`; `AchBankTransferAdapter`/
-  `WireBankTransferAdapter`), but this reference deployment leaves both
-  at their `mock` default, since no real Persona/Onfido or ACH/wire
-  provider credentials exist to configure either with. Leaving these
-  unset (rather than pointing at a realistic-looking URL) is the honest
-  state until a real provider is integrated. See
+  `WireBankTransferAdapter`), and the commented-out lines show exactly
+  which keys to set, but this reference deployment leaves both
+  commented (falling back to `mock`) since no real Persona/Onfido or
+  ACH/wire provider credentials exist to configure either with.
+  `EMAIL_PROVIDER_URL` (the dispute/subscription email notification
+  channel — see [`disputes.md`](../../business-domain/disputes.md)) is
+  the same shape: commented out, no real transactional-email provider
+  chosen yet. Leaving these commented (rather than set to `mock`
+  explicitly, or to a realistic-looking real URL) is the honest state
+  until a real provider is integrated — uncommenting is a one-line
+  change once it is. See
   [`../deployment/charge-latency-test-environment.md`](../deployment/charge-latency-test-environment.md)
   for how to temporarily redirect these at a mock PSP for testing,
   without editing this file.

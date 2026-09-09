@@ -295,4 +295,94 @@ describe('Agentic payments: human-approval hold state (e2e)', () => {
       .expect(200);
     expect(approveRes.body.status).toBe('SUCCEEDED');
   });
+
+  // Regression test for a fixed bug: agentPercentOfRemainingMonthlyBudget
+  // used to be permanently undefined on this path — see
+  // ChargeApprovalService.deriveAgentPercentOfRemainingMonthlyBudget()'s
+  // docblock. Same "10 (baseline) + agent-context bumps" exact-score
+  // methodology agent-risk-scoring.e2e-spec.ts already uses for the
+  // immediate-execution path.
+  describe('agentPercentOfRemainingMonthlyBudget is re-derived at approval time (regression)', () => {
+    async function merchantWithTightDelegation() {
+      const merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
+      const merchantToken = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
+      const delegation = await createDelegation(merchantToken, {
+        agentName: 'Shopping Assistant',
+        perTransactionLimit: 1000,
+        monthlyLimit: 1000,
+        currency: 'USD',
+        requireApprovalAboveAmount: 200,
+      });
+      return { merchant, merchantToken, delegation };
+    }
+
+    it('an approved charge drawing >=50% of the remaining budget gets the +15 risk bump, even though its own reservation happened days-conceptually-earlier at creation time', async () => {
+      const { delegation, merchantToken } = await merchantWithTightDelegation();
+
+      // First charge: small, auto-executes (below requireApprovalAboveAmount),
+      // consumes isFirstChargeToMerchant status and reserves $50 — leaves
+      // $950 remaining.
+      await agentCharge(delegation.agentToken, delegation.agentSigningKey, {
+        amount: 50,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+      }).expect(201);
+
+      // Second charge: $600 of $950 remaining ≈ 63.2% >= 50% threshold,
+      // and above requireApprovalAboveAmount so it needs approval.
+      const chargeRes = await agentCharge(delegation.agentToken, delegation.agentSigningKey, {
+        amount: 600,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+      }).expect(201);
+      expect(chargeRes.body.status).toBe('PENDING_APPROVAL');
+
+      const approveRes = await request(app.getHttpServer())
+        .post(`/api/v1/charge-approvals/${chargeRes.body.approvalId}/approve`)
+        .set('Authorization', `Bearer ${merchantToken}`)
+        .expect(200);
+      expect(approveRes.body.status).toBe('SUCCEEDED');
+
+      const payment = await findOneOnMaster(PaymentEntity, { id: chargeRes.body.paymentId });
+      // 10 (baseline, non-EU USD) + 15 (budget pressure, not first charge
+      // to this merchant so no +15 there).
+      expect(payment!.riskScore).toBe(25);
+    });
+
+    it("an approved charge drawing a small share of the remaining budget doesn't get the bump", async () => {
+      const { delegation, merchantToken } = await merchantWithTightDelegation();
+
+      await agentCharge(delegation.agentToken, delegation.agentSigningKey, {
+        amount: 50,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+      }).expect(201);
+
+      // $250 of $950 remaining ≈ 26.3% — above requireApprovalAboveAmount
+      // (needs approval) but well under the 50% budget-pressure threshold.
+      const chargeRes = await agentCharge(delegation.agentToken, delegation.agentSigningKey, {
+        amount: 250,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+      }).expect(201);
+      expect(chargeRes.body.status).toBe('PENDING_APPROVAL');
+
+      const approveRes = await request(app.getHttpServer())
+        .post(`/api/v1/charge-approvals/${chargeRes.body.approvalId}/approve`)
+        .set('Authorization', `Bearer ${merchantToken}`)
+        .expect(200);
+      expect(approveRes.body.status).toBe('SUCCEEDED');
+
+      const payment = await findOneOnMaster(PaymentEntity, { id: chargeRes.body.paymentId });
+      expect(payment!.riskScore).toBe(10); // baseline only
+    });
+  });
 });

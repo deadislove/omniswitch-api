@@ -4,7 +4,7 @@ import { randomUUID as uuidv4 } from 'crypto';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { AcquirerRoutingService } from '../services/acquirer-routing.service';
-import { PaymentAggregate, PSPProvider } from '../../domain/aggregates/payment.aggregate';
+import { PaymentAggregate, PSPProvider, PaymentInitiator } from '../../domain/aggregates/payment.aggregate';
 import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggregate';
 import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
@@ -17,7 +17,9 @@ import {
   ChargeLedgerParams,
 } from '../services/charge-ledger-params-resolver.service';
 import { ReserveService } from '../services/reserve.service';
+import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
+import { AmlReviewMonitoringService } from '../services/aml-review-monitoring.service';
 import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
 import { traced } from '../../../../shared/utils/traced';
 
@@ -29,6 +31,17 @@ export interface CheckoutSagaInput {
   customerId?: string;
   orderId?: string;
   description?: string;
+  statementDescriptor?: string;
+  /**
+   * Arbitrary merchant-supplied key-value pairs — `ChargePaymentDto.metadata`
+   * was documented and validated but never actually threaded past the
+   * controller until now, despite `PaymentMetadata.metadata` and
+   * `PSPChargeRequest.metadata` both already existing to receive it.
+   * Stored on `PaymentAggregate.metadata` and forwarded to the PSP request
+   * (Stripe/Adyen both have a real `metadata` concept on their own charge
+   * objects — see each adapter's `charge()`), not just persisted locally.
+   */
+  metadata?: Record<string, string>;
   binInfo?: BinInfo;
   paymentMethodId?: string;
   cardToken?: string;
@@ -36,8 +49,32 @@ export interface CheckoutSagaInput {
   captureMethod?: 'automatic' | 'manual';
   /** Marketplace split targets — see ChargeLedgerParamsResolverService.resolve()'s docblock. */
   splits?: { merchantId: string; amount: Money }[];
-  /** Free-form attribution bag stored verbatim on PaymentAggregate.metadata.metadata — currently only populated by PaymentController.charge() for an agent-initiated charge (delegationId, initiatedBy), so a payment's audit trail can answer "who/what actually initiated this" without a schema change. See DelegationService/delegation.aggregate.ts. */
-  initiatorMetadata?: Record<string, string>;
+  /** Real, indexed PaymentEntity columns — see PaymentEntity.delegationId's docblock. Currently only populated by PaymentController.charge()/ChargeApprovalService.approve() for an agent-initiated charge. See DelegationService/delegation.aggregate.ts. */
+  delegationId?: string;
+  initiatedBy?: PaymentInitiator;
+  /**
+   * This charge's amount as a percentage (0-100) of the delegation's
+   * remaining monthly budget *before* this charge — see
+   * PaymentAggregate.calculateRiskScore()'s docblock. Computed two ways
+   * depending on which path a charge takes: `PaymentController.charge()`'s
+   * immediate-execution AGENT branch derives it from the freshly-loaded,
+   * pre-reservation `Delegation` already in memory;
+   * `ChargeApprovalService.approve()` re-derives it from the delegation's
+   * *current* state at approval time (see
+   * `ChargeApprovalService.deriveAgentPercentOfRemainingMonthlyBudget()`'s
+   * own docblock for the full reasoning, including why "current state" is
+   * actually more relevant here than a frozen creation-time snapshot
+   * would be) — until this was fixed, `approve()` left this permanently
+   * `undefined`, which mattered more than a typical missing signal would:
+   * `ChargeApproval` only ever exists for a charge above
+   * `requireApprovalAboveAmount`, so by construction every charge on this
+   * path is one of the delegation's *largest*. Can still legitimately be
+   * `undefined` on the `approve()` path in a couple of edge cases (the
+   * calendar month rolled over between creation and approval, or the
+   * numbers don't leave room for a meaningful percentage) — see that
+   * method's own docblock.
+   */
+  agentPercentOfRemainingMonthlyBudget?: number;
 }
 
 export interface CheckoutSagaResult {
@@ -121,10 +158,25 @@ export class PaymentCheckoutSaga {
     private readonly chargeLedgerParams: ChargeLedgerParamsResolverService,
     private readonly reserveService: ReserveService,
     private readonly ambiguousRiskMonitoring: AmbiguousRiskMonitoringService,
+    private readonly amlReviewMonitoring: AmlReviewMonitoringService,
   ) {}
 
   async execute(input: CheckoutSagaInput): Promise<CheckoutSagaResult> {
     this.logger.log(`[Saga] Starting checkout for payment ${input.paymentId}`);
+
+    // Computed *before* this payment is ever saved (Step 1 below) —
+    // querying after would always find this exact payment's own
+    // just-written row and wrongly report "not first" on every single
+    // charge, including the genuinely first one. See
+    // PaymentAggregate.calculateRiskScore()'s docblock.
+    let isFirstChargeToMerchant: boolean | undefined;
+    if (input.delegationId) {
+      const hasChargedBefore = await this.paymentRepository.existsForDelegationAndMerchant(
+        input.delegationId,
+        input.merchantId,
+      );
+      isFirstChargeToMerchant = !hasChargedBefore;
+    }
 
     // ─── Step 1: Create Payment Intent ───────────────────────────────────────
     // No ledger entry yet — see class docblock. Funds haven't moved.
@@ -137,9 +189,12 @@ export class PaymentCheckoutSaga {
         customerId: input.customerId,
         orderId: input.orderId,
         description: input.description,
-        metadata: input.initiatorMetadata,
+        statementDescriptor: input.statementDescriptor,
+        metadata: input.metadata,
       },
       binInfo: input.binInfo,
+      delegationId: input.delegationId,
+      initiatedBy: input.initiatedBy,
     });
 
     await this.paymentRepository.save(payment);
@@ -191,7 +246,18 @@ export class PaymentCheckoutSaga {
     // decide anything here — see the class docblock's 3DS note below. The
     // PSP's own charge response (Step 4) is the only thing that can put a
     // payment into REQUIRES_ACTION.
-    const riskScore = payment.calculateRiskScore();
+    // agentContext is only computed for an agent-initiated charge — see
+    // PaymentAggregate.calculateRiskScore()'s docblock for why a human
+    // charge's scoring is entirely unaffected by these two signals.
+    // (isFirstChargeToMerchant was computed above, before Step 1's save.)
+    const riskScore = payment.calculateRiskScore(
+      input.delegationId
+        ? {
+            isFirstChargeToMerchant,
+            percentOfRemainingMonthlyBudget: input.agentPercentOfRemainingMonthlyBudget,
+          }
+        : undefined,
+    );
 
     this.logger.log(`[Saga] Step 2: Risk score=${riskScore}`);
 
@@ -252,6 +318,8 @@ export class PaymentCheckoutSaga {
                 merchantId: input.merchantId,
                 customerId: input.customerId,
                 description: input.description,
+                statementDescriptor: input.statementDescriptor,
+                metadata: input.metadata,
                 paymentMethodId: input.paymentMethodId,
                 cardToken: input.cardToken,
                 captureMethod: input.captureMethod,
@@ -302,6 +370,8 @@ export class PaymentCheckoutSaga {
           rate: settlementConversion.rate,
           provider: settlementConversion.provider,
         });
+        const taxRecord = buildCrossBorderTaxRecord(input.amount, input.binInfo);
+        if (taxRecord) payment.recordTaxRecord(taxRecord);
       }
       // (splits were already recorded on `payment` right after
       // chargeLedgerParams resolved, above — recordSplits() is a no-op on
@@ -326,6 +396,7 @@ export class PaymentCheckoutSaga {
               paymentId: input.paymentId,
               merchantId: input.merchantId,
               amount: reserveHold.amount,
+              netAmount: reserveHold.netAmount,
               holdDays: reserveHold.holdDays,
             },
             manager,
@@ -386,8 +457,16 @@ export class PaymentCheckoutSaga {
       };
     }
 
-    // PSP returned FAILED
-    await this.compensate_markFailed(payment, chargeResult.errorMessage || 'PSP declined', chargeResult.errorCode);
+    // PSP returned FAILED. finalProvider, not payment.pspProvider — the
+    // latter is only ever set by startProcessing() at the *first*
+    // attempt, and would be stale here if a fallback attempt (a
+    // different provider) is what actually produced this decline.
+    await this.compensate_markFailed(
+      payment,
+      chargeResult.errorMessage || 'PSP declined',
+      chargeResult.errorCode,
+      finalProvider,
+    );
 
     return {
       paymentId: input.paymentId,
@@ -406,12 +485,30 @@ export class PaymentCheckoutSaga {
    * Compensating transaction: Mark payment as failed and persist.
    * Called when any step in the saga fails.
    */
-  private async compensate_markFailed(payment: PaymentAggregate, reason: string, errorCode?: string): Promise<void> {
+  private async compensate_markFailed(
+    payment: PaymentAggregate,
+    reason: string,
+    errorCode?: string,
+    pspProvider?: PSPProvider,
+  ): Promise<void> {
     try {
-      payment.markFailed(reason, errorCode);
+      payment.markFailed(reason, errorCode, pspProvider);
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
       this.logger.warn(`[Saga] Compensating transaction: Payment ${payment.id} marked FAILED: ${reason}`);
+      // Best-effort, deliberately outside the try above's own scope of
+      // concern — same reasoning as compensate_markAmbiguous()'s own
+      // separate catch around ambiguousRiskMonitoring.evaluate() below: an
+      // AML-review evaluation failure must never mask the real
+      // compensation outcome above.
+      try {
+        await this.amlReviewMonitoring.evaluate(payment.metadata.merchantId, errorCode, pspProvider);
+      } catch (monitoringError: unknown) {
+        const msg = monitoringError instanceof Error ? monitoringError.message : String(monitoringError);
+        this.logger.error(
+          `[Saga] AML-review evaluation failed for merchant ${payment.metadata.merchantId} (payment ${payment.id} still correctly marked FAILED): ${msg}`,
+        );
+      }
     } catch (compensationError: unknown) {
       const msg = compensationError instanceof Error ? compensationError.message : String(compensationError);
       this.logger.error(`[Saga] CRITICAL: Compensation failed for payment ${payment.id}: ${msg}`);

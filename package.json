@@ -27,6 +27,8 @@
     "seed:admin": "ts-node -r tsconfig-paths/register src/database/seed-admin.ts",
     "calibration:generate": "ts-node -r tsconfig-paths/register scripts/calibration/generate-synthetic-history.ts",
     "calibration:run": "ts-node -r tsconfig-paths/register scripts/calibration/calibrate-thresholds.ts",
+    "calibration:agent:generate": "ts-node -r tsconfig-paths/register scripts/calibration/generate-synthetic-agent-charges.ts",
+    "calibration:agent:run": "ts-node -r tsconfig-paths/register scripts/calibration/calibrate-agent-risk-scoring.ts",
     "job:archive": "ts-node -r tsconfig-paths/register src/jobs/run-archiving-job.ts",
     "job:delete": "ts-node -r tsconfig-paths/register src/jobs/run-deletion-job.ts",
     "job:drop-cutover-tables": "ts-node -r tsconfig-paths/register src/jobs/drop-cutover-tables.ts",

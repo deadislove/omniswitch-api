@@ -60,6 +60,10 @@ export interface SyntheticMerchant {
   trueLostDisputeRate: number;
   settledCharges: number;
   lostDisputes: number;
+  /** Days since account creation — a younger account has had less *time* to accumulate the settledCharges it has, independent of its true risk label (a brand-new HIGH-risk merchant and a long-established HIGH-risk merchant have the same true rate; the new one has just had fewer chances for that rate to show up in the observed count yet). Used to test RISK_TIER_NEW_MERCHANT_AGE_DAYS below. */
+  accountAgeDays: number;
+  /** How `lostDisputes` breaks down by reason code — unlike accountAgeDays (deliberately independent of true risk), this *is* correlated with trueRiskLabel: a genuinely bad-actor merchant's lost disputes skew toward `fraudulent`; a genuinely fine merchant's occasional lost dispute is more likely a benign `duplicate`/`subscription_canceled` mixup. Used to test dispute-risk-weight.ts's DISPUTE_RISK_WEIGHTS below — the reason this codebase weights `fraudulent` at full weight and `duplicate` at a quarter is exactly this correlation. */
+  lostDisputesByReason: Record<string, number>;
 }
 
 const MERCHANT_COUNT = 2000;
@@ -87,21 +91,81 @@ function trueRiskProfile(u: number): { label: SyntheticMerchant['trueRiskLabel']
   return { label: 'HIGH', rate: 0.015 + rng() * 0.065 };
 }
 
+// Reason-code strings match dispute-risk-weight.ts's DISPUTE_RISK_WEIGHTS
+// keys exactly, for direct correspondence — this is a separate reason-code
+// *mix* model (by merchant true-risk label) from generateDisputes()'s own
+// REASON_CODES/WIN_RATE_BY_REASON below, which models a different question
+// (contest win rate for the auto-accept calibration) against an
+// independent 5,000-dispute population, not per-merchant.
+const MERCHANT_DISPUTE_REASON_CODES = ['fraudulent', 'product_not_received', 'duplicate', 'subscription_canceled'];
+
+/**
+ * Reason-code mix among a merchant's lost disputes, by true risk label —
+ * a genuinely high-risk (bad-actor) merchant's disputes skew toward
+ * `fraudulent`; a genuinely low-risk merchant's occasional lost dispute
+ * is more likely a benign `duplicate`/`subscription_canceled` mixup, not
+ * evidence of real misconduct. This correlation is *the entire premise*
+ * dispute-risk-weight.ts's weights are based on (fraudulent at full
+ * weight, duplicate at a quarter) — illustrative, same posture as
+ * trueRiskProfile() above, not fitted to real reason-code-by-merchant-risk
+ * data, which this repo doesn't have.
+ */
+const REASON_MIX_BY_RISK_LABEL: Record<SyntheticMerchant['trueRiskLabel'], number[]> = {
+  // [fraudulent, product_not_received, duplicate, subscription_canceled]
+  HIGH: [0.5, 0.2, 0.2, 0.1],
+  MEDIUM: [0.25, 0.3, 0.25, 0.2],
+  LOW: [0.1, 0.25, 0.4, 0.25],
+};
+
+function distributeLostDisputesByReason(
+  count: number,
+  label: SyntheticMerchant['trueRiskLabel'],
+): Record<string, number> {
+  const mix = REASON_MIX_BY_RISK_LABEL[label];
+  const result: Record<string, number> = { fraudulent: 0, product_not_received: 0, duplicate: 0, subscription_canceled: 0 };
+  for (let i = 0; i < count; i++) {
+    const u = rng();
+    let cumulative = 0;
+    for (let j = 0; j < MERCHANT_DISPUTE_REASON_CODES.length; j++) {
+      cumulative += mix[j];
+      if (u < cumulative) {
+        result[MERCHANT_DISPUTE_REASON_CODES[j]]++;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 function generateMerchants(): SyntheticMerchant[] {
   const merchants: SyntheticMerchant[] = [];
   for (let i = 0; i < MERCHANT_COUNT; i++) {
     const { label, rate } = trueRiskProfile(rng());
+    // Account age independent of true risk label — a brand-new account
+    // and a long-established one can carry the same underlying risk; age
+    // only affects how much observed history exists yet. Log-normal,
+    // median ~200 days, with a genuine long tail down toward very new
+    // accounts (not truncated away) since those are exactly the
+    // population RISK_TIER_NEW_MERCHANT_AGE_DAYS targets.
+    const accountAgeDays = Math.max(1, Math.round(randomLogNormal(Math.log(200), 1.0)));
     // Settled-charge volume over a trailing 90-day window: log-normal,
     // median ~40 charges — most merchants are small, a few are large,
     // matching RiskTieringService's own MIN_SAMPLE_SIZE=10 concern that
     // plenty of real merchants sit right at the edge of having enough
-    // sample to evaluate at all.
-    const settledCharges = Math.max(0, Math.round(randomLogNormal(Math.log(40), 1.1)));
+    // sample to evaluate at all. Capped by accountAgeDays' own implied
+    // ceiling (an account can't have a 90-day trailing volume built up
+    // faster than ~1.5 charges/day sustained since it opened) — this is
+    // what makes a very new account's observed rate genuinely less
+    // reliable, not just nominally so.
+    const uncappedCharges = Math.max(0, Math.round(randomLogNormal(Math.log(40), 1.1)));
+    const ageImpliedCap = Math.round(Math.min(90, accountAgeDays) * 1.5);
+    const settledCharges = Math.min(uncappedCharges, ageImpliedCap);
     // Binomial(settledCharges, rate) approximated via Poisson(settledCharges * rate)
     // — a fine approximation at this rate*n range, and it's what a real
     // dispute-arrival process looks like anyway (events arriving
     // independently at a small per-charge probability).
     const lostDisputes = settledCharges > 0 ? Math.min(settledCharges, randomPoisson(settledCharges * rate)) : 0;
+    const lostDisputesByReason = distributeLostDisputesByReason(lostDisputes, label);
 
     merchants.push({
       merchantId: `synthetic_merchant_${i}`,
@@ -109,6 +173,8 @@ function generateMerchants(): SyntheticMerchant[] {
       trueLostDisputeRate: rate,
       settledCharges,
       lostDisputes,
+      accountAgeDays,
+      lostDisputesByReason,
     });
   }
   return merchants;

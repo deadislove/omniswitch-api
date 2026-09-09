@@ -21,4 +21,18 @@ export abstract class DisputePort {
    * risk calculation needs the true count, not a page of it.
    */
   abstract countByMerchantSince(merchantId: string, status: DisputeStatus, since: Date): Promise<number>;
+
+  /**
+   * Just the `reason` column (not full Dispute objects — RiskTieringService
+   * only needs to weight-and-sum these, same "true count, not a page of
+   * it" reasoning as countByMerchantSince()) for a merchant's disputes in
+   * a given status created on or after `since`. Weighting itself happens
+   * in the caller via dispute-risk-weight.ts — kept out of the repository
+   * so the weight table has exactly one place to change.
+   */
+  abstract findReasonsByMerchantStatusSince(
+    merchantId: string,
+    status: DisputeStatus,
+    since: Date,
+  ): Promise<(string | null)[]>;
 }

@@ -69,3 +69,58 @@ describe('AdyenPSPAdapter — ambiguous outcome tagging', () => {
     expect(circuitBreaker.recordFailure).not.toHaveBeenCalled();
   });
 });
+
+describe('AdyenPSPAdapter — custom metadata forwarding', () => {
+  let adapter: AdyenPSPAdapter;
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    const circuitBreaker = {
+      assertAvailable: jest.fn().mockResolvedValue(undefined),
+      recordSuccess: jest.fn().mockResolvedValue(undefined),
+      recordFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const configService = { get: (_key: string, def?: string) => def } as any;
+    adapter = new AdyenPSPAdapter(configService, circuitBreaker as unknown as RedisCircuitBreakerService);
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ pspReference: 'psp_123', resultCode: 'Authorised' }),
+    }) as any;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("forwards ChargePaymentDto.metadata into Adyen's own metadata object", async () => {
+    await adapter.charge({
+      paymentId: 'pay_1',
+      idempotencyKey: 'idem_1',
+      amount: Money.of(10, 'USD'),
+      currency: 'USD',
+      merchantId: 'merchant_1',
+      metadata: { campaign: 'summer_sale' },
+    });
+
+    const sentBody = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(sentBody.metadata.campaign).toBe('summer_sale');
+  });
+
+  it("a merchant-supplied metadata key can't overwrite the reserved paymentId/merchantId/binCountry keys", async () => {
+    await adapter.charge({
+      paymentId: 'pay_1',
+      idempotencyKey: 'idem_1',
+      amount: Money.of(10, 'USD'),
+      currency: 'USD',
+      merchantId: 'merchant_1',
+      binCountry: 'US',
+      metadata: { paymentId: 'spoofed', merchantId: 'spoofed', binCountry: 'spoofed' },
+    });
+
+    const sentBody = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(sentBody.metadata.paymentId).toBe('pay_1');
+    expect(sentBody.metadata.merchantId).toBe('merchant_1');
+    expect(sentBody.metadata.binCountry).toBe('US');
+  });
+});

@@ -91,6 +91,32 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
       expect(getRes.body.amount).toBe(25.5);
     });
 
+    // Regression test for a fixed bug: `metadata`/`statementDescriptor`
+    // were both documented (Swagger) and validated on ChargePaymentDto,
+    // but never actually threaded past PaymentController.charge() —
+    // silently dropped before ever reaching PaymentAggregate or the PSP
+    // request. Both now round-trip: stored on the payment and returned
+    // by GET /payments/:id.
+    it('custom metadata and statementDescriptor round-trip through charge -> GET, not silently dropped', async () => {
+      const res = await signedRequest('post', '/api/v1/payments/charge', {
+        amount: 12.34,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
+        statementDescriptor: 'OMNISWITCH*TEST',
+        metadata: { campaign: 'summer_sale', source: 'mobile_app' },
+      }).expect(201);
+      expect(res.body.status).toBe('SUCCEEDED');
+
+      const getRes = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${res.body.paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(getRes.body.statementDescriptor).toBe('OMNISWITCH*TEST');
+      expect(getRes.body.metadata).toEqual({ campaign: 'summer_sale', source: 'mobile_app' });
+    });
+
     // Regression test for a fixed bug: a European card used to trip a
     // pre-emptive risk-score check that put the payment into
     // REQUIRES_ACTION *without ever calling the PSP* — no pspTransactionId,

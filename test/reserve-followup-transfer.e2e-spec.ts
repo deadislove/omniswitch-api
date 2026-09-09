@@ -92,7 +92,7 @@ describe('Reserve follow-up transfer (e2e)', () => {
       splits: [{ merchantId: connected.merchantId, amount: splitAmount }],
     }).expect(201);
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     const payoutId = payouts[0].id;
 
     // netAmount transferred FIRST, before the reserve is ever released —
@@ -119,7 +119,7 @@ describe('Reserve follow-up transfer (e2e)', () => {
   it('releasing the reserve after netAmount was already transferred, then initiating the reserve transfer, actually sends a real, separate follow-up transfer', async () => {
     const payoutId = await verifiedPayoutWithNetAmountAlreadyTransferred('connected-reserve-followup');
 
-    const before = await payoutService.findById(payoutId);
+    const before = await payoutService.findByIdOnMaster(payoutId);
     expect(before!.transferStatus).toBe('INITIATED');
     expect(before!.reserveStatus).toBe('HELD');
 
@@ -179,7 +179,7 @@ describe('Reserve follow-up transfer (e2e)', () => {
       splits: [{ merchantId: connected.merchantId, amount: 25 }],
     }).expect(201);
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     const payoutId = payouts[0].id;
 
     // "transferfail" in merchantId is the mock rail's decline marker,
@@ -200,7 +200,7 @@ describe('Reserve follow-up transfer (e2e)', () => {
       .expect(422);
     expect(res.body.code).toBe('PAYOUT_RESERVE_TRANSFER_FAILED');
 
-    const after = await payoutService.findById(payoutId);
+    const after = await payoutService.findByIdOnMaster(payoutId);
     expect(after!.reserveTransferStatus).toBe('FAILED');
     expect(after!.transferStatus).toBe('NOT_INITIATED'); // untouched — never initiated in this test
   });
@@ -218,7 +218,7 @@ describe('Reserve follow-up transfer (e2e)', () => {
       .expect(200);
     expect(sweepRes.body.initiated).toBeGreaterThanOrEqual(1);
 
-    const after = await payoutService.findById(payoutId);
+    const after = await payoutService.findByIdOnMaster(payoutId);
     expect(after!.reserveTransferStatus).toBe('INITIATED');
   });
 
@@ -242,7 +242,7 @@ describe('Reserve follow-up transfer (e2e)', () => {
       splits: [{ merchantId: connected.merchantId, amount: 25 }],
     }).expect(201);
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     const payoutId = payouts[0].id;
     expect(payouts[0].kycBlocked).toBe(true);
 
@@ -334,7 +334,7 @@ describe('Reserve follow-up transfer against a real, async-settling rail (e2e)',
       .send(bodyStr)
       .expect(201);
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     const payoutId = payouts[0].id;
 
     // netAmount transferred first (lands PENDING_CONFIRMATION on the ACH
@@ -344,7 +344,11 @@ describe('Reserve follow-up transfer against a real, async-settling rail (e2e)',
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(netInitRes.body.transferStatus).toBe('PENDING_CONFIRMATION');
-    await postBankTransferWebhook({ transferId: netInitRes.body.transferId, status: 'settled' }).expect(200);
+    await postBankTransferWebhook({
+      id: uniqueId('evt'),
+      topic: 'customer_transfer_completed',
+      resourceId: netInitRes.body.transferId,
+    }).expect(200);
 
     await request(app.getHttpServer())
       .post(`/api/v1/admin/marketplace/payouts/${payoutId}/release-reserve`)
@@ -359,9 +363,13 @@ describe('Reserve follow-up transfer against a real, async-settling rail (e2e)',
     const reserveTransferId = reserveInitRes.body.reserveTransferId as string;
     expect(reserveTransferId).not.toBe(netInitRes.body.transferId);
 
-    await postBankTransferWebhook({ transferId: reserveTransferId, status: 'settled' }).expect(200);
+    await postBankTransferWebhook({
+      id: uniqueId('evt'),
+      topic: 'customer_transfer_completed',
+      resourceId: reserveTransferId,
+    }).expect(200);
 
-    const after = await payoutService.findById(payoutId);
+    const after = await payoutService.findByIdOnMaster(payoutId);
     expect(after!.reserveTransferStatus).toBe('INITIATED');
     expect(after!.transferStatus).toBe('INITIATED'); // netAmount leg unaffected
   });

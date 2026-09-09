@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { BankTransferPort, BankTransferRequest, BankTransferResponse } from '../../ports/outbound/bank-transfer.port';
+import {
+  BankTransferPort,
+  BankTransferRequest,
+  BankTransferResponse,
+  BankTransferStatusResult,
+} from '../../ports/outbound/bank-transfer.port';
 
 /**
  * Mock Bank Transfer Adapter
@@ -53,5 +58,16 @@ export class MockBankTransferAdapter extends BankTransferPort {
       rawResponse: body,
       errorMessage: sent ? undefined : body.reason,
     };
+  }
+
+  /**
+   * This rail resolves synchronously (see class docblock) — its webhook
+   * (unused; `/bank/transfers` never calls it) would never need a
+   * follow-up GET either, so this is never actually invoked against this
+   * adapter in practice. Implemented anyway to satisfy the port honestly
+   * rather than throwing.
+   */
+  async getTransferStatus(): Promise<BankTransferStatusResult | null> {
+    return null;
   }
 }

@@ -13,6 +13,7 @@ import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper
 import { PaymentEntity } from '../../adapters/persistence/entities/payment.entity';
 import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
+import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 
 /**
  * Payment Lifecycle Service
@@ -243,6 +244,8 @@ export class PaymentLifecycleService {
         rate: settlementConversion.rate,
         provider: settlementConversion.provider,
       });
+      const taxRecord = buildCrossBorderTaxRecord(captureAmount, payment.binInfo);
+      if (taxRecord) payment.recordTaxRecord(taxRecord);
     }
     const outboxEvent = LedgerOutboxEvent.createChargeEntries({
       id: uuidv4(),
@@ -263,6 +266,7 @@ export class PaymentLifecycleService {
             paymentId: payment.id,
             merchantId: payment.metadata.merchantId,
             amount: reserveHold.amount,
+            netAmount: reserveHold.netAmount,
             holdDays: reserveHold.holdDays,
           },
           manager,

@@ -238,6 +238,32 @@ operator's manual `PATCH .../reserve-policy` call sets it to `false` as a
 side effect, so a hand-tuned reserve doesn't get silently overwritten by
 the next sweep — `PATCH .../risk-tier-auto` re-enables it.
 
+**Reserve top-up on escalation (Phase 1)**: de-escalation still only
+changes `reserveBps`/`reserveHoldDays` going forward — nothing about an
+already-booked `ReserveHold` changes when a merchant's history improves.
+Escalation is different: `ReserveService.topUpHeldReservesForMerchant()`
+recomputes every still-`HELD` hold's target amount against the new,
+higher `reserveBps` — using `ReserveHold.netAmount` (the original net
+amount the hold was carved from, stored on the hold specifically so a
+later escalation doesn't have to reverse-engineer it from a rate that
+may not even be the one in effect anymore) — and books the difference
+with `createReserveTopUpEntries()`, the mirror image of the release
+entries above:
+
+| Account | Type | Entry | Amount | Currency |
+|---|---|---|---|---|
+| `{merchantId}` | MERCHANT | DEBIT | additional reserve amount | charge currency |
+| `{merchantId}_RESERVE` | RESERVE | CREDIT | additional reserve amount | charge currency |
+
+The merchant's `MERCHANT` balance already received the full net amount
+at charge time (net of the original, smaller reserve slice), so topping
+up means clawing part of that back — the same direction any other ledger
+takes when pulling back funds already credited. A hold already
+`RELEASED` before the escalation happens is never touched (its funds
+already left the reserve account — there's nothing left here to top up),
+and a later de-escalation never reverses a top-up that already ran. See
+`test/risk-tiering.e2e-spec.ts`'s top-up test for the full sequence.
+
 **Two real bugs found building this** (both about the denominator —
 "how many settled charges did this merchant actually have"): counting
 only `SUCCEEDED` payments undercounts, since a lost dispute moves a

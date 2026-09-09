@@ -1,4 +1,9 @@
 import { Money } from '../value-objects/money.vo';
+import { PSPProvider } from './payment.aggregate';
+import { classifyDeclineCode, DeclineCategory } from '../services/decline-code-classifier';
+
+export { classifyDeclineCode };
+export type { DeclineCategory };
 
 export type SubscriptionStatus = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED';
 export type BillingInterval = 'day' | 'week' | 'month' | 'year';
@@ -48,39 +53,6 @@ export function addBillingInterval(date: Date, interval: BillingInterval, count:
 const RETRY_SCHEDULE_DAYS = [1, 3, 7];
 
 /**
- * Decline codes a real card network/PSP can return where retrying is
- * actively harmful, not just unlikely to succeed — a stolen/lost/
- * fraudulent card retried again is a real signal to whoever's monitoring
- * for card testing, and an expired card will never succeed on a retry
- * with the *same* stored credential regardless of backoff. A
- * subscription that gets one of these skips the day 1/3/7 retry schedule
- * entirely and cancels immediately, however few attempts it's made so
- * far — unlike `insufficient_funds` (worth retrying — the card might
- * work again in a few days) or an unrecognized/absent code (a routing
- * failure that never reached a PSP, or a code this list doesn't know
- * about), which both still get the full retry schedule. See
- * `docs/business-domain/subscriptions.md`'s Dunning section for the
- * fuller reasoning and this list's known limitation (it's a fixed,
- * illustrative set, not derived from real chargeback/decline data —
- * same posture as `RiskTieringService`'s tiers or the dispute
- * auto-decision reason-code table).
- */
-const HARD_DECLINE_CODES = new Set([
-  'stolen_card',
-  'lost_card',
-  'fraudulent',
-  'pickup_card',
-  'restricted_card',
-  'expired_card',
-]);
-
-export type DeclineCategory = 'RETRYABLE' | 'HARD_DECLINE';
-
-export function classifyDeclineCode(errorCode: string | undefined): DeclineCategory {
-  return errorCode && HARD_DECLINE_CODES.has(errorCode) ? 'HARD_DECLINE' : 'RETRYABLE';
-}
-
-/**
  * Subscription Aggregate
  * Produces charges over time — genuinely distinct from PaymentAggregate,
  * which models a single charge. Each successful billing cycle creates its
@@ -123,6 +95,8 @@ export class Subscription {
     private _pendingCredit: Money | undefined,
     private _nextRetryAt: Date | undefined,
     private _lastDeclineCode: string | undefined,
+    /** Which PSP produced `_lastDeclineCode` — needed to re-classify it later (canceledByHardDecline) against the *right* PSP's vocabulary, since the same raw string means different things under Stripe's vs Adyen's tables. */
+    private _lastDeclinePspProvider: PSPProvider | undefined = undefined,
   ) {}
 
   /** No charge yet — the first real charge happens when the trial period elapses (see runBillingSweep()'s TRIALING branch), not at creation. */
@@ -228,6 +202,7 @@ export class Subscription {
     pendingCredit?: Money;
     nextRetryAt?: Date;
     lastDeclineCode?: string;
+    lastDeclinePspProvider?: PSPProvider;
   }): Subscription {
     return new Subscription(
       params.id,
@@ -251,6 +226,7 @@ export class Subscription {
       params.pendingCredit,
       params.nextRetryAt,
       params.lastDeclineCode,
+      params.lastDeclinePspProvider,
     );
   }
 
@@ -286,6 +262,7 @@ export class Subscription {
     this._failedAttempts = 0;
     this._nextRetryAt = undefined;
     this._lastDeclineCode = undefined;
+    this._lastDeclinePspProvider = undefined;
     this._updatedAt = now;
   }
 
@@ -313,10 +290,11 @@ export class Subscription {
    * failure that never reached a PSP) defaults to `RETRYABLE`, the same
    * behavior this method always had before decline codes existed.
    */
-  recordFailedCharge(now: Date, maxAttempts: number, errorCode?: string): void {
+  recordFailedCharge(now: Date, maxAttempts: number, errorCode?: string, pspProvider?: PSPProvider): void {
     this._failedAttempts += 1;
     this._lastDeclineCode = errorCode;
-    const isHardDecline = classifyDeclineCode(errorCode) === 'HARD_DECLINE';
+    this._lastDeclinePspProvider = pspProvider;
+    const isHardDecline = classifyDeclineCode(errorCode, pspProvider) === 'HARD_DECLINE';
     if (isHardDecline || this._failedAttempts >= maxAttempts) {
       this._status = 'CANCELED';
       this._canceledAt = now;
@@ -339,7 +317,10 @@ export class Subscription {
    * `lastDeclineCode` at all).
    */
   get canceledByHardDecline(): boolean {
-    return this._status === 'CANCELED' && classifyDeclineCode(this._lastDeclineCode) === 'HARD_DECLINE';
+    return (
+      this._status === 'CANCELED' &&
+      classifyDeclineCode(this._lastDeclineCode, this._lastDeclinePspProvider) === 'HARD_DECLINE'
+    );
   }
 
   /** The cancelAtPeriodEnd due-date arriving, with no charge attempted — see dueAction(). */
@@ -553,5 +534,8 @@ export class Subscription {
   }
   get lastDeclineCode(): string | undefined {
     return this._lastDeclineCode;
+  }
+  get lastDeclinePspProvider(): PSPProvider | undefined {
+    return this._lastDeclinePspProvider;
   }
 }

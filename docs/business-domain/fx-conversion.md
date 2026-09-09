@@ -152,3 +152,36 @@ after the response is gone. A real implementation supporting
 customer-facing support/dispute-resolution workflows would need to keep
 this, the same way `settlementConversion` is now kept for the
 merchant-payout side.
+
+## Cross-border tax record (Phase 1)
+
+An **audit record, not a tax calculation** — this platform doesn't
+compute owed tax, file returns, or determine real nexus.
+`PaymentAggregate.recordTaxRecord()` records, at the same 4
+ledger-booking call sites and under the same condition as
+`settlementConversion` above (a merchant's settlement currency differs
+from the currency actually charged), a `taxRecord`:
+
+```
+{ jurisdiction, jurisdictionBasis: 'card-issuing-country',
+  collectedAmountMinorUnits, currencyCode, capturedAt }
+```
+
+`jurisdiction` is the cardholder's `BinInfo.country` — the only
+jurisdiction-relevant signal already captured at charge time. A real tax
+engine would also weigh the merchant's own nexus, the customer's billing
+address, and product-category rules, none of which this platform
+tracks — `jurisdictionBasis` is pinned to `'card-issuing-country'`
+specifically so this simplification is explicit in the data itself, not
+just in a comment. `collectedAmountMinorUnits`/`currencyCode` record what
+the customer actually paid (the charge amount, in its original
+currency) — cross-border tax exposure is a function of what the customer
+paid, not what the merchant received after FX conversion.
+
+Recorded once, like `settlementConversion` (a later capture of an
+already-cross-border payment doesn't produce a second, possibly
+different jurisdiction call). Never produced at all when there's no
+`BinInfo` to derive a jurisdiction from — a subscription renewal, for
+instance, never carries one (see [`subscriptions.md`](./subscriptions.md)).
+See `src/modules/payment/domain/services/tax-record.ts` and
+`test/tax-record.e2e-spec.ts`.

@@ -37,6 +37,7 @@ export class SubscriptionTypeOrmRepository implements SubscriptionPort {
       : null;
     entity.nextRetryAt = subscription.nextRetryAt ?? null;
     entity.lastDeclineCode = subscription.lastDeclineCode ?? null;
+    entity.lastDeclinePspProvider = subscription.lastDeclinePspProvider ?? null;
     await this.repo.save(entity);
   }
 
@@ -95,6 +96,7 @@ export class SubscriptionTypeOrmRepository implements SubscriptionPort {
           : undefined,
       nextRetryAt: entity.nextRetryAt ?? undefined,
       lastDeclineCode: entity.lastDeclineCode ?? undefined,
+      lastDeclinePspProvider: entity.lastDeclinePspProvider ?? undefined,
     });
   }
 }

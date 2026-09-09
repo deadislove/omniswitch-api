@@ -113,9 +113,11 @@ describe('Agentic payments — delegated agent credentials & spend policy (e2e)'
     // The audit trail (who/what actually initiated this charge) isn't on
     // the response DTO — verify it directly against the DB, same posture
     // as this codebase's other "verified via a fresh DB read" reserve/
-    // payout assertions.
+    // payout assertions. Real, indexed columns (Phase 1) — not the old
+    // paymentMetadata jsonb bag.
     const payment = await findOneOnMaster(PaymentEntity, { id: chargeRes.body.paymentId });
-    expect(payment?.paymentMetadata).toEqual({ delegationId: created.delegation.id, initiatedBy: 'agent' });
+    expect(payment?.delegationId).toBe(created.delegation.id);
+    expect(payment?.initiatedBy).toBe('agent');
 
     const afterRes = await request(app.getHttpServer())
       .get(`/api/v1/delegations/${created.delegation.id}`)

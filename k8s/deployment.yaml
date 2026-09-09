@@ -210,6 +210,16 @@ spec:
                 secretKeyRef:
                   name: omniswitch-secrets
                   key: ADYEN_HMAC_KEY
+            - name: BANK_TRANSFER_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: BANK_TRANSFER_WEBHOOK_SECRET
+            - name: KYC_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: omniswitch-secrets
+                  key: KYC_WEBHOOK_SECRET
 
           # ─── Liveness Probe ───────────────────────────────────────────────
           livenessProbe:

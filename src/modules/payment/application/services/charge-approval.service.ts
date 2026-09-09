@@ -93,6 +93,12 @@ export class ChargeApprovalService {
       });
     }
 
+    const agentPercentOfRemainingMonthlyBudget = await this.deriveAgentPercentOfRemainingMonthlyBudget(
+      approval.delegationId,
+      approval.amount,
+      now,
+    );
+
     let result: CheckoutSagaResult;
     try {
       result = await this.checkoutSaga.execute(
@@ -101,7 +107,9 @@ export class ChargeApprovalService {
           merchantId: approval.merchantId,
           idempotencyKey: approval.idempotencyKey,
           dto: approval.chargeRequest as unknown as ChargePaymentDto,
-          initiatorMetadata: { delegationId: approval.delegationId, initiatedBy: 'agent' },
+          delegationId: approval.delegationId,
+          initiatedBy: 'agent',
+          agentPercentOfRemainingMonthlyBudget,
         }),
       );
     } catch (err: unknown) {
@@ -117,6 +125,65 @@ export class ChargeApprovalService {
       `Charge approval ${id} approved by ${decidedBy} — payment ${approval.paymentId} now ${result.status}`,
     );
     return result;
+  }
+
+  /**
+   * Re-derives `agentPercentOfRemainingMonthlyBudget` from the
+   * delegation's *current* state at `approve()` time, closing the gap
+   * `CheckoutSagaInput.agentPercentOfRemainingMonthlyBudget`'s own
+   * docblock describes: this signal used to be permanently absent on
+   * every charge that goes through approval, which — because
+   * `ChargeApproval` only exists above `requireApprovalAboveAmount` — is
+   * by construction every one of this delegation's largest charges, not
+   * a rare edge case.
+   *
+   * This charge's own `amount` was already reserved against the
+   * delegation back at creation time (`PaymentController.charge()`), so
+   * `spentThisMonth(now)` at approval time already includes it — backed
+   * out below to get "remaining before this specific charge", the same
+   * baseline the immediate-execution path measures via the
+   * pre-reservation `Delegation` object `reserveSpendOrThrow()` returns.
+   * Using *current* spend for everything else the delegation has done
+   * since creation (not a frozen creation-time snapshot) is a genuine
+   * improvement, not just a stale re-read — an approval sitting for days
+   * should reflect what the delegation has actually spent since, not
+   * what it looked like when the approval was first created.
+   *
+   * Returns `undefined` (the previous, honest "signal absent" behavior)
+   * if the numbers don't support a meaningful calculation — the calendar
+   * month rolled over between creation and approval (so this month's
+   * counter no longer reflects this charge's own reservation at all), or
+   * the delegation's monthly limit no longer leaves any room once this
+   * charge's own reservation is backed out. Both are edge cases a
+   * frozen-percentage approach could never have hit either, so this is
+   * strictly an improvement, never a regression to the prior behavior.
+   */
+  private async deriveAgentPercentOfRemainingMonthlyBudget(
+    delegationId: string,
+    chargeAmount: Money,
+    now: Date,
+  ): Promise<number | undefined> {
+    try {
+      const delegation = await this.delegationService.getOrThrow(delegationId);
+      const currentSpent = delegation.spentThisMonth(now);
+      if (currentSpent.isLessThan(chargeAmount)) {
+        return undefined;
+      }
+      const remainingBeforeThisCharge = delegation.spendPolicy.monthlyLimit.subtract(
+        currentSpent.subtract(chargeAmount),
+      );
+      if (remainingBeforeThisCharge.isZero() || remainingBeforeThisCharge.isLessThan(chargeAmount)) {
+        return undefined;
+      }
+      return (chargeAmount.amount / remainingBeforeThisCharge.amount) * 100;
+    } catch (err: unknown) {
+      // Best-effort — a signal-derivation failure must never block the
+      // approval itself; the risk score just falls back to not having
+      // this one signal, same as before this fix existed.
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Could not derive agentPercentOfRemainingMonthlyBudget for delegation ${delegationId}: ${msg}`);
+      return undefined;
+    }
   }
 
   /** Denying releases the reservation — the whole point of the hold was that the money was never actually going to move without a human OK. */

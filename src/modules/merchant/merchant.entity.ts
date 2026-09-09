@@ -150,6 +150,29 @@ export class MerchantEntity {
   riskTierAutoManaged: boolean;
 
   /**
+   * ISO 18245 Merchant Category Code, set by an operator
+   * (PATCH .../mcc-code) — not self-declared by the merchant, same
+   * "platform sets it on the merchant's behalf" posture as
+   * platformFeeBps/reserveBps. Null (the default, every merchant before
+   * this existed) means RiskTieringService treats industryRiskCategory
+   * as UNKNOWN — no risk escalation either way. See mcc-risk-lookup.ts.
+   */
+  @Column({ name: 'mcc_code', type: 'varchar', nullable: true })
+  mccCode?: string | null;
+
+  /**
+   * Denormalized from mccCode via mcc-risk-lookup.ts at the moment
+   * mccCode is set — stored rather than looked up fresh on every
+   * RiskTieringService evaluation so a future change to the lookup
+   * table's classifications doesn't silently rewrite risk history for
+   * evaluations that already ran under the old classification. Defaults
+   * to 'UNKNOWN' (no mccCode set), which RiskTieringService never
+   * escalates on.
+   */
+  @Column({ name: 'industry_risk_category', type: 'varchar', default: 'UNKNOWN' })
+  industryRiskCategory: 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
+
+  /**
    * Marketplace role. Every merchant defaults to 'PLATFORM' (a flat peer,
    * the only shape that existed before this) — 'CONNECTED' marks a
    * sub-merchant onboarded *under* a platform merchant (see
@@ -263,6 +286,26 @@ export class MerchantEntity {
   disputeNotificationTarget?: string | null;
 
   /**
+   * Same shape as `disputeNotificationChannel` but for
+   * `SubscriptionNotificationDispatcherService`'s
+   * `subscription.past_due`/`subscription.canceled` notifications —
+   * kept as an independent field, not shared with disputes, since a
+   * merchant might reasonably want (e.g.) Slack for disputes and email
+   * for billing/dunning events. See `subscriptionNotificationTarget`
+   * below.
+   */
+  @Column({ name: 'subscription_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  subscriptionNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  /**
+   * The channel-specific destination for subscription notifications —
+   * same "`null` means don't send" semantics as
+   * `disputeNotificationTarget`.
+   */
+  @Column({ name: 'subscription_notification_target', type: 'varchar', nullable: true })
+  subscriptionNotificationTarget?: string | null;
+
+  /**
    * PSPs this merchant is allowed to route charges through — see
    * SmartRoutingStrategy.filterAvailableProviders() and
    * PaymentCheckoutSaga.execute(). Defaults to every PSP this system
@@ -339,6 +382,50 @@ export class MerchantEntity {
    */
   @Column({ name: 'ambiguous_risk_auto_managed', default: true })
   ambiguousRiskAutoManaged: boolean;
+
+  /**
+   * Passive AML-review observation flag — scoped to
+   * `industryRiskCategory === 'HIGH'` merchants only, set when
+   * `AmlReviewMonitoringService` sees `AML_REVIEW_HARD_DECLINE_THRESHOLD`
+   * hard-decline events (see decline-code-classifier.ts) within a
+   * trailing `AML_REVIEW_WINDOW_DAYS` window. Same "visibility only, no
+   * automated blocking" posture as `ambiguousRiskFlagged` above — a
+   * high-MCC industry's disproportionate money-laundering exposure needs
+   * a human to actually look at the merchant, not an automated block.
+   */
+  @Column({ name: 'aml_review_flagged', default: false })
+  amlReviewFlagged: boolean;
+
+  /** Same re-touch-on-new-incident semantics as ambiguousRiskFlaggedAt above. Null whenever amlReviewFlagged is false. */
+  @Column({ name: 'aml_review_flagged_at', type: 'timestamp', nullable: true })
+  amlReviewFlaggedAt?: Date;
+
+  /** Same posture as ambiguousRiskFlagReason above. */
+  @Column({ name: 'aml_review_flag_reason', type: 'varchar', nullable: true })
+  amlReviewFlagReason?: string;
+
+  /** Same posture as ambiguousRiskFlaggedBy above. */
+  @Column({ name: 'aml_review_flagged_by', type: 'varchar', nullable: true })
+  amlReviewFlaggedBy?: string;
+
+  /** Same "manual input pauses automation" posture as ambiguousRiskAutoManaged above. */
+  @Column({ name: 'aml_review_auto_managed', default: true })
+  amlReviewAutoManaged: boolean;
+
+  /**
+   * Notification channel for AML-review flag trips — independent of
+   * disputeNotificationChannel/subscriptionNotificationChannel above,
+   * same "each event family picks its own channel" reasoning as those
+   * two. Unlike AmbiguousRiskMonitoringService (deliberately silent —
+   * see its docblock), a HIGH-industry merchant crossing this threshold
+   * is compliance-relevant enough to page someone in real time.
+   */
+  @Column({ name: 'aml_review_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  amlReviewNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  /** Channel-specific destination for AML-review notifications — same posture as subscriptionNotificationTarget above. */
+  @Column({ name: 'aml_review_notification_target', type: 'varchar', nullable: true })
+  amlReviewNotificationTarget?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

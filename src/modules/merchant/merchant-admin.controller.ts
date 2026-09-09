@@ -8,6 +8,9 @@ import {
   UpdateFeeTiersDto,
   UpdateSettlementCurrencyDto,
   UpdateDisputeNotificationChannelDto,
+  UpdateSubscriptionNotificationChannelDto,
+  UpdateAmlReviewNotificationChannelDto,
+  UpdateMccCodeDto,
   UpdateReservePolicyDto,
   UpdatePayoutReservePolicyDto,
   UpdateRiskTierAutoDto,
@@ -49,6 +52,8 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     reserveBps: merchant.reserveBps,
     reserveHoldDays: merchant.reserveHoldDays,
     riskTierAutoManaged: merchant.riskTierAutoManaged,
+    mccCode: merchant.mccCode ?? null,
+    industryRiskCategory: merchant.industryRiskCategory,
     accountType: merchant.accountType,
     platformMerchantId: merchant.platformMerchantId ?? null,
     payoutReserveBps: merchant.payoutReserveBps,
@@ -63,6 +68,15 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     ambiguousRiskAutoManaged: merchant.ambiguousRiskAutoManaged,
     disputeNotificationChannel: merchant.disputeNotificationChannel,
     disputeNotificationTarget: merchant.disputeNotificationTarget ?? null,
+    subscriptionNotificationChannel: merchant.subscriptionNotificationChannel,
+    subscriptionNotificationTarget: merchant.subscriptionNotificationTarget ?? null,
+    amlReviewFlagged: merchant.amlReviewFlagged,
+    amlReviewFlaggedAt: merchant.amlReviewFlaggedAt?.toISOString() ?? null,
+    amlReviewFlagReason: merchant.amlReviewFlagReason ?? null,
+    amlReviewFlaggedBy: merchant.amlReviewFlaggedBy ?? null,
+    amlReviewAutoManaged: merchant.amlReviewAutoManaged,
+    amlReviewNotificationChannel: merchant.amlReviewNotificationChannel,
+    amlReviewNotificationTarget: merchant.amlReviewNotificationTarget ?? null,
     createdAt: merchant.createdAt.toISOString(),
     updatedAt: merchant.updatedAt.toISOString(),
   };
@@ -203,6 +217,59 @@ export class MerchantAdminController {
       dto.channel,
       dto.target ?? null,
     );
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/subscription-notification-channel')
+  @ApiOperation({
+    summary:
+      "Change which channel this merchant's subscription.past_due/subscription.canceled notifications go out on (EMAIL/SLACK/WEBHOOK), and the channel-specific destination. Independent of dispute-notification-channel. Omit/null target clears it — the merchant then receives no subscription notifications at all.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updateSubscriptionNotificationChannel(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateSubscriptionNotificationChannelDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updateSubscriptionNotificationChannel(
+      merchantId,
+      dto.channel,
+      dto.target ?? null,
+    );
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/aml-review-notification-channel')
+  @ApiOperation({
+    summary:
+      "Change which channel this merchant's aml_review.flagged notification goes out on (EMAIL/SLACK/WEBHOOK), and the channel-specific destination. Independent of dispute-notification-channel/subscription-notification-channel. Omit/null target clears it — the merchant then receives no AML-review notification even if flagged.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updateAmlReviewNotificationChannel(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateAmlReviewNotificationChannelDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updateAmlReviewNotificationChannel(
+      merchantId,
+      dto.channel,
+      dto.target ?? null,
+    );
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/mcc-code')
+  @ApiOperation({
+    summary:
+      "Set this merchant's Merchant Category Code — derives industryRiskCategory via a static risk lookup table, which RiskTieringService factors into its tier escalation. Omit/null clears it back to UNKNOWN.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updateMccCode(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateMccCodeDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updateMccCode(merchantId, dto.mccCode ?? null);
     return toSummary(merchant);
   }
 

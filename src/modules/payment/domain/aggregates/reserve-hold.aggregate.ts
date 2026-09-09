@@ -24,7 +24,8 @@ export class ReserveHold {
     private readonly _id: string,
     private readonly _paymentId: string,
     private readonly _merchantId: string,
-    private readonly _amount: Money,
+    private _amount: Money,
+    private readonly _netAmount: Money,
     private _status: ReserveHoldStatus,
     private readonly _releaseEligibleAt: Date,
     private readonly _createdAt: Date,
@@ -36,6 +37,7 @@ export class ReserveHold {
     paymentId: string;
     merchantId: string;
     amount: Money;
+    netAmount: Money;
     holdDays: number;
   }): ReserveHold {
     const now = new Date();
@@ -45,6 +47,7 @@ export class ReserveHold {
       params.paymentId,
       params.merchantId,
       params.amount,
+      params.netAmount,
       'HELD',
       releaseEligibleAt,
       now,
@@ -57,6 +60,7 @@ export class ReserveHold {
     paymentId: string;
     merchantId: string;
     amount: Money;
+    netAmount: Money;
     status: ReserveHoldStatus;
     releaseEligibleAt: Date;
     createdAt: Date;
@@ -67,6 +71,7 @@ export class ReserveHold {
       params.paymentId,
       params.merchantId,
       params.amount,
+      params.netAmount,
       params.status,
       params.releaseEligibleAt,
       params.createdAt,
@@ -96,6 +101,28 @@ export class ReserveHold {
     this._releasedAt = now;
   }
 
+  /**
+   * Increases the withheld amount — the one deliberate exception to this
+   * aggregate otherwise treating `amount` as fixed at creation time. Only
+   * ever called by RiskTieringService's tier-escalation path
+   * (ReserveService.topUpHeldReservesForMerchant()), and only while still
+   * `HELD` — a `RELEASED` hold's funds have already left the reserve
+   * account, so there's nothing left here to top up; a merchant that
+   * escalates after this hold already released only gets a bigger reserve
+   * on its *next* charge, same as any other reserveBps change. Never
+   * called for a tier de-escalation — see RiskTieringService's own
+   * docblock for why that never claws back anything already held.
+   */
+  topUp(additionalAmount: Money): void {
+    if (this._status !== 'HELD') {
+      throw new Error(`Cannot top up reserve hold in status: ${this._status}`);
+    }
+    if (additionalAmount.isZero()) {
+      throw new Error(`topUp amount must be positive, got zero`);
+    }
+    this._amount = this._amount.add(additionalAmount);
+  }
+
   get id(): string {
     return this._id;
   }
@@ -107,6 +134,9 @@ export class ReserveHold {
   }
   get amount(): Money {
     return this._amount;
+  }
+  get netAmount(): Money {
+    return this._netAmount;
   }
   get status(): ReserveHoldStatus {
     return this._status;

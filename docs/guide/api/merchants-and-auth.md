@@ -240,6 +240,48 @@ than `AMBIGUOUS_RISK_AUTO_CLEAR_DAYS` (default 60).
 
 - **Response `200`**: `{ cleared: number }`
 
+### AML review observation
+
+`AmlReviewMonitoringService` flags a `industryRiskCategory: 'HIGH'`
+merchant once it accumulates `AML_REVIEW_HARD_DECLINE_THRESHOLD`
+hard-decline events (stolen/lost/fraudulent-card-class outcomes — see
+`decline-code-classifier.ts`) within a trailing
+`AML_REVIEW_WINDOW_DAYS` window — purely observational, does not change
+how that merchant's charges are processed. Unlike ambiguous-risk
+observation, this fires a real notification (see
+`aml-review-notification-channel` below) the moment the flag trips. See
+[`../../business-domain/risk-and-fraud.md`](../../business-domain/risk-and-fraud.md#aml-review-observation-high-industry-hard-decline-signal)
+for the full design.
+
+#### `PATCH /admin/merchants/:id/aml-review`
+
+Manually flags or clears a merchant. `reason` is required and, along
+with the acting admin/operator's identity, is recorded as a permanent
+audit trail (`amlReviewFlagReason`/`amlReviewFlaggedBy`). Disables
+`amlReviewAutoManaged` as a side effect — same "manual input pauses
+automation" behavior as `PATCH .../ambiguous-risk`.
+
+- **Body**: `{ flagged: boolean, reason: string }`
+- **Errors**: `422` if `reason` is missing/empty.
+
+#### `PATCH /admin/merchants/:id/aml-review-auto`
+
+Re-enables the automated flag logic for this merchant, after a manual
+`PATCH .../aml-review` disabled it.
+
+- **Body**: `{ enabled: boolean }`
+
+#### `PATCH /admin/merchants/:id/aml-review-notification-channel`
+
+Changes which channel (EMAIL/SLACK/WEBHOOK) and destination this
+merchant's `aml_review.flagged` notification goes out on — independent
+of `dispute-notification-channel`/`subscription-notification-channel`.
+Defaults to `WEBHOOK` with no target configured (no notification sent
+until one is set).
+
+- **Body**: `{ channel: 'EMAIL' | 'SLACK' | 'WEBHOOK', target?: string | null }`
+- **Errors**: `422` if `channel` isn't one of the three values.
+
 All the `PATCH`/`POST` endpoints above (except onboarding/rotation)
 return the merchant summary:
 
@@ -269,6 +311,13 @@ return the merchant summary:
   "ambiguousRiskFlagReason": null,
   "ambiguousRiskFlaggedBy": null,
   "ambiguousRiskAutoManaged": true,
+  "amlReviewFlagged": false,
+  "amlReviewFlaggedAt": null,
+  "amlReviewFlagReason": null,
+  "amlReviewFlaggedBy": null,
+  "amlReviewAutoManaged": true,
+  "amlReviewNotificationChannel": "WEBHOOK",
+  "amlReviewNotificationTarget": null,
   "createdAt": "2026-01-01T00:00:00.000Z",
   "updatedAt": "2026-01-01T00:00:00.000Z"
 }

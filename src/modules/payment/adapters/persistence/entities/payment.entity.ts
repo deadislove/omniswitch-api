@@ -29,6 +29,23 @@ export class PaymentEntity {
   @Column({ name: 'customer_id', nullable: true })
   customerId?: string;
 
+  /**
+   * Real, indexed columns — promoted (Phase 1) from the old
+   * `paymentMetadata` jsonb bag (`{delegationId, initiatedBy}`), which
+   * had no query surface of its own. `delegationId` is `null` for a
+   * human-initiated charge; `initiatedBy` always has a value (`'human'`
+   * is the default for every charge that isn't an AGENT-authenticated
+   * one — see PaymentCheckoutSaga/PaymentController.charge()). See
+   * DisputeEntity's matching columns, snapshotted at dispute-creation
+   * time from these.
+   */
+  @Column({ name: 'delegation_id', type: 'uuid', nullable: true })
+  @Index()
+  delegationId?: string;
+
+  @Column({ name: 'initiated_by', type: 'varchar', default: 'human' })
+  initiatedBy: 'human' | 'agent';
+
   @Column({ name: 'order_id', nullable: true })
   orderId?: string;
 
@@ -112,6 +129,23 @@ export class PaymentEntity {
    */
   @Column({ name: 'settlement_conversion', type: 'jsonb', nullable: true })
   settlementConversion?: { currency: string; rate: number; provider: string };
+
+  /**
+   * A cross-border audit record, not a tax calculation — see
+   * PaymentAggregate.recordTaxRecord()'s and
+   * src/modules/payment/domain/services/tax-record.ts's docblocks. Only
+   * set when this charge was cross-border (same condition as
+   * settlementConversion above being present) and a BinInfo was
+   * available to derive a jurisdiction from.
+   */
+  @Column({ name: 'tax_record', type: 'jsonb', nullable: true })
+  taxRecord?: {
+    jurisdiction: string;
+    jurisdictionBasis: 'card-issuing-country';
+    collectedAmountMinorUnits: string;
+    currencyCode: string;
+    capturedAt: string;
+  };
 
   /**
    * The marketplace `splits` this payment was actually charged with, if

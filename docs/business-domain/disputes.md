@@ -149,6 +149,36 @@ an empty destination — see
 one. A delivery failure is logged, never allowed to break dispute
 processing itself.
 
+The actual HTTP-POST/HMAC-signing mechanics behind all three adapters
+live in shared code
+(`src/modules/payment/adapters/notifications/notification-delivery.util.ts`),
+not copy-pasted per event family — `SubscriptionNotificationListener`
+(see [`subscriptions.md`](./subscriptions.md)) reuses the exact same
+delivery functions for `subscription.past_due`/`subscription.canceled`,
+via its own independent `subscriptionNotificationChannel`/
+`subscriptionNotificationTarget` fields.
+
+## Agent/dispute attribution (Phase 1)
+
+Every `Dispute` now snapshots `delegationId`/`initiatedBy` from the
+underlying `Payment` at `DisputeService.recordDispute()` time — read via
+`PaymentRepositoryPort.findByIdOnMaster()`, not the ambient
+replica-routed connection, since a dispute can (in tests, and in
+principle in production) arrive moments after the very charge that
+created the payment record, which can lose the race against the
+replica's ~1s streaming lag. `initiatedBy` is `'human'` for the vast
+majority of charges and `'agent'` only for one made through a
+`Delegation` (see [`future-directions.md`](./future-directions.md#agentic-payments));
+`delegationId` is `null` whenever `initiatedBy` is `'human'`. Both are
+exposed on `GET /admin/disputes`/`GET /admin/disputes/:id`.
+
+**Data capture only.** This doesn't decide who's liable when an
+agent-initiated charge is disputed — the platform, the merchant, or
+whoever operates the agent — that's a genuinely unresolved industry
+question. It makes "was this an agent-initiated charge" an actually
+queryable fact instead of invisible, which is what any real
+liability-attribution policy would need as a starting point.
+
 ## Not modeled
 
 Partial-amount disputes — a dispute is always assumed to cover the full

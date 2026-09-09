@@ -23,6 +23,14 @@ export abstract class ReserveHoldPort {
   abstract findReleaseEligible(now: Date): Promise<ReserveHold[]>;
 
   /**
+   * All HELD holds for one merchant — what RiskTieringService's
+   * tier-escalation top-up sweep iterates over
+   * (ReserveService.topUpHeldReservesForMerchant()). Same "true set, not
+   * a page of it" reasoning as findReleaseEligible().
+   */
+  abstract findHeldByMerchant(merchantId: string): Promise<ReserveHold[]>;
+
+  /**
    * Atomic, conditional on the hold currently being HELD — same reasoning
    * as LedgerOutboxPort.resetToPending(): a plain read-then-write here
    * would let two concurrent release attempts (an operator's manual

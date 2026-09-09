@@ -68,11 +68,19 @@ later.
 ## 5. The application
 
 ```bash
+kubectl apply -f k8s/serviceaccount.yaml
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/hpa.yaml
 kubectl rollout status deployment/omniswitch-api -n payments --timeout=120s
 ```
+
+`serviceaccount.yaml` must be applied before `deployment.yaml` —
+`deployment.yaml`'s pod spec references `serviceAccountName:
+omniswitch-api-sa` by name, and a Deployment referencing a
+ServiceAccount that doesn't exist yet fails pod scheduling entirely
+(`serviceaccount "omniswitch-api-sa" not found`), not just a slow
+retry.
 
 The container's own entrypoint runs pending migrations before starting
 the server (`node ./node_modules/typeorm/cli.js ... migration:run &&

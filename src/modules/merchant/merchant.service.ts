@@ -1,5 +1,6 @@
 import { Injectable, Logger, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Repository, DataSource } from 'typeorm';
 import { randomBytes, randomUUID } from 'crypto';
 import * as bcrypt from 'bcryptjs';
@@ -7,6 +8,7 @@ import { MerchantEntity } from './merchant.entity';
 import { TokenRevocationService } from '../../shared/auth/token-revocation.service';
 import { VaultTransitService } from '../../shared/vault/vault-transit.service';
 import { KYCProviderPort } from './kyc-provider.port';
+import { lookupIndustryRiskCategory } from './mcc-risk-lookup';
 
 const BCRYPT_ROUNDS = 12;
 // Fixed dummy hash compared against on an unknown apiKeyId, so lookup vs.
@@ -31,6 +33,7 @@ export class MerchantService {
     private readonly tokenRevocation: TokenRevocationService,
     private readonly vaultTransit: VaultTransitService,
     private readonly kycProvider: KYCProviderPort,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // Forced onto master, not the ambient replica-routed connection (see
@@ -87,6 +90,23 @@ export class MerchantService {
     return this.merchantRepo.findOne({ where: { merchantId, isActive: true } });
   }
 
+  /**
+   * Same as findByMerchantId(), but forced onto master — for a caller
+   * that could plausibly be looking up a merchant moments after that
+   * merchant was created (or otherwise just written), same reasoning as
+   * findMerchantOnMaster() above. Confirmed as a real, reproducible bug
+   * (not just theorized): PayoutService.runSweepLocked() calls this to
+   * check a payee's accountType/reserve policy for every net balance it
+   * finds — a connected merchant seeded and charged with a split in the
+   * same test/request right before a sweep runs is exactly this race,
+   * and losing it doesn't throw, it silently `continue`s past that
+   * payee, skipping payout creation entirely with no error surfaced
+   * anywhere. See docs/technical/ci-cd.md.
+   */
+  async findByMerchantIdOnMaster(merchantId: string): Promise<MerchantEntity | null> {
+    return this.findMerchantOnMaster({ merchantId, isActive: true });
+  }
+
   // Forced onto master, same reasoning as findMerchantOnMaster() above —
   // this is only called by GET /admin/merchants and the ambiguous-risk/
   // risk-tiering sweeps, all low-frequency admin/ops paths (unlike
@@ -101,6 +121,37 @@ export class MerchantService {
     const queryRunner = this.dataSource.createQueryRunner('master');
     try {
       return await queryRunner.manager.find(MerchantEntity, { order: { createdAt: 'DESC' } });
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Keyset-paginated (not offset-based — a large sweep spanning many
+   * batches shouldn't re-scan skipped rows, and offset pagination's cost
+   * grows with the offset itself) page of active, auto-managed merchants,
+   * ordered by `id` ascending. `id` (the UUID primary key), not
+   * `merchantId` or `createdAt` — it's guaranteed unique and already
+   * indexed as the primary key, so `id > afterId` is a stable cursor even
+   * if two merchants share a `createdAt` timestamp. Built for
+   * `RiskTieringService.runTieringSweep()`'s own batching (see that
+   * method's docblock for why `list()` above stopped being viable once
+   * the merchants table grew large) — filters `isActive`/
+   * `riskTierAutoManaged` in SQL rather than fetching every merchant and
+   * filtering in application code, so a batch only ever contains rows the
+   * caller actually needs to evaluate.
+   */
+  async findActiveAutoManagedBatch(afterId: string | undefined, limit: number): Promise<MerchantEntity[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager
+        .createQueryBuilder(MerchantEntity, 'm')
+        .where('m.isActive = :isActive', { isActive: true })
+        .andWhere('m.riskTierAutoManaged = :autoManaged', { autoManaged: true })
+        .andWhere(afterId ? 'm.id > :afterId' : '1=1', afterId ? { afterId } : {})
+        .orderBy('m.id', 'ASC')
+        .take(limit)
+        .getMany();
     } finally {
       await queryRunner.release();
     }
@@ -321,9 +372,82 @@ export class MerchantService {
     return merchant;
   }
 
-  /** Operator-initiated — see riskTierAutoManaged's docblock for why this always disables auto-management, unlike applyAutoRiskTier() below. */
+  async updateSubscriptionNotificationChannel(
+    merchantId: string,
+    channel: 'EMAIL' | 'SLACK' | 'WEBHOOK',
+    target: string | null,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = `${merchant.subscriptionNotificationChannel}:${merchant.subscriptionNotificationTarget ?? '(none)'}`;
+    merchant.subscriptionNotificationChannel = channel;
+    // null, not undefined — same "TypeORM save() silently skips undefined"
+    // reasoning as updateDisputeNotificationChannel() above.
+    merchant.subscriptionNotificationTarget = target;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `Subscription notification channel for merchant ${merchantId} changed from ${previous} to ${channel}:${target ?? '(none)'}`,
+    );
+    return merchant;
+  }
+
+  async updateAmlReviewNotificationChannel(
+    merchantId: string,
+    channel: 'EMAIL' | 'SLACK' | 'WEBHOOK',
+    target: string | null,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = `${merchant.amlReviewNotificationChannel}:${merchant.amlReviewNotificationTarget ?? '(none)'}`;
+    merchant.amlReviewNotificationChannel = channel;
+    merchant.amlReviewNotificationTarget = target;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `AML-review notification channel for merchant ${merchantId} changed from ${previous} to ${channel}:${target ?? '(none)'}`,
+    );
+    return merchant;
+  }
+
+  /**
+   * Derives industryRiskCategory from mccCode via mcc-risk-lookup.ts and
+   * stores both — see MerchantEntity.industryRiskCategory's docblock for
+   * why this is denormalized at write time rather than looked up fresh
+   * by RiskTieringService on every evaluation. Passing null clears both
+   * fields back to "no MCC on file" (industryRiskCategory reverts to
+   * UNKNOWN, the same as a merchant that never had one set).
+   */
+  async updateMccCode(merchantId: string, mccCode: string | null): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = `${merchant.mccCode ?? '(none)'}/${merchant.industryRiskCategory}`;
+    merchant.mccCode = mccCode;
+    merchant.industryRiskCategory = lookupIndustryRiskCategory(mccCode);
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `MCC code for merchant ${merchantId} changed from ${previous} to ${mccCode ?? '(none)'}/${merchant.industryRiskCategory}`,
+    );
+    return merchant;
+  }
+
+  /**
+   * Operator-initiated — see riskTierAutoManaged's docblock for why this
+   * always disables auto-management, unlike applyAutoRiskTier() below.
+   *
+   * Emits `merchant.reserve_policy.escalated` when the new `reserveBps`
+   * is higher than the previous rate — `ReservePolicyEscalationListener`
+   * (in `PaymentModule`, which this module can't depend on directly;
+   * `MerchantModule` -> `PaymentModule` is the wrong direction of the
+   * one-way dependency `docs/technical/architecture.md`'s module graph
+   * establishes) reacts by topping up this merchant's still-HELD reserve
+   * holds to the new rate, the same way `RiskTieringService`'s own
+   * automatic sweep escalation already does via
+   * `ReserveService.topUpHeldReservesForMerchant()`. A manual escalation
+   * is, if anything, a more deliberate risk signal than an automatic
+   * one — there was never a real reason for only the automatic path to
+   * reach already-booked holds. Same one-way-only posture: a
+   * de-escalation here never claws anything back, matching
+   * `topUpHeldReservesForMerchant()`'s own escalation-only contract.
+   */
   async updateReservePolicy(merchantId: string, reserveBps: number, reserveHoldDays: number): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
+    const previousBps = merchant.reserveBps;
     const previous = `${merchant.reserveBps}bps/${merchant.reserveHoldDays}d`;
     merchant.reserveBps = reserveBps;
     merchant.reserveHoldDays = reserveHoldDays;
@@ -332,6 +456,9 @@ export class MerchantService {
     this.logger.log(
       `Reserve policy for merchant ${merchantId} changed from ${previous} to ${reserveBps}bps/${reserveHoldDays}d (riskTierAutoManaged disabled)`,
     );
+    if (reserveBps > previousBps) {
+      this.eventEmitter.emit('merchant.reserve_policy.escalated', { merchantId, reserveBps });
+    }
     return merchant;
   }
 
@@ -388,10 +515,16 @@ export class MerchantService {
    * Idempotent — a duplicate webhook delivery for an already-decided
    * application, or one for an unrecognized `applicationId`, is logged
    * and ignored rather than throwing, same posture as
-   * `PayoutService.confirmTransfer()`.
+   * `PayoutService.confirmTransfer()` — including that method's own
+   * replica-lag fix: `kycApplicationId` was itself written moments
+   * earlier by `submitKyc()`, in the very same real-world flow this
+   * webhook is reacting to, so this lookup is forced onto master
+   * (`findMerchantOnMaster()`) rather than the ambient replica-routed
+   * one, for the identical reason `PayoutService.confirmTransfer()`'s
+   * own docblock explains.
    */
   async confirmKyc(applicationId: string, outcome: 'VERIFIED' | 'REJECTED', reason?: string): Promise<void> {
-    const merchant = await this.merchantRepo.findOne({ where: { kycApplicationId: applicationId } });
+    const merchant = await this.findMerchantOnMaster({ kycApplicationId: applicationId });
     if (!merchant) {
       this.logger.warn(`KYC webhook: no merchant found for applicationId=${applicationId}, ignoring`);
       return;
@@ -506,6 +639,49 @@ export class MerchantService {
     merchant.ambiguousRiskAutoManaged = enabled;
     await this.merchantRepo.save(merchant);
     this.logger.log(`ambiguousRiskAutoManaged for merchant ${merchantId} set to ${enabled}`);
+    return merchant;
+  }
+
+  /** Called only by AmlReviewMonitoringService's detection logic — same posture as applyAutoAmbiguousRiskFlag() above. */
+  async applyAutoAmlReviewFlag(merchantId: string, flagged: boolean, reason: string): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.amlReviewFlagged = flagged;
+    merchant.amlReviewFlaggedAt = flagged ? new Date() : undefined;
+    merchant.amlReviewFlagReason = flagged ? reason : undefined;
+    merchant.amlReviewFlaggedBy = undefined;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `amlReviewFlagged for merchant ${merchantId} automatically set to ${flagged}${flagged ? `: ${reason}` : ''}`,
+    );
+    return merchant;
+  }
+
+  /** Operator-initiated via PATCH .../aml-review — same posture as setAmbiguousRiskFlagManual() above. */
+  async setAmlReviewFlagManual(
+    merchantId: string,
+    flagged: boolean,
+    reason: string,
+    flaggedBy: string,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.amlReviewFlagged = flagged;
+    merchant.amlReviewFlaggedAt = flagged ? new Date() : undefined;
+    merchant.amlReviewFlagReason = reason;
+    merchant.amlReviewFlaggedBy = flaggedBy;
+    merchant.amlReviewAutoManaged = false;
+    await this.merchantRepo.save(merchant);
+    this.logger.warn(
+      `amlReviewFlagged for merchant ${merchantId} manually set to ${flagged} by ${flaggedBy}: ${reason} (amlReviewAutoManaged disabled)`,
+    );
+    return merchant;
+  }
+
+  /** Re-enables AmlReviewMonitoringService's automated flag logic for this merchant — same pattern as setAmbiguousRiskAutoManaged() above. */
+  async setAmlReviewAutoManaged(merchantId: string, enabled: boolean): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.amlReviewAutoManaged = enabled;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`amlReviewAutoManaged for merchant ${merchantId} set to ${enabled}`);
     return merchant;
   }
 

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DisputeNotificationPort, DisputeNotificationPayload } from '../../ports/outbound/dispute-notification.port';
+import { postJsonNotification } from './notification-delivery.util';
 
 /**
  * Email Dispute Notification Adapter
@@ -37,17 +38,7 @@ export class EmailDisputeNotificationAdapter extends DisputeNotificationPort {
         ? `A new dispute was opened for ${payload.amount} ${payload.currency} (reason: ${payload.reason ?? 'unknown'}, auto-decision: ${payload.autoDecision ?? 'n/a'})${payload.respondBy ? `. Respond by ${payload.respondBy}.` : '.'}`
         : `Dispute ${payload.disputeId} for ${payload.amount} ${payload.currency} was resolved: ${payload.outcome}.`;
 
-    const response = await fetch(`${this.baseUrl}/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: target, subject, body }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Email dispute notification to ${target} for merchant ${payload.merchantId} got HTTP ${response.status}`,
-      );
-    }
+    await postJsonNotification(`${this.baseUrl}/send`, { to: target, subject, body });
     this.logger.log(
       `Email dispute notification sent for merchant ${payload.merchantId}: ${payload.event} (${payload.disputeId})`,
     );

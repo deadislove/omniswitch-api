@@ -2,6 +2,7 @@ import { Money } from '../value-objects/money.vo';
 import { PaymentStatus, assertValidTransition } from '../value-objects/payment-status.vo';
 import { BinInfo } from '../value-objects/bin-info.vo';
 import { DomainEvent } from '../events/domain-event.base';
+import { classifyDeclineCode, DeclineCategory } from '../services/decline-code-classifier';
 import {
   PaymentIntentCreatedEvent,
   PaymentChargedEvent,
@@ -23,6 +24,8 @@ export interface PaymentMetadata {
   statementDescriptor?: string;
   metadata?: Record<string, string>;
 }
+
+export type PaymentInitiator = 'human' | 'agent';
 
 export interface ThreeDSResult {
   authenticated: boolean;
@@ -52,6 +55,21 @@ export interface SettlementConversion {
   currency: string;
   rate: number;
   provider: string;
+}
+
+/**
+ * A cross-border audit record, not a tax calculation — see
+ * `src/modules/payment/domain/services/tax-record.ts`'s docblock for why
+ * `jurisdictionBasis` is pinned to `'card-issuing-country'` (the only
+ * signal already available at charge time, and a deliberately simplified
+ * stand-in for real tax nexus determination).
+ */
+export interface TaxRecord {
+  jurisdiction: string;
+  jurisdictionBasis: 'card-issuing-country';
+  collectedAmountMinorUnits: string;
+  currencyCode: string;
+  capturedAt: string;
 }
 
 export interface PaymentSplit {
@@ -91,6 +109,9 @@ export class PaymentAggregate {
     private _ambiguousResolvedReason?: string,
     private _ambiguousResolvedAt?: Date,
     private _ambiguousAutoRetryCount: number = 0,
+    private _taxRecord?: TaxRecord,
+    private _delegationId?: string,
+    private _initiatedBy: PaymentInitiator = 'human',
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -101,6 +122,9 @@ export class PaymentAggregate {
     idempotencyKey: string;
     metadata: PaymentMetadata;
     binInfo?: BinInfo;
+    /** Real, indexed attribution columns — see PaymentEntity.delegationId's docblock for why this replaced the old free-form `metadata.metadata` bag. */
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
   }): PaymentAggregate {
     const payment = new PaymentAggregate(
       params.id,
@@ -109,6 +133,26 @@ export class PaymentAggregate {
       params.idempotencyKey,
       params.metadata,
       params.binInfo,
+      undefined, // pspProvider
+      undefined, // pspTransactionId
+      undefined, // pspRawResponse
+      undefined, // riskScore
+      undefined, // threeDSResult
+      undefined, // refunds
+      undefined, // captures
+      undefined, // failureReason
+      undefined, // failureCode
+      undefined, // createdAt
+      undefined, // updatedAt
+      undefined, // settlementConversion
+      undefined, // splits
+      undefined, // ambiguousResolvedBy
+      undefined, // ambiguousResolvedReason
+      undefined, // ambiguousResolvedAt
+      undefined, // ambiguousAutoRetryCount
+      undefined, // taxRecord
+      params.delegationId,
+      params.initiatedBy ?? 'human',
     );
 
     payment.addDomainEvent(
@@ -148,6 +192,9 @@ export class PaymentAggregate {
     ambiguousResolvedReason?: string;
     ambiguousResolvedAt?: Date;
     ambiguousAutoRetryCount?: number;
+    taxRecord?: TaxRecord;
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -173,6 +220,9 @@ export class PaymentAggregate {
       params.ambiguousResolvedReason,
       params.ambiguousResolvedAt,
       params.ambiguousAutoRetryCount ?? 0,
+      params.taxRecord,
+      params.delegationId,
+      params.initiatedBy ?? 'human',
     );
   }
 
@@ -287,8 +337,18 @@ export class PaymentAggregate {
     );
   }
 
-  markFailed(reason: string, errorCode?: string): void {
+  /**
+   * `pspProvider`, when passed, overrides `_pspProvider` before recording
+   * the failure — needed because `_pspProvider` is only ever set by
+   * `startProcessing()` at the *first* attempt; a charge that falls back
+   * to a second PSP provider and is declined there would otherwise record
+   * this failure against the wrong provider, which `declineCategory`
+   * below depends on to classify it correctly (Stripe and Adyen use
+   * disjoint decline-code vocabularies — see decline-code-classifier.ts).
+   */
+  markFailed(reason: string, errorCode?: string, pspProvider?: PSPProvider): void {
     assertValidTransition(this._status, PaymentStatus.FAILED);
+    if (pspProvider) this._pspProvider = pspProvider;
     this._failureReason = reason;
     this._failureCode = errorCode;
     this.transitionTo(PaymentStatus.FAILED);
@@ -450,6 +510,18 @@ export class PaymentAggregate {
   }
 
   /**
+   * Records a cross-border tax audit record — same "record once, never
+   * overwritten" posture as recordSettlementConversion() above, and for
+   * the same reason: a later capture of an already-cross-border payment
+   * shouldn't produce a second, possibly-different jurisdiction call for
+   * money that was already collected under the first one.
+   */
+  recordTaxRecord(record: TaxRecord): void {
+    if (this._taxRecord) return;
+    this._taxRecord = record;
+  }
+
+  /**
    * Records the marketplace `splits` this payment was charged with, the
    * first time (charge or capture) it had any — same "record once, never
    * overwritten" posture as recordSettlementConversion() above, and for
@@ -468,7 +540,31 @@ export class PaymentAggregate {
 
   // ─── Risk Assessment ────────────────────────────────────────────────────────
 
-  calculateRiskScore(): number {
+  /**
+   * `agentContext` is only ever populated for an agent-initiated charge
+   * (see PaymentCheckoutSaga's Step 2) — a human charge always calls this
+   * with no argument, identical to this method's behavior before these
+   * two signals existed. Deliberately NOT "high frequency = suspicious"
+   * the way a human charge is implicitly treated elsewhere — an agent
+   * repeatedly charging a merchant it already has a track record with
+   * (e.g. a subscription-like recurring purchase) is normal for an agent
+   * in a way it wouldn't be for a walk-up human customer; what's actually
+   * risk-relevant is novelty and budget pressure *relative to this
+   * delegation's own history*, not absolute call volume:
+   * - `isFirstChargeToMerchant`: this delegation has never charged this
+   *   merchant before — no track record to judge "is this normal for
+   *   this pairing" against yet.
+   * - `percentOfRemainingMonthlyBudget`: this charge alone consumes a
+   *   large share of what's left in the delegation's rolling monthly
+   *   budget (`SpendPolicy.monthlyLimit`/`Delegation.currentMonthSpent`)
+   *   — a single charge that nearly exhausts the month's budget is worth
+   *   flagging even if it's within the hard per-transaction limit.
+   */
+  calculateRiskScore(agentContext?: {
+    isFirstChargeToMerchant?: boolean;
+    /** 0-100 scale — this charge's amount as a percentage of the delegation's remaining monthly budget *before* this charge. */
+    percentOfRemainingMonthlyBudget?: number;
+  }): number {
     let score = 0;
 
     // High-value transactions increase risk
@@ -481,6 +577,11 @@ export class PaymentAggregate {
     // New merchant increases risk
     // (In real implementation, check merchant history)
     score += 10;
+
+    if (agentContext?.isFirstChargeToMerchant) score += 15;
+    if (agentContext?.percentOfRemainingMonthlyBudget !== undefined && agentContext.percentOfRemainingMonthlyBudget >= 50) {
+      score += 15;
+    }
 
     this._riskScore = Math.min(score, 100);
     return this._riskScore;
@@ -546,6 +647,16 @@ export class PaymentAggregate {
   get failureCode(): string | undefined {
     return this._failureCode;
   }
+  /**
+   * Derived, not persisted — re-runs classifyDeclineCode() against
+   * whatever is currently stored, same "derive on read" posture
+   * Subscription.canceledByHardDecline uses for the same underlying
+   * classification, rather than caching a value that could drift from
+   * the classifier's own logic if that logic ever changes.
+   */
+  get declineCategory(): DeclineCategory {
+    return classifyDeclineCode(this._failureCode, this._pspProvider);
+  }
   get createdAt(): Date {
     return this._createdAt;
   }
@@ -554,6 +665,15 @@ export class PaymentAggregate {
   }
   get settlementConversion(): SettlementConversion | undefined {
     return this._settlementConversion;
+  }
+  get taxRecord(): TaxRecord | undefined {
+    return this._taxRecord;
+  }
+  get delegationId(): string | undefined {
+    return this._delegationId;
+  }
+  get initiatedBy(): PaymentInitiator {
+    return this._initiatedBy;
   }
   get splits(): PaymentSplit[] | undefined {
     return this._splits;

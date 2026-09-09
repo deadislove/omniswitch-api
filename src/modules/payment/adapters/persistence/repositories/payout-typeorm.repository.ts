@@ -48,6 +48,18 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     return entity ? this.toDomain(entity) : null;
   }
 
+  // See PayoutPort.findByIdOnMaster()'s docblock for why this is forced
+  // onto master.
+  async findByIdOnMaster(id: string): Promise<Payout | null> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      const entity = await queryRunner.manager.findOne(PayoutEntity, { where: { id } });
+      return entity ? this.toDomain(entity) : null;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async findMany(filter?: FindPayoutsFilter): Promise<Payout[]> {
     const qb = this.payoutRepo.createQueryBuilder('p');
     if (filter?.merchantId) {
@@ -55,6 +67,24 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     }
     qb.orderBy('p.createdAt', 'DESC').take(filter?.limit ?? 50);
     const entities = await qb.getMany();
+    return entities.map((e) => this.toDomain(e));
+  }
+
+  // See PayoutPort.findManyOnMaster()'s docblock for why this is forced
+  // onto master.
+  async findManyOnMaster(filter?: FindPayoutsFilter): Promise<Payout[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: PayoutEntity[];
+    try {
+      const qb = queryRunner.manager.createQueryBuilder(PayoutEntity, 'p');
+      if (filter?.merchantId) {
+        qb.andWhere('p.merchantId = :merchantId', { merchantId: filter.merchantId });
+      }
+      qb.orderBy('p.createdAt', 'DESC').take(filter?.limit ?? 50);
+      entities = await qb.getMany();
+    } finally {
+      await queryRunner.release();
+    }
     return entities.map((e) => this.toDomain(e));
   }
 
@@ -148,6 +178,18 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     return entity ? this.toDomain(entity) : null;
   }
 
+  // See PayoutPort.findByTransferIdOnMaster()'s docblock for why this is
+  // forced onto master.
+  async findByTransferIdOnMaster(transferId: string): Promise<Payout | null> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      const entity = await queryRunner.manager.findOne(PayoutEntity, { where: { transferId } });
+      return entity ? this.toDomain(entity) : null;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async findReserveTransferEligible(): Promise<Payout[]> {
     const entities = await this.payoutRepo
       .createQueryBuilder('p')
@@ -199,6 +241,18 @@ export class PayoutTypeOrmRepository implements PayoutPort {
   async findByReserveTransferId(transferId: string): Promise<Payout | null> {
     const entity = await this.payoutRepo.findOne({ where: { reserveTransferId: transferId } });
     return entity ? this.toDomain(entity) : null;
+  }
+
+  // See PayoutPort.findByReserveTransferIdOnMaster()'s docblock for why
+  // this is forced onto master.
+  async findByReserveTransferIdOnMaster(transferId: string): Promise<Payout | null> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      const entity = await queryRunner.manager.findOne(PayoutEntity, { where: { reserveTransferId: transferId } });
+      return entity ? this.toDomain(entity) : null;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async saveSweepRun(run: PayoutSweepRun): Promise<void> {

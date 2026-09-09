@@ -307,6 +307,15 @@ export class PaymentDetailResponseDto {
   @ApiProperty({ type: [CaptureRecordDto] })
   captures: CaptureRecordDto[];
 
+  @ApiPropertyOptional({
+    example: { campaign: 'summer_sale', source: 'mobile_app' },
+    description: 'Custom metadata key-value pairs, echoed back exactly as sent on charge — see ChargePaymentDto.metadata',
+  })
+  metadata?: Record<string, string>;
+
+  @ApiPropertyOptional({ example: 'OMNISWITCH*PREMIUM' })
+  statementDescriptor?: string;
+
   @ApiProperty()
   createdAt: string;
 

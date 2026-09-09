@@ -70,6 +70,28 @@ describe('KYC review: Persona async provider (e2e)', () => {
       .then((res) => res.body.find((m: any) => m.merchantId === merchantId));
   }
 
+  /**
+   * Body shape is Persona's real webhook event envelope (see
+   * KycWebhookController's docblock) — an event (`data.attributes.name`)
+   * wrapping the actual Inquiry (`data.attributes.payload.data`), not a
+   * flat `{applicationId, status}` body an earlier revision of this test
+   * file (and the controller it exercises) assumed. `outcome` is
+   * Persona's own real status vocabulary — `approved`/`declined`, not an
+   * invented `rejected`.
+   */
+  function personaWebhookBody(applicationId: string, outcome: 'approved' | 'declined') {
+    return {
+      data: {
+        type: 'event',
+        id: 'evt_test_' + Math.random().toString(36).slice(2, 10),
+        attributes: {
+          name: `inquiry.${outcome}`,
+          payload: { data: { type: 'inquiry', id: applicationId, attributes: { status: outcome } } },
+        },
+      },
+    };
+  }
+
   function postKycWebhook(body: object) {
     const bodyStr = JSON.stringify(body);
     const signature = signKycWebhook(KYC_WEBHOOK_SECRET, bodyStr);
@@ -88,35 +110,56 @@ describe('KYC review: Persona async provider (e2e)', () => {
     expect(res.body.kycApplicationId).toMatch(/^persona_mock_/);
   });
 
-  it('a signed "approved" webhook confirms a PENDING_REVIEW application to VERIFIED', async () => {
+  it('a signed "inquiry.approved" event confirms a PENDING_REVIEW application to VERIFIED', async () => {
     const connected = await connectedMerchant('connected-persona-approve');
     const submitRes = await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
     const applicationId = submitRes.body.kycApplicationId as string;
 
-    await postKycWebhook({ applicationId, status: 'approved' }).expect(200);
+    await postKycWebhook(personaWebhookBody(applicationId, 'approved')).expect(200);
 
     const merchant = await getMerchant(connected.merchantId);
     expect(merchant.kycStatus).toBe('VERIFIED');
   });
 
-  it('a signed "rejected" webhook moves a PENDING_REVIEW application to REJECTED with the given reason recorded in the log path', async () => {
+  it('a signed "inquiry.declined" event moves a PENDING_REVIEW application to REJECTED', async () => {
     const connected = await connectedMerchant('connected-persona-reject-review');
     const submitRes = await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
     const applicationId = submitRes.body.kycApplicationId as string;
 
-    await postKycWebhook({ applicationId, status: 'rejected', reason: 'identity_verification_failed' }).expect(200);
+    await postKycWebhook(personaWebhookBody(applicationId, 'declined')).expect(200);
 
     const merchant = await getMerchant(connected.merchantId);
     expect(merchant.kycStatus).toBe('REJECTED');
   });
 
-  it('redelivering the same "approved" webhook twice is idempotent (no error, stays VERIFIED)', async () => {
+  it("a non-decision event (e.g. inquiry.created) is a no-op — only approved/declined reach confirmKyc()", async () => {
+    const connected = await connectedMerchant('connected-persona-nondecision');
+    const submitRes = await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
+    const applicationId = submitRes.body.kycApplicationId as string;
+
+    const body = {
+      data: {
+        type: 'event',
+        id: 'evt_test_created',
+        attributes: {
+          name: 'inquiry.created',
+          payload: { data: { type: 'inquiry', id: applicationId, attributes: { status: 'created' } } },
+        },
+      },
+    };
+    await postKycWebhook(body).expect(200);
+
+    const merchant = await getMerchant(connected.merchantId);
+    expect(merchant.kycStatus).toBe('PENDING_REVIEW');
+  });
+
+  it('redelivering the same "inquiry.approved" event twice is idempotent (no error, stays VERIFIED)', async () => {
     const connected = await connectedMerchant('connected-persona-idempotent');
     const submitRes = await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
     const applicationId = submitRes.body.kycApplicationId as string;
 
     for (let i = 0; i < 2; i++) {
-      await postKycWebhook({ applicationId, status: 'approved' }).expect(200);
+      await postKycWebhook(personaWebhookBody(applicationId, 'approved')).expect(200);
     }
 
     const merchant = await getMerchant(connected.merchantId);
@@ -124,13 +167,13 @@ describe('KYC review: Persona async provider (e2e)', () => {
   });
 
   it('a webhook for an unknown applicationId is a no-op 200, not an error', async () => {
-    await postKycWebhook({ applicationId: 'persona_mock_does_not_exist', status: 'approved' }).expect(200);
+    await postKycWebhook(personaWebhookBody('persona_mock_does_not_exist', 'approved')).expect(200);
   });
 
   it('rejects a KYC webhook with no signature header', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/webhooks/kyc')
-      .send({ applicationId: 'persona_mock_x', status: 'approved' })
+      .send(personaWebhookBody('persona_mock_x', 'approved'))
       .expect(401);
   });
 
@@ -138,7 +181,7 @@ describe('KYC review: Persona async provider (e2e)', () => {
     await request(app.getHttpServer())
       .post('/api/v1/webhooks/kyc')
       .set('X-KYC-Signature', `t=${Math.floor(Date.now() / 1000)},v1=${'0'.repeat(64)}`)
-      .send({ applicationId: 'persona_mock_x', status: 'approved' })
+      .send(personaWebhookBody('persona_mock_x', 'approved'))
       .expect(401);
   });
 

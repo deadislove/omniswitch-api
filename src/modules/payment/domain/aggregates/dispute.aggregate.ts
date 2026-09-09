@@ -1,5 +1,5 @@
 import { Money } from '../value-objects/money.vo';
-import { PSPProvider } from './payment.aggregate';
+import { PSPProvider, PaymentInitiator } from './payment.aggregate';
 import { DisputeAutoDecision } from '../services/dispute-policy';
 
 export type DisputeStatus = 'NEEDS_RESPONSE' | 'UNDER_REVIEW' | 'WON' | 'LOST';
@@ -33,6 +33,8 @@ export class Dispute {
     private readonly _createdAt: Date,
     private _updatedAt: Date,
     private readonly _autoDecision: DisputeAutoDecision | undefined,
+    private readonly _delegationId?: string,
+    private readonly _initiatedBy?: PaymentInitiator,
   ) {}
 
   static create(params: {
@@ -45,6 +47,9 @@ export class Dispute {
     reason?: string;
     /** Set once, at creation, by DisputeService.recordDispute() — see dispute-policy.ts. Immutable: an operator's later manual action doesn't retroactively change what the policy originally recommended. */
     autoDecision?: DisputeAutoDecision;
+    /** Snapshotted at creation from the disputed Payment — see DisputeEntity.delegationId's docblock for why this is a snapshot, not a live join. */
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
   }): Dispute {
     const now = new Date();
     const respondBy = new Date(now.getTime() + DEFAULT_RESPONSE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -62,6 +67,8 @@ export class Dispute {
       now,
       now,
       params.autoDecision,
+      params.delegationId,
+      params.initiatedBy,
     );
   }
 
@@ -79,6 +86,8 @@ export class Dispute {
     createdAt: Date;
     updatedAt: Date;
     autoDecision?: DisputeAutoDecision;
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
   }): Dispute {
     return new Dispute(
       params.id,
@@ -94,6 +103,8 @@ export class Dispute {
       params.createdAt,
       params.updatedAt,
       params.autoDecision,
+      params.delegationId,
+      params.initiatedBy,
     );
   }
 
@@ -159,5 +170,11 @@ export class Dispute {
   }
   get autoDecision(): DisputeAutoDecision | undefined {
     return this._autoDecision;
+  }
+  get delegationId(): string | undefined {
+    return this._delegationId;
+  }
+  get initiatedBy(): PaymentInitiator | undefined {
+    return this._initiatedBy;
   }
 }

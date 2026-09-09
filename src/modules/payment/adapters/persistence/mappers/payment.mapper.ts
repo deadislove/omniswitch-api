@@ -85,6 +85,9 @@ export class PaymentMapper {
       ambiguousResolvedReason: entity.ambiguousResolvedReason,
       ambiguousResolvedAt: entity.ambiguousResolvedAt,
       ambiguousAutoRetryCount: entity.ambiguousAutoRetryCount,
+      taxRecord: entity.taxRecord ?? undefined,
+      delegationId: entity.delegationId ?? undefined,
+      initiatedBy: entity.initiatedBy,
     });
   }
 
@@ -111,6 +114,9 @@ export class PaymentMapper {
     entity.paymentMetadata = aggregate.metadata.metadata;
     entity.fxSnapshot = aggregate.amount.fxSnapshot as any;
     entity.settlementConversion = aggregate.settlementConversion;
+    entity.taxRecord = aggregate.taxRecord;
+    entity.delegationId = aggregate.delegationId;
+    entity.initiatedBy = aggregate.initiatedBy;
     entity.ambiguousResolvedBy = aggregate.ambiguousResolvedBy;
     entity.ambiguousResolvedReason = aggregate.ambiguousResolvedReason;
     entity.ambiguousResolvedAt = aggregate.ambiguousResolvedAt;

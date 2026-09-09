@@ -104,16 +104,36 @@ function signBankTransferCallback(bodyStr) {
   return `t=${timestamp},v1=${signature}`;
 }
 
+// In-memory transfer state, keyed by transferId — what GET /ach/transfers/:id
+// and GET /wire/transfers/:id serve back. Real Dwolla webhooks don't carry
+// settlement detail inline (see scheduleBankTransferSettlement() below); the
+// receiver has to fetch the actual resource to learn anything beyond
+// success/failure, exactly like this map backs.
+const bankTransferState = new Map();
+
 // Simulates a real ACH/wire rail's async clearing cycle: accept synchronously
 // (the caller already got its `pending` response), then — after a short,
 // fixed delay standing in for what's actually hours/days in reality — POST
-// the settlement outcome back to the app's real webhook receiver,
-// signed exactly the way a real provider's webhook would be. Silently
-// skipped (not thrown) when APP_BASE_URL/BANK_TRANSFER_WEBHOOK_SECRET
+// a lightweight settlement *notification* back to the app's real webhook
+// receiver, signed exactly the way a real provider's webhook would be.
+// Silently skipped (not thrown) when APP_BASE_URL/BANK_TRANSFER_WEBHOOK_SECRET
 // aren't configured (e.g. a bare `node server.js` run with no docker-compose
 // env) so this never crashes the mock server itself — those two env vars
 // only get set together, by docker-compose.yml's mock-psp service block.
+//
+// Real Dwolla webhook shape (developers.dwolla.com/docs/webhook-events):
+// `{id, topic, resourceId, _links: {resource: {href}}}` — no settlement
+// detail inline. `topic` alone tells the receiver success/failure
+// (`customer_transfer_completed`/`customer_transfer_failed`); anything more
+// (a failure reason, in this codebase's case) requires a follow-up
+// authenticated GET against the resource — which is exactly what
+// `GET /ach|wire/transfers/:id` below now serves, and what
+// `AchBankTransferAdapter.getTransferStatus()`/`WireBankTransferAdapter`'s
+// own copy calls. This mock used to skip that follow-up entirely and embed
+// the outcome inline; that was a real, cited simplification, closed by
+// this change.
 function scheduleBankTransferSettlement(transferId, outcome, reason) {
+  bankTransferState.set(transferId, { status: outcome, ...(reason ? { reason } : {}) });
   if (!APP_BASE_URL || !BANK_TRANSFER_WEBHOOK_SECRET) {
     console.warn(
       `mock-psp: APP_BASE_URL/BANK_TRANSFER_WEBHOOK_SECRET not set — skipping settlement callback for ${transferId}`,
@@ -121,7 +141,13 @@ function scheduleBankTransferSettlement(transferId, outcome, reason) {
     return;
   }
   setTimeout(async () => {
-    const bodyStr = JSON.stringify({ transferId, status: outcome, ...(reason ? { reason } : {}) });
+    const topic = outcome === 'settled' ? 'customer_transfer_completed' : 'customer_transfer_failed';
+    const bodyStr = JSON.stringify({
+      id: 'evt_mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      topic,
+      resourceId: transferId,
+      _links: { resource: { href: `${APP_BASE_URL.replace(/\/api\/v1$/, '')}/mock-psp/transfers/${transferId}` } },
+    });
     try {
       const res = await fetch(`${APP_BASE_URL}/webhooks/bank-transfer`, {
         method: 'POST',
@@ -148,14 +174,29 @@ function signKycCallback(bodyStr) {
 // Same "accept now, decide later, signed callback" shape as
 // scheduleBankTransferSettlement() — a real identity/business review
 // (Persona/Onfido) takes hours to days, sometimes a human reviewer, never
-// seconds.
-function scheduleKycDecision(applicationId, outcome, reason) {
+// seconds. `outcome` is 'approved'/'declined' — Persona's own real status
+// vocabulary (docs.withpersona.com/model-lifecycle), not an invented
+// 'rejected' an earlier revision of this mock used.
+function scheduleKycDecision(applicationId, outcome) {
   if (!APP_BASE_URL || !KYC_WEBHOOK_SECRET) {
     console.warn(`mock-psp: APP_BASE_URL/KYC_WEBHOOK_SECRET not set — skipping KYC decision callback for ${applicationId}`);
     return;
   }
   setTimeout(async () => {
-    const bodyStr = JSON.stringify({ applicationId, status: outcome, ...(reason ? { reason } : {}) });
+    // Real Persona webhook event envelope (docs.withpersona.com/events) —
+    // an *event* (data.attributes.name) wrapping the actual Inquiry
+    // (data.attributes.payload.data), not a flat {applicationId, status}
+    // body an earlier revision of this mock sent.
+    const bodyStr = JSON.stringify({
+      data: {
+        type: 'event',
+        id: 'evt_mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        attributes: {
+          name: `inquiry.${outcome}`,
+          payload: { data: { type: 'inquiry', id: applicationId, attributes: { status: outcome } } },
+        },
+      },
+    });
     try {
       const res = await fetch(`${APP_BASE_URL}/webhooks/kyc`, {
         method: 'POST',
@@ -207,13 +248,14 @@ function realFeeForTransactionMinorUnits(provider, amountMinorUnits, txId) {
 // containing one of these substrings (case-insensitive) declines the charge
 // with that code, the same "magic substring" convention as FORCE_3DS/
 // "invalid" elsewhere in this file, since there's no real card-number-based
-// decline simulation anywhere in this mock. Mirrors Subscription.aggregate.ts's
-// HARD_DECLINE_CODES set — see SubscriptionService's decline-code-aware
-// dunning. Deliberately the *same* code strings for both Stripe- and
-// Adyen-shaped responses below (real Adyen actually returns numeric
-// refusalReasonCodes, not semantic strings — this mock skips that
-// translation layer for simplicity, since nothing here needs to round-trip
-// through a real Adyen account).
+// decline simulation anywhere in this mock. Mirrors
+// Subscription.aggregate.ts's HARD_DECLINE_CODES.STRIPE set — used
+// verbatim for Stripe-shaped responses below. Adyen-shaped responses
+// translate this to a real Adyen refusalReasonCode via
+// ADYEN_REFUSAL_REASON_CODES below instead (Phase 1) — real Adyen
+// returns numeric refusalReasonCodes, not these Stripe-style semantic
+// strings, and HARD_DECLINE_CODES.ADYEN is keyed on those numeric codes,
+// not this vocabulary.
 const DECLINE_CODE_MARKERS = {
   insufficientfunds: 'insufficient_funds',
   stolencard: 'stolen_card',
@@ -231,6 +273,29 @@ function declineCodeFor(paymentMethodRef) {
     if (lower.includes(marker)) return code;
   }
   return null;
+}
+
+// Real, documented Adyen refusalReasonCode values (Phase 1) — translates
+// DECLINE_CODE_MARKERS' Stripe-style semantic string to what Adyen would
+// actually return, so an Adyen-routed charge exercises
+// Subscription.aggregate.ts's HARD_DECLINE_CODES.ADYEN table (numeric
+// codes) rather than silently reusing Stripe's vocabulary. '5' Blocked
+// Card covers stolen/lost/pickup — Adyen's standard refusalReasonCode
+// list has no distinct code for each of those, unlike Stripe's decline_code
+// vocabulary which does.
+const ADYEN_REFUSAL_REASON_CODES = {
+  insufficient_funds: '12', // Not enough balance — retryable
+  stolen_card: '5', // Blocked Card — hard
+  lost_card: '5', // Blocked Card — hard
+  fraudulent: '20', // FRAUD — hard
+  pickup_card: '5', // Blocked Card — hard
+  restricted_card: '25', // Restricted Card — hard
+  expired_card: '6', // Expired Card — hard
+  card_declined: '4', // Acquirer Error — retryable, same posture as Stripe's own card_declined
+};
+
+function adyenRefusalReasonCodeFor(stripeStyleDeclineCode) {
+  return ADYEN_REFUSAL_REASON_CODES[stripeStyleDeclineCode] ?? stripeStyleDeclineCode;
 }
 
 // Simulates "PSP call got no response at all" (timeout/network failure) for
@@ -592,7 +657,7 @@ const server = http.createServer((req, res) => {
         return send(res, 200, {
           pspReference,
           resultCode: 'Refused',
-          refusalReasonCode: declineCode,
+          refusalReasonCode: adyenRefusalReasonCodeFor(declineCode),
           refusalReason: 'Refused',
         });
       }
@@ -630,7 +695,7 @@ const server = http.createServer((req, res) => {
         found: true,
         pspReference: resolved.id,
         resultCode: 'Refused',
-        refusalReasonCode: resolved.declineCode,
+        refusalReasonCode: adyenRefusalReasonCodeFor(resolved.declineCode),
         refusalReason: 'Refused',
       });
     }
@@ -734,7 +799,11 @@ const server = http.createServer((req, res) => {
     // mock's synchronous-rejection marker (malformed submission — a real
     // provider can tell this immediately, before ever starting a review);
     // "reject" is accepted, then declined during review — same two-marker
-    // convention as /ach/transfers and /wire/transfers above.
+    // convention as /ach/transfers and /wire/transfers above. Response
+    // shapes are real Persona JSON:API ones (docs.withpersona.com/
+    // integration-guide-understanding-a-persona-api-payload,
+    // docs.withpersona.com/errors) — see PersonaKycProviderAdapter's
+    // docblock for the same fidelity note.
     if (path === '/persona/kyc-applications' && req.method === 'POST') {
       let parsedBody = {};
       try {
@@ -746,14 +815,14 @@ const server = http.createServer((req, res) => {
       const taxId = parsedBody.taxId || '';
       const id = 'persona_mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       if (!legalName || !taxId) {
-        return send(res, 400, { error: 'legalName and taxId are required' });
+        return send(res, 400, { errors: [{ title: 'Bad Request', details: 'legalName and taxId are required' }] });
       }
       if (/invalidinput/i.test(legalName)) {
-        return send(res, 200, { id, status: 'declined', reason: 'malformed_submission' });
+        return send(res, 200, { data: { type: 'inquiry', id, attributes: { status: 'declined' } } });
       }
-      send(res, 200, { id, status: 'pending' });
+      send(res, 200, { data: { type: 'inquiry', id, attributes: { status: 'pending' } } });
       if (/reject/i.test(legalName)) {
-        scheduleKycDecision(id, 'rejected', 'identity_verification_failed');
+        scheduleKycDecision(id, 'declined');
       } else {
         scheduleKycDecision(id, 'approved');
       }
@@ -812,6 +881,28 @@ const server = http.createServer((req, res) => {
         scheduleBankTransferSettlement(id, 'settled');
       }
       return;
+    }
+
+    // ACH/Wire transfer follow-up GET — AchBankTransferAdapter's/
+    // WireBankTransferAdapter's getTransferStatus() target, and what a real
+    // Dwolla webhook's {id, topic, resourceId} notification actually
+    // requires a follow-up call for (the notification itself carries no
+    // settlement detail — see scheduleBankTransferSettlement()'s docblock
+    // above). Serves back whatever bankTransferState was last set to for
+    // this id; a transfer that scheduleBankTransferSettlement() hasn't
+    // resolved yet (webhook already fired, GET race) returns 404, matching
+    // how a real not-yet-indexed resource would look mid-race.
+    if (
+      (segments[0] === 'ach' || segments[0] === 'wire') &&
+      segments[1] === 'transfers' &&
+      segments[2] &&
+      req.method === 'GET'
+    ) {
+      const state = bankTransferState.get(segments[2]);
+      if (!state) {
+        return send(res, 404, { error: 'transfer not found' });
+      }
+      return send(res, 200, { id: segments[2], ...state });
     }
 
     // Transactional email send — EmailDisputeNotificationAdapter's target.

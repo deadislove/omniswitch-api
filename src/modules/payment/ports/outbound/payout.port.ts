@@ -18,7 +18,29 @@ export abstract class PayoutPort {
 
   abstract findById(id: string): Promise<Payout | null>;
 
+  /**
+   * Same as findById(), but forced onto master — same reasoning as
+   * findManyOnMaster() below. Confirmed as a real, reproducible flake
+   * under sustained e2e load: a caller that just wrote this exact Payout
+   * (an admin action, a bank-transfer webhook confirmation) and reads it
+   * straight back can observe the replica's ~1s streaming lag as a
+   * stale, pre-write copy.
+   */
+  abstract findByIdOnMaster(id: string): Promise<Payout | null>;
+
   abstract findMany(filter?: FindPayoutsFilter): Promise<Payout[]>;
+
+  /**
+   * Same as findMany(), but forced onto master instead of the ambient
+   * replica-routed connection — for internal call sites that look up a
+   * merchant's payouts immediately after a write (a sweep run, a
+   * transfer confirmation) in the same business flow, where the read
+   * genuinely can't tolerate the replica's ~1s streaming lag. Confirmed
+   * as a real, reproducible flake under sustained e2e load (not just
+   * theorized) — see PaymentRepositoryPort.findByIdOnMaster()'s docblock
+   * for the same reasoning applied to a different repository.
+   */
+  abstract findManyOnMaster(filter?: FindPayoutsFilter): Promise<Payout[]>;
 
   /** All Payouts with a HELD (unreleased, non-zero) reserve whose releaseEligibleAt has passed — what the release sweep iterates over. */
   abstract findReserveReleaseEligible(now: Date): Promise<Payout[]>;
@@ -65,6 +87,18 @@ export abstract class PayoutPort {
   abstract findByTransferId(transferId: string): Promise<Payout | null>;
 
   /**
+   * Same as findByTransferId(), but forced onto master. The
+   * `transferId` a webhook confirmation refers to was itself written
+   * (via markTransferPending()) moments earlier in the same real-world
+   * flow — often by the very same admin action that triggered the
+   * external rail to call this webhook back — so this lookup can't
+   * tolerate reading a pre-write replica snapshot that doesn't have this
+   * transferId on it yet, which would surface as "no Payout found for
+   * transferId=..., ignoring" and silently drop a real confirmation.
+   */
+  abstract findByTransferIdOnMaster(transferId: string): Promise<Payout | null>;
+
+  /**
    * Every Payout eligible for a *reserve* transfer: reserve released,
    * reserve amount > 0, not KYC-blocked, reserve transfer not already
    * INITIATED or PENDING_CONFIRMATION. Independent of the netAmount
@@ -85,6 +119,9 @@ export abstract class PayoutPort {
 
   /** Looks up the Payout a real rail's async webhook confirmation refers to, by its *reserve* transferId — see PayoutService.confirmTransfer(). */
   abstract findByReserveTransferId(transferId: string): Promise<Payout | null>;
+
+  /** Same as findByReserveTransferId(), but forced onto master — same reasoning as findByTransferIdOnMaster() above, for the reserve leg. */
+  abstract findByReserveTransferIdOnMaster(transferId: string): Promise<Payout | null>;
 
   abstract saveSweepRun(run: PayoutSweepRun): Promise<void>;
 

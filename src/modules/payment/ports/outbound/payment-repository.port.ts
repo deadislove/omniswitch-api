@@ -49,6 +49,18 @@ export abstract class PaymentRepositoryPort {
   abstract count(filter?: FindPaymentsFilter): Promise<number>;
 
   /**
+   * Whether this delegation has ever charged this specific merchant
+   * before — PaymentAggregate.calculateRiskScore()'s agent-context signal
+   * (see its docblock). Forced onto master, same reasoning as
+   * findByIdOnMaster(): called from the same saga run that's about to
+   * create the payment this delegation is charging right now, so a
+   * delegation firing two rapid charges at a brand-new merchant could
+   * otherwise lose the race against the replica's ~1s streaming lag and
+   * have the second charge wrongly see itself as "the first" too.
+   */
+  abstract existsForDelegationAndMerchant(delegationId: string, merchantId: string): Promise<boolean>;
+
+  /**
    * Payments charged via a specific PSP within a time window, across every
    * merchant — used by ReconciliationService, which compares against that
    * PSP's own settlement report (a PSP-account-level concept, not scoped to
@@ -127,6 +139,19 @@ export abstract class PaymentRepositoryPort {
    * this check yet", not as a false streak.
    */
   abstract findRecentAmbiguousFlags(merchantId: string, limit: number): Promise<boolean[]>;
+
+  /**
+   * Count of this merchant's FAILED payments since a point in time whose
+   * `(failureCode, pspProvider)` classifies as `HARD_DECLINE` — see
+   * decline-code-classifier.ts. Classification isn't a persisted column
+   * (same "derive on read" reasoning as PaymentAggregate.declineCategory's
+   * own docblock — a cached classification could drift from the
+   * classifier if it's ever revised), so this fetches the minimal
+   * candidate rows and classifies them in application code rather than
+   * expressing per-PSP decline vocabularies as a second copy in SQL.
+   * Used by AmlReviewMonitoringService's rolling-window threshold check.
+   */
+  abstract countHardDeclinesSince(merchantId: string, since: Date): Promise<number>;
 
   /**
    * Still-`AMBIGUOUS` payments eligible for

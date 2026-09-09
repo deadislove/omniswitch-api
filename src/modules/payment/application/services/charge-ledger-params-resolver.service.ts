@@ -16,7 +16,14 @@ const DEFAULT_PLATFORM_FEE_BPS = 150;
 export interface ChargeLedgerParams {
   platformFee: Money;
   settlementConversion?: { convertedNetAmount: Money; rate: number; provider: string };
-  reserveHold?: { amount: Money; holdDays: number };
+  // netAmount alongside amount (the reserve slice itself) — ReserveHold
+  // stores both, since a later reserveBps escalation needs the *original*
+  // net amount this hold was carved from to recompute what the hold
+  // should be at the new rate; the reserve slice alone doesn't carry
+  // enough information to derive it back (recovering it would mean
+  // assuming a bps that may not even be the one in effect when this hold
+  // was created). See ReserveService.topUpHeldReservesForMerchant().
+  reserveHold?: { amount: Money; holdDays: number; netAmount: Money };
   splits?: { merchantId: string; amount: Money }[];
   /**
    * The merchant's MerchantEntity.enabledPspProviders, cast to PSPProvider[]
@@ -118,7 +125,7 @@ export class ChargeLedgerParamsResolverService {
     let payoutAmount = netAmount;
     if (merchant?.reserveBps) {
       const reserveAmount = netAmount.multiply(merchant.reserveBps / 10_000);
-      reserveHold = { amount: reserveAmount, holdDays: merchant.reserveHoldDays };
+      reserveHold = { amount: reserveAmount, holdDays: merchant.reserveHoldDays, netAmount };
       payoutAmount = netAmount.subtract(reserveAmount);
     }
 

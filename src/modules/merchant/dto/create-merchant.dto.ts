@@ -217,6 +217,59 @@ export class UpdateDisputeNotificationChannelDto {
   target?: string | null;
 }
 
+export class UpdateSubscriptionNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel SubscriptionNotificationDispatcherService uses for this merchant's subscription.past_due/subscription.canceled events. Independent of disputeNotificationChannel.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-subscriptions',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (SubscriptionNotificationDispatcherService then skips notifying this merchant entirely).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
+export class UpdateAmlReviewNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel AmlReviewNotificationDispatcherService uses for this merchant's aml_review.flagged event. Independent of disputeNotificationChannel/subscriptionNotificationChannel.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-aml-review',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (AmlReviewNotificationDispatcherService then skips notifying this merchant entirely).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
+export class UpdateMccCodeDto {
+  @ApiPropertyOptional({
+    example: '5411',
+    description:
+      'ISO 18245 Merchant Category Code (4 digits). Drives industryRiskCategory via a static risk lookup table (src/modules/merchant/mcc-risk-lookup.ts) — an MCC not in that table resolves to UNKNOWN, the same as leaving this unset. Omit or send null to clear it.',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}$/, { message: 'mccCode must be exactly 4 digits' })
+  mccCode?: string | null;
+}
+
 export class UpdateReservePolicyDto {
   @ApiProperty({
     example: 1000,
@@ -309,6 +362,32 @@ export class UpdateAmbiguousRiskAutoDto {
   enabled: boolean;
 }
 
+export class UpdateAmlReviewFlagDto {
+  @ApiProperty({ example: true, description: 'true to flag this merchant for AML review, false to clear the flag.' })
+  @IsBoolean()
+  flagged: boolean;
+
+  @ApiProperty({
+    example: 'Manually flagging pending compliance review of recent chargebacks',
+    description:
+      "Required — same audit-trail posture as UpdateAmbiguousRiskFlagDto.reason. Setting this also disables amlReviewAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../aml-review-auto.",
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  reason: string;
+}
+
+export class UpdateAmlReviewAutoDto {
+  @ApiProperty({
+    example: true,
+    description:
+      "true: AmlReviewMonitoringService's automated flag logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).",
+  })
+  @IsBoolean()
+  enabled: boolean;
+}
+
 export class SubmitKycDto {
   @ApiProperty({ example: 'Acme Marketplace Sellers LLC', description: 'Registered business/legal name' })
   @IsString()
@@ -375,6 +454,16 @@ export class MerchantSummaryDto {
       "Whether RiskTieringService's daily sweep may adjust reserveBps/reserveHoldDays automatically for this merchant",
   })
   riskTierAutoManaged: boolean;
+
+  @ApiPropertyOptional({ example: '5411', nullable: true, description: 'ISO 18245 Merchant Category Code, if set' })
+  mccCode?: string | null;
+
+  @ApiProperty({
+    example: 'UNKNOWN',
+    enum: ['LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'],
+    description: 'Derived from mccCode via a static risk lookup table — UNKNOWN when no mccCode is set',
+  })
+  industryRiskCategory: 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
 
   @ApiProperty({ example: 'PLATFORM', enum: ['PLATFORM', 'CONNECTED'] })
   accountType: 'PLATFORM' | 'CONNECTED';
@@ -468,6 +557,67 @@ export class MerchantSummaryDto {
     description: 'Channel-specific destination — null means no notification is sent for this merchant.',
   })
   disputeNotificationTarget: string | null;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel this merchant's subscription.past_due/subscription.canceled notifications go out on. Independent of disputeNotificationChannel.",
+  })
+  subscriptionNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no subscription notification is sent for this merchant.',
+  })
+  subscriptionNotificationTarget: string | null;
+
+  @ApiProperty({
+    example: false,
+    description:
+      "Passive AML-review observation flag (HIGH industryRiskCategory merchants only) — set when AmlReviewMonitoringService sees enough hard-decline events in a rolling window. Does not affect how charges are processed; visibility only.",
+  })
+  amlReviewFlagged: boolean;
+
+  @ApiProperty({ example: null, nullable: true })
+  amlReviewFlaggedAt: string | null;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: "Why this merchant is flagged — automated summary or an operator's own stated reason",
+  })
+  amlReviewFlagReason: string | null;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically',
+  })
+  amlReviewFlaggedBy: string | null;
+
+  @ApiProperty({
+    example: true,
+    description:
+      "Whether AmlReviewMonitoringService's automated flag logic may manage this merchant's amlReviewFlagged",
+  })
+  amlReviewAutoManaged: boolean;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel this merchant's aml_review.flagged notification goes out on, if it ever trips.",
+  })
+  amlReviewNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no AML-review notification is sent for this merchant.',
+  })
+  amlReviewNotificationTarget: string | null;
 
   @ApiProperty()
   createdAt: string;

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DisputeNotificationPort, DisputeNotificationPayload } from '../../ports/outbound/dispute-notification.port';
+import { postJsonNotification } from './notification-delivery.util';
 
 /**
  * Slack Dispute Notification Adapter
@@ -21,17 +22,7 @@ export class SlackDisputeNotificationAdapter extends DisputeNotificationPort {
         ? `:rotating_light: New dispute ${payload.disputeId} for payment ${payload.paymentId} — ${payload.amount} ${payload.currency}, reason: ${payload.reason ?? 'unknown'} (auto-decision: ${payload.autoDecision ?? 'n/a'})${payload.respondBy ? `, respond by ${payload.respondBy}` : ''}`
         : `Dispute ${payload.disputeId} for payment ${payload.paymentId} resolved: *${payload.outcome}* (${payload.amount} ${payload.currency})`;
 
-    const response = await fetch(target, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Slack dispute notification to ${target} for merchant ${payload.merchantId} got HTTP ${response.status}`,
-      );
-    }
+    await postJsonNotification(target, { text });
     this.logger.log(
       `Slack dispute notification sent for merchant ${payload.merchantId}: ${payload.event} (${payload.disputeId})`,
     );

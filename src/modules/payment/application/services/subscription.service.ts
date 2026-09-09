@@ -450,7 +450,7 @@ export class SubscriptionService {
           await this.subscriptionPort.save(subscription);
           charged++;
         } else {
-          subscription.recordFailedCharge(now, MAX_DUNNING_ATTEMPTS, result.errorCode);
+          subscription.recordFailedCharge(now, MAX_DUNNING_ATTEMPTS, result.errorCode, result.pspProvider);
           await this.subscriptionPort.save(subscription);
           failed++;
           this.logger.warn(

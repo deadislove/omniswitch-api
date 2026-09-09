@@ -104,6 +104,18 @@ export class StripePSPAdapter extends PSPAdapterPort {
         // decision on our side.
         params.append('metadata[bin_country]', request.binCountry);
       }
+      if (request.metadata) {
+        // Merchant-supplied custom metadata (ChargePaymentDto.metadata) —
+        // Stripe's own PaymentIntent has a real `metadata` object for
+        // exactly this. Reserved keys above always win: a merchant
+        // couldn't otherwise overwrite `payment_id`/`merchant_id`/
+        // `bin_country` by coincidentally choosing the same key name.
+        const reservedKeys = new Set(['payment_id', 'merchant_id', 'bin_country']);
+        for (const [key, value] of Object.entries(request.metadata)) {
+          if (reservedKeys.has(key)) continue;
+          params.append(`metadata[${key}]`, value);
+        }
+      }
 
       const response = await this.makeRequest('POST', '/payment_intents', params, request.idempotencyKey);
 

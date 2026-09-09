@@ -176,9 +176,15 @@ export class SubscriptionResponseDto {
   @ApiPropertyOptional({
     example: 'insufficient_funds',
     description:
-      "The PSP's decline code from the most recent failed billing attempt, if any was returned — cleared on a successful charge. A hard-decline code (stolen_card, expired_card, ...) means this subscription skipped the retry schedule and canceled immediately.",
+      "The PSP's own, unnormalized decline code from the most recent failed billing attempt, if any was returned — cleared on a successful charge. Whether this is a hard decline depends on which PSP returned it (see lastDeclinePspProvider) — the same raw string can mean different things under different PSPs' vocabularies (e.g. Stripe's 'stolen_card' vs Adyen's numeric refusalReasonCodes).",
   })
   lastDeclineCode?: string;
+
+  @ApiPropertyOptional({
+    enum: ['STRIPE', 'ADYEN', 'PAYPAL', 'CHASE'],
+    description: 'Which PSP produced lastDeclineCode — needed to interpret it against the right decline-code vocabulary.',
+  })
+  lastDeclinePspProvider?: string;
 
   @ApiPropertyOptional({
     example: 5.5,

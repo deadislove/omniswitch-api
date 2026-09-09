@@ -12,6 +12,7 @@ import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper
 import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
+import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 
 // Same cadence as LedgerOutboxRelayService.detectStaleEvents() — this is
 // the same category of "alert, don't act" sweep, just for AMBIGUOUS
@@ -173,6 +174,8 @@ export class AmbiguousPaymentService {
         rate: settlementConversion.rate,
         provider: settlementConversion.provider,
       });
+      const taxRecord = buildCrossBorderTaxRecord(payment.amount, payment.binInfo);
+      if (taxRecord) payment.recordTaxRecord(taxRecord);
     }
     const outboxEvent = LedgerOutboxEvent.createChargeEntries({
       id: uuidv4(),
@@ -194,6 +197,7 @@ export class AmbiguousPaymentService {
             paymentId: payment.id,
             merchantId: payment.metadata.merchantId,
             amount: reserveHold.amount,
+            netAmount: reserveHold.netAmount,
             holdDays: reserveHold.holdDays,
           },
           manager,

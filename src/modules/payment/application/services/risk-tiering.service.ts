@@ -2,9 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { MerchantService } from '../../../merchant/merchant.service';
+import { MerchantEntity } from '../../../merchant/merchant.entity';
 import { DisputePort } from '../../ports/outbound/dispute.port';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
+import { getDisputeRiskWeight } from '../../domain/services/dispute-risk-weight';
+import { ReserveService } from './reserve.service';
 
 // Any status where a real charge actually happened at the PSP — a later
 // refund or dispute changes the payment's *current* status but doesn't
@@ -29,6 +32,13 @@ const WINDOW_DAYS = 90;
 // react to a sample too small to mean anything.
 const MIN_SAMPLE_SIZE = 10;
 
+// Same order of magnitude as LedgerOutboxRelayService's RELAY_BATCH_SIZE —
+// large enough that runTieringSweep() doesn't spend most of its time on
+// per-batch round-trip overhead, small enough that concurrently evaluating
+// a whole batch (each evaluation does its own couple of DB queries) can't
+// exhaust the app's own DB connection pool (DB_POOL_MAX, default 20).
+const RISK_TIERING_SWEEP_BATCH_SIZE = 50;
+
 export type RiskTier = 'LOW' | 'MEDIUM' | 'HIGH';
 
 interface TierPolicy {
@@ -38,11 +48,12 @@ interface TierPolicy {
 
 // Deliberately simple, round thresholds — an illustration of the
 // mechanism ("chargeback rate drives reserve rate"), not a calibrated
-// underwriting model. A real risk model would weigh MCC code, account
-// tenure, dispute *reason* codes (fraud vs. "product not as described"
-// carry very different signal), and probably a continuous function
-// rather than 3 buckets. See docs/business-domain/future-directions.md's
-// Merchant Risk Tiering section.
+// underwriting model. MCC code and account tenure now feed in as
+// escalation-only modifiers (see escalate() and evaluateMerchant()
+// below); dispute *reason* codes (fraud vs. "product not as described"
+// carry very different signal) still don't — see
+// docs/business-domain/future-directions.md's Merchant Risk Tiering
+// section for what's still deliberately out of scope.
 const TIER_POLICIES: Record<RiskTier, TierPolicy> = {
   LOW: { reserveBps: 0, reserveHoldDays: 0 },
   MEDIUM: { reserveBps: 500, reserveHoldDays: 30 },
@@ -60,11 +71,22 @@ const TIER_POLICIES: Record<RiskTier, TierPolicy> = {
 // docblock on TIER_POLICIES for why these are still illustrative.
 const DEFAULT_HIGH_RISK_THRESHOLD = 0.01; // >1% lost-dispute rate
 const DEFAULT_MEDIUM_RISK_THRESHOLD = 0.005; // >0.5% lost-dispute rate
+// A merchant younger than this has no track record yet — same "not
+// enough signal" reasoning as MIN_SAMPLE_SIZE, but for account age
+// rather than charge volume. Overridable like the rate thresholds above.
+const DEFAULT_NEW_MERCHANT_AGE_DAYS = 30;
 
 function tierFor(lostDisputeRate: number, highThreshold: number, mediumThreshold: number): RiskTier {
   if (lostDisputeRate > highThreshold) return 'HIGH';
   if (lostDisputeRate > mediumThreshold) return 'MEDIUM';
   return 'LOW';
+}
+
+const TIER_ORDER: RiskTier[] = ['LOW', 'MEDIUM', 'HIGH'];
+
+/** One step up, never down — a modifier can only make a merchant look riskier than the lost-dispute-rate signal alone says, never safer. */
+function escalate(tier: RiskTier): RiskTier {
+  return TIER_ORDER[Math.min(TIER_ORDER.indexOf(tier) + 1, TIER_ORDER.length - 1)];
 }
 
 /**
@@ -84,9 +106,18 @@ function tierFor(lostDisputeRate: number, highThreshold: number, mediumThreshold
  * silently overwritten by the next sweep tick. Re-enable via
  * PATCH .../risk-tier-auto.
  *
- * Only ever changes reserveBps/reserveHoldDays going forward — like
- * updateReservePolicy(), never retroactively touches already-booked
- * ReserveHold records.
+ * De-escalation only ever changes reserveBps/reserveHoldDays going
+ * forward — like updateReservePolicy(), it never retroactively touches
+ * already-booked ReserveHold records; a merchant's history improving
+ * doesn't claw back a reserve already withheld from an earlier charge.
+ * **Escalation is different (Phase 1)**: when a merchant's tier goes
+ * *up*, still-`HELD` reserves (not yet released) get topped up to the
+ * new, higher rate via ReserveService.topUpHeldReservesForMerchant() —
+ * a real risk event shouldn't leave older, already-in-flight charges
+ * under-reserved just because they were booked before the escalation.
+ * One-way by design: only escalation tops up, only de-escalation is
+ * forward-only, so an escalate-then-de-escalate cycle can never be used
+ * to extract a reserve top-up and then immediately reverse it.
  */
 @Injectable()
 export class RiskTieringService {
@@ -95,52 +126,115 @@ export class RiskTieringService {
   // health.controller.ts's own comment on the same gap) — wrap explicitly.
   private readonly highRiskThreshold: number;
   private readonly mediumRiskThreshold: number;
+  private readonly newMerchantAgeDays: number;
 
   constructor(
     private readonly merchantService: MerchantService,
     private readonly disputePort: DisputePort,
     private readonly paymentRepository: PaymentRepositoryPort,
+    private readonly reserveService: ReserveService,
     configService: ConfigService,
   ) {
     this.highRiskThreshold = Number(configService.get('RISK_TIER_HIGH_THRESHOLD', DEFAULT_HIGH_RISK_THRESHOLD));
     this.mediumRiskThreshold = Number(configService.get('RISK_TIER_MEDIUM_THRESHOLD', DEFAULT_MEDIUM_RISK_THRESHOLD));
+    this.newMerchantAgeDays = Number(configService.get('RISK_TIER_NEW_MERCHANT_AGE_DAYS', DEFAULT_NEW_MERCHANT_AGE_DAYS));
   }
 
   /**
    * Returns the computed tier and whether it caused a change — `null` if
-   * there wasn't enough sample size to evaluate at all.
+   * there wasn't enough sample size to evaluate at all. Looks the
+   * merchant up itself — for any caller that only has a `merchantId`
+   * (there's no other caller today; kept for a stable public entry point
+   * on this class). `runTieringSweep()` below already has the full
+   * `MerchantEntity` from its own batch fetch, so it calls
+   * `evaluateMerchantEntity()` directly instead — going through this
+   * wrapper would re-fetch a row the sweep just fetched, tripling this
+   * sweep's per-merchant round trips for no benefit.
    */
   async evaluateMerchant(merchantId: string, now: Date): Promise<{ tier: RiskTier; changed: boolean } | null> {
+    const merchant = await this.merchantService.findByMerchantId(merchantId);
+    if (!merchant) return null;
+    return this.evaluateMerchantEntity(merchant, now);
+  }
+
+  private async evaluateMerchantEntity(
+    merchant: MerchantEntity,
+    now: Date,
+  ): Promise<{ tier: RiskTier; changed: boolean } | null> {
+    const merchantId = merchant.merchantId;
     const since = new Date(now.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
-    const [settledCounts, lostDisputes] = await Promise.all([
+    const [settledCounts, lostDisputeReasons] = await Promise.all([
       Promise.all(
         SETTLED_STATUSES.map((status) =>
           this.paymentRepository.count({ merchantId, status, fromDate: since, toDate: now }),
         ),
       ),
-      this.disputePort.countByMerchantSince(merchantId, 'LOST', since),
+      this.disputePort.findReasonsByMerchantStatusSince(merchantId, 'LOST', since),
     ]);
     const settledCharges = settledCounts.reduce((sum, n) => sum + n, 0);
+    // Reason-weighted, not a raw count — a `fraudulent` loss and a
+    // `duplicate` loss carry very different risk signal about the
+    // merchant itself. See dispute-risk-weight.ts.
+    const lostDisputes = lostDisputeReasons.reduce((sum, reason) => sum + getDisputeRiskWeight(reason), 0);
 
     if (settledCharges < MIN_SAMPLE_SIZE) {
       return null;
     }
 
     const lostDisputeRate = lostDisputes / settledCharges;
-    const tier = tierFor(lostDisputeRate, this.highRiskThreshold, this.mediumRiskThreshold);
-    const policy = TIER_POLICIES[tier];
+    let tier = tierFor(lostDisputeRate, this.highRiskThreshold, this.mediumRiskThreshold);
+    const reasons = [`${(lostDisputeRate * 100).toFixed(2)}% lost-dispute rate over ${settledCharges} charges/${WINDOW_DAYS}d`];
 
-    const merchant = await this.merchantService.findByMerchantId(merchantId);
-    const changed =
-      !merchant || merchant.reserveBps !== policy.reserveBps || merchant.reserveHoldDays !== policy.reserveHoldDays;
+    // Modifiers only ever escalate — see escalate()'s own comment. A
+    // merchant with a clean dispute history but a high-risk MCC or no
+    // track record yet isn't "safe," the lost-dispute-rate signal just
+    // hasn't caught up to them; it should never work the other way
+    // (a bad dispute history isn't excused by a low-risk MCC).
+    if (merchant.industryRiskCategory === 'HIGH') {
+      tier = escalate(tier);
+      reasons.push('high-risk MCC');
+    }
+    const accountAgeDays = (now.getTime() - merchant.createdAt.getTime()) / (24 * 60 * 60 * 1000);
+    if (accountAgeDays < this.newMerchantAgeDays) {
+      tier = escalate(tier);
+      reasons.push(`account age ${accountAgeDays.toFixed(0)}d < ${this.newMerchantAgeDays}d`);
+    }
+    // kycStatus is only meaningful for CONNECTED merchants (see
+    // MerchantEntity's docblock) — a PLATFORM merchant's kycStatus stays
+    // NOT_STARTED forever by design, so gating on it for PLATFORM
+    // merchants would force every one of them to HIGH.
+    if (merchant.accountType === 'CONNECTED' && merchant.kycStatus !== 'VERIFIED') {
+      tier = 'HIGH';
+      reasons.push(`KYC ${merchant.kycStatus}`);
+    }
+
+    const policy = TIER_POLICIES[tier];
+    const isEscalation = policy.reserveBps > merchant.reserveBps;
+    const changed = merchant.reserveBps !== policy.reserveBps || merchant.reserveHoldDays !== policy.reserveHoldDays;
 
     if (changed) {
       await this.merchantService.applyAutoRiskTier(merchantId, policy.reserveBps, policy.reserveHoldDays);
       this.logger.log(
-        `Risk tier for merchant ${merchantId} -> ${tier} (${(lostDisputeRate * 100).toFixed(2)}% lost-dispute rate over ` +
-          `${settledCharges} charges/${WINDOW_DAYS}d) — reserve now ${policy.reserveBps}bps/${policy.reserveHoldDays}d`,
+        `Risk tier for merchant ${merchantId} -> ${tier} (${reasons.join(', ')}) — ` +
+          `reserve now ${policy.reserveBps}bps/${policy.reserveHoldDays}d`,
       );
+
+      // Escalation only — a de-escalation (merchant's history improved)
+      // never claws back a reserve already withheld from an earlier
+      // charge; see ReserveService.topUpHeldReservesForMerchant()'s own
+      // docblock and this class's module docs.
+      if (isEscalation) {
+        const { toppedUp, failed } = await this.reserveService.topUpHeldReservesForMerchant(
+          merchantId,
+          policy.reserveBps,
+        );
+        if (toppedUp > 0 || failed > 0) {
+          this.logger.log(
+            `Risk tier escalation for merchant ${merchantId}: topped up ${toppedUp} still-HELD reserve hold(s) to ${policy.reserveBps}bps, ${failed} failed`,
+          );
+        }
+      }
     }
 
     return { tier, changed };
@@ -151,35 +245,57 @@ export class RiskTieringService {
    * Also exposed on demand via POST /admin/risk-tiering/run (same dual
    * on-demand + scheduled shape as ReconciliationService/ReserveService/
    * SubscriptionService's billing sweep).
+   *
+   * Batched (RISK_TIERING_SWEEP_BATCH_SIZE) + concurrent-within-a-batch
+   * (`Promise.allSettled`), not `merchantService.list()` fetched wholesale
+   * and evaluated one at a time — that was the original shape, and it
+   * scales linearly with the *total* merchant count (fetches and iterates
+   * every merchant ever created, active or not, auto-managed or not,
+   * filtering in application code), which is fine at a few dozen
+   * merchants but measured at 11+ seconds *per call* against ~8,500
+   * merchants — several real-suite e2e tests call this sweep twice, which
+   * compounds past Jest's 60s test timeout under full-suite load. The SQL
+   * filter (`findActiveAutoManagedBatch`) also means a batch never
+   * contains a row this sweep was going to skip anyway.
    */
   @Cron(CronExpression.EVERY_DAY_AT_2AM, { name: 'risk-tiering-sweep' })
   async runTieringSweep(now: Date = new Date()): Promise<{ evaluated: number; changed: number; skipped: number }> {
-    const merchants = await this.merchantService.list();
-    const candidates = merchants.filter((m) => m.isActive && m.riskTierAutoManaged);
-
     let evaluated = 0;
     let changed = 0;
     let skipped = 0;
+    let totalCandidates = 0;
+    let afterId: string | undefined;
 
-    for (const merchant of candidates) {
-      try {
-        const result = await this.evaluateMerchant(merchant.merchantId, now);
-        if (result === null) {
+    for (;;) {
+      const batch = await this.merchantService.findActiveAutoManagedBatch(afterId, RISK_TIERING_SWEEP_BATCH_SIZE);
+      if (batch.length === 0) break;
+      totalCandidates += batch.length;
+
+      const results = await Promise.allSettled(
+        batch.map((merchant) => this.evaluateMerchantEntity(merchant, now)),
+      );
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          skipped++;
+          const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+          this.logger.error(`Risk tiering sweep: failed to evaluate merchant ${batch[i].merchantId}: ${msg}`);
+          return;
+        }
+        if (result.value === null) {
           skipped++;
         } else {
           evaluated++;
-          if (result.changed) changed++;
+          if (result.value.changed) changed++;
         }
-      } catch (err: unknown) {
-        skipped++;
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Risk tiering sweep: failed to evaluate merchant ${merchant.merchantId}: ${msg}`);
-      }
+      });
+
+      afterId = batch[batch.length - 1].id;
+      if (batch.length < RISK_TIERING_SWEEP_BATCH_SIZE) break;
     }
 
-    if (candidates.length > 0) {
+    if (totalCandidates > 0) {
       this.logger.log(
-        `Risk tiering sweep: ${evaluated} evaluated (${changed} changed), ${skipped} skipped, ${candidates.length} auto-managed merchants`,
+        `Risk tiering sweep: ${evaluated} evaluated (${changed} changed), ${skipped} skipped, ${totalCandidates} auto-managed merchants`,
       );
     }
     return { evaluated, changed, skipped };

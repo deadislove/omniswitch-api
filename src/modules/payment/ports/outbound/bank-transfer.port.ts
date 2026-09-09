@@ -48,6 +48,30 @@ export interface BankTransferResponse {
  * happens inside Nest DI here (these adapters have their own injected
  * dependencies) rather than in a standalone script.
  */
+/** The two terminal outcomes a `PENDING` transfer can resolve to — never `PENDING` itself; a still-pending transfer has nothing to report yet, so `getTransferStatus()` returns `null` for it (see below). */
+export type BankTransferOutcome = 'SETTLED' | 'FAILED';
+
+export interface BankTransferStatusResult {
+  status: BankTransferOutcome;
+  reason?: string;
+}
+
 export abstract class BankTransferPort {
   abstract initiateTransfer(request: BankTransferRequest): Promise<BankTransferResponse>;
+
+  /**
+   * Follow-up lookup for a `PENDING` transfer's real outcome. Exists
+   * because a real async rail's webhook — Dwolla's included
+   * (developers.dwolla.com/docs/webhook-events) — is a lightweight
+   * `{id, topic, resourceId}` *notification*, not an outcome payload: the
+   * receiver has to fetch the resource itself to learn anything beyond
+   * "something happened," including a failure reason.
+   * `WebhookController.bankTransferWebhook()` calls this after a failure
+   * notification to get `reason` for `PayoutService.confirmTransfer()`.
+   * Returns `null` if the rail doesn't know this transfer id, or if this
+   * adapter's rail never has an async follow-up call at all
+   * (`MockBankTransferAdapter` — its webhook payload already carries the
+   * outcome inline, so this is never invoked against it in practice).
+   */
+  abstract getTransferStatus(transferId: string): Promise<BankTransferStatusResult | null>;
 }

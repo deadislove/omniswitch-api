@@ -16,6 +16,11 @@
  *    dispute has *negative* expected value given an assumed operational
  *    cost per contest, and compares it to the current hardcoded
  *    DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS (15) in dispute-policy.ts.
+ * 3. New-merchant-age escalation (Phase 1): scores whether escalating a
+ *    merchant one tier when `accountAgeDays <
+ *    RISK_TIER_NEW_MERCHANT_AGE_DAYS` (30) actually improves precision/
+ *    recall against the same synthetic population's true labels, or is
+ *    just adding noise.
  *
  * Run:
  *   npx ts-node -r tsconfig-paths/register scripts/calibration/generate-synthetic-history.ts
@@ -24,6 +29,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { SyntheticMerchant, SyntheticDispute } from './generate-synthetic-history';
+// The real production function, not a copy — so this calibration can
+// never silently drift from what RiskTieringService actually uses.
+import { getDisputeRiskWeight } from '../../src/modules/payment/domain/services/dispute-risk-weight';
 
 const dataPath = path.join(__dirname, 'synthetic-history.json');
 if (!fs.existsSync(dataPath)) {
@@ -166,4 +174,170 @@ console.log(
   breakEvenAmount !== null
     ? `Verdict: the synthetic data's break-even point is ${breakEvenAmount === 15 ? 'exactly' : breakEvenAmount < 15 ? 'below' : 'above'} the current $15 default (by $${Math.abs((breakEvenAmount ?? 0) - 15)}) — on this synthetic population, not a claim about the real number, which needs real per-reason-code contest-outcome data this repo doesn't have.`
     : 'Verdict: no break-even reached in the sampled range — the current $15 default auto-accepts well below any amount where contesting starts making sense on this synthetic population.',
+);
+
+// ─── Part 3: New-merchant-age escalation calibration (Phase 1) ──────────
+
+console.log(`\n=== New-merchant-age escalation calibration ===\n`);
+
+const NEW_MERCHANT_AGE_DAYS = 30; // Mirrors RISK_TIER_NEW_MERCHANT_AGE_DAYS's default.
+
+function escalate(tier: 'LOW' | 'MEDIUM' | 'HIGH'): 'LOW' | 'MEDIUM' | 'HIGH' {
+  if (tier === 'LOW') return 'MEDIUM';
+  if (tier === 'MEDIUM') return 'HIGH';
+  return 'HIGH';
+}
+
+interface AgeScoreResult extends ScoreResult {
+  escalatedCount: number;
+}
+
+function scoreWithAgeEscalation(high: number, medium: number, ageThresholdDays: number | null): AgeScoreResult {
+  let truePositiveHigh = 0,
+    predictedHigh = 0,
+    actualHigh = 0;
+  let truePositiveMediumPlus = 0,
+    predictedMediumPlus = 0,
+    actualMediumPlus = 0;
+  let escalatedCount = 0;
+
+  for (const m of evaluable) {
+    const observedRate = m.lostDisputes / m.settledCharges;
+    let predictedTier = tierFor(observedRate, high, medium);
+    if (ageThresholdDays !== null && m.accountAgeDays < ageThresholdDays) {
+      const before = predictedTier;
+      predictedTier = escalate(predictedTier);
+      if (predictedTier !== before) escalatedCount++;
+    }
+    const isPredictedHigh = predictedTier === 'HIGH';
+    const isPredictedMediumPlus = predictedTier === 'HIGH' || predictedTier === 'MEDIUM';
+    const isActualHigh = m.trueRiskLabel === 'HIGH';
+    const isActualMediumPlus = m.trueRiskLabel === 'HIGH' || m.trueRiskLabel === 'MEDIUM';
+
+    if (isPredictedHigh) predictedHigh++;
+    if (isActualHigh) actualHigh++;
+    if (isPredictedHigh && isActualHigh) truePositiveHigh++;
+
+    if (isPredictedMediumPlus) predictedMediumPlus++;
+    if (isActualMediumPlus) actualMediumPlus++;
+    if (isPredictedMediumPlus && isActualMediumPlus) truePositiveMediumPlus++;
+  }
+
+  return {
+    precisionHigh: predictedHigh > 0 ? truePositiveHigh / predictedHigh : NaN,
+    recallHigh: actualHigh > 0 ? truePositiveHigh / actualHigh : NaN,
+    precisionMediumPlus: predictedMediumPlus > 0 ? truePositiveMediumPlus / predictedMediumPlus : NaN,
+    recallMediumPlus: actualMediumPlus > 0 ? truePositiveMediumPlus / actualMediumPlus : NaN,
+    escalatedCount,
+  };
+}
+
+const withoutAgeEscalation = scoreWithAgeEscalation(CURRENT_HIGH_THRESHOLD, CURRENT_MEDIUM_THRESHOLD, null);
+const withAgeEscalation = scoreWithAgeEscalation(CURRENT_HIGH_THRESHOLD, CURRENT_MEDIUM_THRESHOLD, NEW_MERCHANT_AGE_DAYS);
+
+console.log(`Without age escalation (current base thresholds only):`);
+console.log(
+  `  HIGH tier:        precision=${(withoutAgeEscalation.precisionHigh * 100).toFixed(1)}%  recall=${(withoutAgeEscalation.recallHigh * 100).toFixed(1)}%`,
+);
+console.log(
+  `  MEDIUM+ tier:      precision=${(withoutAgeEscalation.precisionMediumPlus * 100).toFixed(1)}%  recall=${(withoutAgeEscalation.recallMediumPlus * 100).toFixed(1)}%`,
+);
+console.log(`\nWith age escalation (accountAgeDays < ${NEW_MERCHANT_AGE_DAYS} escalates one tier):`);
+console.log(`  Merchants actually escalated: ${withAgeEscalation.escalatedCount}/${evaluable.length}`);
+console.log(
+  `  HIGH tier:        precision=${(withAgeEscalation.precisionHigh * 100).toFixed(1)}%  recall=${(withAgeEscalation.recallHigh * 100).toFixed(1)}%`,
+);
+console.log(
+  `  MEDIUM+ tier:      precision=${(withAgeEscalation.precisionMediumPlus * 100).toFixed(1)}%  recall=${(withAgeEscalation.recallMediumPlus * 100).toFixed(1)}%`,
+);
+
+const recallGain = withAgeEscalation.recallMediumPlus - withoutAgeEscalation.recallMediumPlus;
+const precisionCost = withoutAgeEscalation.precisionMediumPlus - withAgeEscalation.precisionMediumPlus;
+console.log(
+  `\nVerdict: age escalation changes MEDIUM+ recall by ${(recallGain * 100).toFixed(1)}pp and precision by ${(-precisionCost * 100).toFixed(1)}pp on this synthetic population. ` +
+    `${recallGain > 0 ? `It catches genuinely-HIGH/MEDIUM merchants that a purely rate-based threshold would have missed while they were still too new to have accumulated enough disputes to show it (exactly the sample-size argument the feature is based on)` : 'It did not measurably improve recall on this synthetic population'}` +
+    `${precisionCost > 0.02 ? `, at a real precision cost (more false-positive escalations of genuinely LOW-risk new merchants) worth weighing against the recall gain` : ', with only a small precision cost'} — ` +
+    `illustrative only: the real-world relationship between account age and true risk (this synthetic model deliberately keeps them independent) is itself an assumption that would need real data to confirm or refute.`,
+);
+
+// ─── Part 4: Dispute reason-code weighting calibration (Phase 1) ────────
+
+console.log(`\n=== Dispute reason-code weighting calibration ===\n`);
+
+const REASON_CODES_SCORED = ['fraudulent', 'product_not_received', 'duplicate', 'subscription_canceled'];
+
+function weightedLostDisputeRate(m: SyntheticMerchant): number {
+  let weighted = 0;
+  for (const reason of REASON_CODES_SCORED) {
+    weighted += (m.lostDisputesByReason[reason] ?? 0) * getDisputeRiskWeight(reason);
+  }
+  return m.settledCharges > 0 ? weighted / m.settledCharges : 0;
+}
+
+function rawLostDisputeRate(m: SyntheticMerchant): number {
+  return m.settledCharges > 0 ? m.lostDisputes / m.settledCharges : 0;
+}
+
+function scoreByRateFn(rateFn: (m: SyntheticMerchant) => number, high: number, medium: number): ScoreResult {
+  let truePositiveHigh = 0,
+    predictedHigh = 0,
+    actualHigh = 0;
+  let truePositiveMediumPlus = 0,
+    predictedMediumPlus = 0,
+    actualMediumPlus = 0;
+
+  for (const m of evaluable) {
+    const predictedTier = tierFor(rateFn(m), high, medium);
+    const isPredictedHigh = predictedTier === 'HIGH';
+    const isPredictedMediumPlus = predictedTier === 'HIGH' || predictedTier === 'MEDIUM';
+    const isActualHigh = m.trueRiskLabel === 'HIGH';
+    const isActualMediumPlus = m.trueRiskLabel === 'HIGH' || m.trueRiskLabel === 'MEDIUM';
+
+    if (isPredictedHigh) predictedHigh++;
+    if (isActualHigh) actualHigh++;
+    if (isPredictedHigh && isActualHigh) truePositiveHigh++;
+
+    if (isPredictedMediumPlus) predictedMediumPlus++;
+    if (isActualMediumPlus) actualMediumPlus++;
+    if (isPredictedMediumPlus && isActualMediumPlus) truePositiveMediumPlus++;
+  }
+
+  return {
+    precisionHigh: predictedHigh > 0 ? truePositiveHigh / predictedHigh : NaN,
+    recallHigh: actualHigh > 0 ? truePositiveHigh / actualHigh : NaN,
+    precisionMediumPlus: predictedMediumPlus > 0 ? truePositiveMediumPlus / predictedMediumPlus : NaN,
+    recallMediumPlus: actualMediumPlus > 0 ? truePositiveMediumPlus / actualMediumPlus : NaN,
+  };
+}
+
+// Same current fixed thresholds — the question here isn't "what should
+// the threshold be" (Part 1 already covers that), it's "does weighting
+// each LOST dispute by reason code, instead of counting every one
+// identically, produce a better-classified population at the *same*
+// threshold."
+const rawRateScore = scoreByRateFn(rawLostDisputeRate, CURRENT_HIGH_THRESHOLD, CURRENT_MEDIUM_THRESHOLD);
+const weightedRateScore = scoreByRateFn(weightedLostDisputeRate, CURRENT_HIGH_THRESHOLD, CURRENT_MEDIUM_THRESHOLD);
+
+console.log(`Raw (unweighted) lost-dispute rate — every LOST dispute counted identically:`);
+console.log(
+  `  HIGH tier:        precision=${(rawRateScore.precisionHigh * 100).toFixed(1)}%  recall=${(rawRateScore.recallHigh * 100).toFixed(1)}%`,
+);
+console.log(
+  `  MEDIUM+ tier:      precision=${(rawRateScore.precisionMediumPlus * 100).toFixed(1)}%  recall=${(rawRateScore.recallMediumPlus * 100).toFixed(1)}%`,
+);
+console.log(`\nWeighted lost-dispute rate — using getDisputeRiskWeight() (the real production function):`);
+console.log(
+  `  HIGH tier:        precision=${(weightedRateScore.precisionHigh * 100).toFixed(1)}%  recall=${(weightedRateScore.recallHigh * 100).toFixed(1)}%`,
+);
+console.log(
+  `  MEDIUM+ tier:      precision=${(weightedRateScore.precisionMediumPlus * 100).toFixed(1)}%  recall=${(weightedRateScore.recallMediumPlus * 100).toFixed(1)}%`,
+);
+
+const weightedPrecisionGainHigh = weightedRateScore.precisionHigh - rawRateScore.precisionHigh;
+const weightedRecallDeltaHigh = weightedRateScore.recallHigh - rawRateScore.recallHigh;
+console.log(
+  `\nVerdict: reason-code weighting changes HIGH-tier precision by ${(weightedPrecisionGainHigh * 100).toFixed(1)}pp and recall by ${(weightedRecallDeltaHigh * 100).toFixed(1)}pp on this synthetic population ` +
+    `(built so a HIGH-true-risk merchant's disputes skew toward \`fraudulent\` — full weight — and a LOW-true-risk merchant's skew toward \`duplicate\`/\`subscription_canceled\` — quarter/half weight). ` +
+    `${weightedPrecisionGainHigh > 0 ? 'Weighting dominates on precision here — a real, measured case for reason-code awareness, not just a plausible-sounding idea' : 'No precision improvement measured on this synthetic population'} — ` +
+    `illustrative only: the *size* of the correlation between reason code and true risk (the REASON_MIX_BY_RISK_LABEL split in generate-synthetic-history.ts) is itself an assumption, same as every other input in this exercise.`,
 );

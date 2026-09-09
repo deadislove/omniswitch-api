@@ -79,6 +79,11 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           : { type: 'scheme' },
         returnUrl: 'https://your-company.com/checkout/return',
         metadata: {
+          // Merchant-supplied custom metadata (ChargePaymentDto.metadata)
+          // spread first — the reserved keys below always win if a
+          // merchant coincidentally chose the same key name, since object
+          // spread order means later keys overwrite earlier ones.
+          ...request.metadata,
           paymentId: request.paymentId,
           merchantId: request.merchantId,
           // Hint only — Adyen's own SCA engine decides whether to

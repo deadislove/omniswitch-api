@@ -31,6 +31,7 @@ const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
   findByMerchantId: jest.fn(),
   update: jest.fn().mockResolvedValue(undefined),
   existsById: jest.fn(),
+  existsForDelegationAndMerchant: jest.fn(),
   count: jest.fn(),
   findByProviderAndDateRange: jest.fn(),
   countByStatusAndProvider: jest.fn(),
@@ -39,6 +40,7 @@ const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
   countAmbiguousIncidentsSince: jest.fn(),
   findRecentAmbiguousFlags: jest.fn(),
   findAmbiguousEligibleForAutoResolution: jest.fn(),
+  countHardDeclinesSince: jest.fn(),
 });
 
 const createMockLedgerOutbox = (): jest.Mocked<LedgerOutboxPort> => ({
@@ -95,6 +97,10 @@ const createMockAmbiguousRiskMonitoring = () => ({
   evaluate: jest.fn().mockResolvedValue(undefined),
 });
 
+const createMockAmlReviewMonitoring = () => ({
+  evaluate: jest.fn().mockResolvedValue(undefined),
+});
+
 // ─── Test Fixtures ───────────────────────────────────────────────────────────
 
 const createSagaInput = (overrides: Partial<CheckoutSagaInput> = {}): CheckoutSagaInput => ({
@@ -130,6 +136,7 @@ describe('PaymentCheckoutSaga', () => {
   let fxRateProvider: any;
   let reserveService: any;
   let ambiguousRiskMonitoring: any;
+  let amlReviewMonitoring: any;
 
   beforeEach(() => {
     paymentRepository = createMockPaymentRepository();
@@ -141,6 +148,7 @@ describe('PaymentCheckoutSaga', () => {
     fxRateProvider = createMockFxRateProvider();
     reserveService = createMockReserveService();
     ambiguousRiskMonitoring = createMockAmbiguousRiskMonitoring();
+    amlReviewMonitoring = createMockAmlReviewMonitoring();
 
     saga = new PaymentCheckoutSaga(
       paymentRepository,
@@ -151,6 +159,7 @@ describe('PaymentCheckoutSaga', () => {
       new ChargeLedgerParamsResolverService(merchantService, fxRateProvider, paymentRepository),
       reserveService,
       ambiguousRiskMonitoring,
+      amlReviewMonitoring,
     );
   });
 

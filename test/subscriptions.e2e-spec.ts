@@ -492,6 +492,26 @@ describe('Recurring billing / subscriptions (e2e)', () => {
     });
 
     describe('Decline-code-aware dunning', () => {
+      // Smart routing can pick either STRIPE or ADYEN for any given
+      // renewal (no preferredProvider on subscriptions — see
+      // subscription.service.ts) — the mock PSP therefore returns each
+      // PSP's own real decline-code shape for the same semantic marker
+      // (Phase 1's per-PSP HARD_DECLINE_CODES; see
+      // scripts/mock-psp/server.js's ADYEN_REFUSAL_REASON_CODES). These
+      // tests assert PSP-independent behavior (status transitions,
+      // backoff, hard-decline-skips-retry) as the primary proof, and use
+      // this to translate the expected raw decline-code string for
+      // whichever PSP actually processed the charge.
+      const ADYEN_REFUSAL_REASON_CODES: Record<string, string> = {
+        insufficient_funds: '12',
+        stolen_card: '5',
+        expired_card: '6',
+      };
+      function expectedDeclineCode(pspProvider: string | undefined, semanticCode: string): string {
+        return pspProvider === 'ADYEN' ? ADYEN_REFUSAL_REASON_CODES[semanticCode] : semanticCode;
+      }
+
+
       it('a retryable decline (insufficient_funds) records the code and still uses the day 1/3/7 backoff schedule', async () => {
         const merchant = await seedMerchant(app, { merchantId: uniqueId('subretryable') });
         const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
@@ -520,7 +540,9 @@ describe('Recurring billing / subscriptions (e2e)', () => {
           .expect(200);
         expect(afterFirst.body.status).toBe('PAST_DUE');
         expect(afterFirst.body.failedAttempts).toBe(1);
-        expect(afterFirst.body.lastDeclineCode).toBe('insufficient_funds');
+        expect(afterFirst.body.lastDeclineCode).toBe(
+          expectedDeclineCode(afterFirst.body.lastDeclinePspProvider, 'insufficient_funds'),
+        );
         // Still gets the real day 1/3/7 backoff — a retryable code doesn't
         // skip the schedule the way a hard decline does.
         const nextRetryAt = new Date(afterFirst.body.nextRetryAt).getTime();
@@ -550,7 +572,9 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         expect(afterRes.body.failedAttempts).toBe(1);
         expect(afterRes.body.status).toBe('CANCELED');
         expect(afterRes.body.canceledAt).toBeTruthy();
-        expect(afterRes.body.lastDeclineCode).toBe('stolen_card');
+        expect(afterRes.body.lastDeclineCode).toBe(
+          expectedDeclineCode(afterRes.body.lastDeclinePspProvider, 'stolen_card'),
+        );
         expect(afterRes.body.nextRetryAt).toBeUndefined();
       });
 
@@ -584,11 +608,15 @@ describe('Recurring billing / subscriptions (e2e)', () => {
 
         expect(pastDueEvents).toHaveLength(0); // never goes PAST_DUE at all
         expect(canceledEvents).toHaveLength(1);
+        const afterRes = await request(app.getHttpServer())
+          .get(`/api/v1/subscriptions/${createRes.body.id}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
         expect(canceledEvents[0]).toMatchObject({
           subscriptionId: createRes.body.id,
           merchantId: merchant.merchantId,
           reason: 'hard_decline',
-          declineCode: 'expired_card',
+          declineCode: expectedDeclineCode(afterRes.body.lastDeclinePspProvider, 'expired_card'),
         });
       });
 
@@ -611,7 +639,9 @@ describe('Recurring billing / subscriptions (e2e)', () => {
           .get(`/api/v1/subscriptions/${createRes.body.id}`)
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200);
-        expect(afterFail.body.lastDeclineCode).toBe('insufficient_funds');
+        expect(afterFail.body.lastDeclineCode).toBe(
+          expectedDeclineCode(afterFail.body.lastDeclinePspProvider, 'insufficient_funds'),
+        );
 
         // Switch to a working payment method the same way the dunning
         // tests switch currency — directly in the DB, since there's no

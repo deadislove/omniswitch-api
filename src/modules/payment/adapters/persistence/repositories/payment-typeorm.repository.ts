@@ -10,6 +10,7 @@ import { LedgerOutboxPort } from '../../../ports/outbound/ledger-outbox.port';
 import { LedgerOutboxEvent, LedgerEntry, OutboxStatus } from '../../../domain/aggregates/ledger-outbox.aggregate';
 import { LedgerOutboxEntity } from '../entities/ledger-outbox.entity';
 import { Money } from '../../../domain/value-objects/money.vo';
+import { classifyDeclineCode } from '../../../domain/services/decline-code-classifier';
 
 /**
  * TypeORM implementation of PaymentRepositoryPort
@@ -102,6 +103,19 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
 
   async existsById(id: string): Promise<boolean> {
     const count = await this.paymentRepo.count({ where: { id } });
+    return count > 0;
+  }
+
+  // See PaymentRepositoryPort.existsForDelegationAndMerchant()'s docblock
+  // for why this is forced onto master.
+  async existsForDelegationAndMerchant(delegationId: string, merchantId: string): Promise<boolean> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let count: number;
+    try {
+      count = await queryRunner.manager.count(PaymentEntity, { where: { delegationId, merchantId } });
+    } finally {
+      await queryRunner.release();
+    }
     return count > 0;
   }
 
@@ -256,6 +270,27 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
       await queryRunner.release();
     }
     return entities.map((e) => e.status === 'AMBIGUOUS' || e.ambiguousResolvedAt != null);
+  }
+
+  async countHardDeclinesSince(merchantId: string, since: Date): Promise<number> {
+    // Forced onto master — same reasoning as countAmbiguousIncidentsSince():
+    // this runs synchronously right after the merchant's own payment just
+    // transitioned to FAILED in the same request, and needs to see that
+    // write immediately, not after the replica's ~1s streaming lag.
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let rows: PaymentEntity[];
+    try {
+      rows = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .select(['p.failureCode', 'p.pspProvider'])
+        .where('p.merchantId = :merchantId', { merchantId })
+        .andWhere('p.status = :status', { status: 'FAILED' })
+        .andWhere('p.createdAt >= :since', { since: since.toISOString() })
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return rows.filter((r) => classifyDeclineCode(r.failureCode, r.pspProvider) === 'HARD_DECLINE').length;
   }
 
   async findAmbiguousEligibleForAutoResolution(

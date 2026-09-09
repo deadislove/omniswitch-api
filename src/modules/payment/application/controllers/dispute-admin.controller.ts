@@ -97,6 +97,21 @@ class DisputeSummaryDto {
   })
   evidenceGuidance: string;
 
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description:
+      "The delegation this dispute's underlying charge was made under, if any — snapshotted from the payment at dispute-creation time. Null for a human-initiated charge.",
+  })
+  delegationId?: string;
+
+  @ApiPropertyOptional({
+    enum: ['human', 'agent'],
+    description:
+      "Whether the disputed charge was human- or agent-initiated — snapshotted from the payment at dispute-creation time. Data capture only; this system doesn't decide liability based on it.",
+  })
+  initiatedBy?: 'human' | 'agent';
+
   @ApiProperty()
   createdAt: string;
 
@@ -119,6 +134,8 @@ function toSummary(dispute: Dispute): DisputeSummaryDto {
     evidence: dispute.evidence,
     autoDecision: dispute.autoDecision,
     evidenceGuidance: evidenceGuidanceFor(dispute.reason),
+    delegationId: dispute.delegationId,
+    initiatedBy: dispute.initiatedBy,
     createdAt: dispute.createdAt.toISOString(),
     updatedAt: dispute.updatedAt.toISOString(),
   };

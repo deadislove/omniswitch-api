@@ -115,7 +115,12 @@ export class PayoutService {
       if (balance.minorUnits <= 0n) continue;
 
       const merchantId = balance.merchantId;
-      const merchant = await this.merchantService.findByMerchantId(merchantId);
+      // Forced onto master — see MerchantService.findByMerchantIdOnMaster()'s
+      // docblock. A connected merchant charged with a split moments
+      // before this sweep runs (the common shape in tests, and a
+      // plausible real onboarding flow too) can otherwise race the
+      // replica and silently skip this payee's payout entirely.
+      const merchant = await this.merchantService.findByMerchantIdOnMaster(merchantId);
       if (!merchant || merchant.accountType !== 'CONNECTED') continue;
 
       const grossAmount = Money.fromMinorUnits(balance.minorUnits, balance.currencyCode);
@@ -155,13 +160,34 @@ export class PayoutService {
     return this.payoutPort.findMany(filter);
   }
 
+  /** See PayoutPort.findManyOnMaster()'s docblock — for a caller that just wrote (a sweep, a transfer confirmation) and needs to read its own write back immediately. */
+  async findManyOnMaster(filter?: FindPayoutsFilter): Promise<Payout[]> {
+    return this.payoutPort.findManyOnMaster(filter);
+  }
+
   async findById(id: string): Promise<Payout | null> {
     return this.payoutPort.findById(id);
   }
 
-  /** `force: true` is the manual-override path (bypasses releaseEligibleAt) — the scheduled sweep below never passes it. */
+  /** See PayoutPort.findByIdOnMaster()'s docblock — for a caller that just wrote this exact Payout and needs to read its own write back immediately. */
+  async findByIdOnMaster(id: string): Promise<Payout | null> {
+    return this.payoutPort.findByIdOnMaster(id);
+  }
+
+  /**
+   * `force: true` is the manual-override path (bypasses
+   * releaseEligibleAt) — the scheduled sweep below never passes it.
+   * Reads via `findByIdOnMaster()`, not the ambient replica-routed
+   * `findById()` — this validates-then-transitions current state, and a
+   * caller invoking this right after another write to the same Payout
+   * (an admin action moments earlier, or this same sweep's own prior
+   * iteration) shouldn't risk reading a pre-write replica snapshot. Same
+   * bug class as `PayoutService.confirmTransfer()`'s own fix; this
+   * specific instance had no confirmed reproduction, unlike that one,
+   * but the fix is identical and equally safe to apply pre-emptively.
+   */
   async releaseReserve(id: string, options: { force?: boolean } = {}): Promise<Payout> {
-    const payout = await this.payoutPort.findById(id);
+    const payout = await this.payoutPort.findByIdOnMaster(id);
     if (!payout) {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${id} not found`, code: 'PAYOUT_NOT_FOUND' });
     }
@@ -288,9 +314,11 @@ export class PayoutService {
    * later via `confirmTransfer()`, called from the
    * `POST /webhooks/bank-transfer` receiver. Only `MockBankTransferAdapter`
    * (`SENT`) reaches `INITIATED` synchronously, inside this same call.
+   * Reads via `findByIdOnMaster()` — see `releaseReserve()`'s own
+   * docblock for why.
    */
   async initiateTransfer(payoutId: string): Promise<Payout> {
-    const payout = await this.payoutPort.findById(payoutId);
+    const payout = await this.payoutPort.findByIdOnMaster(payoutId);
     if (!payout) {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${payoutId} not found`, code: 'PAYOUT_NOT_FOUND' });
     }
@@ -381,15 +409,26 @@ export class PayoutService {
    * webhook retries are a normal, expected occurrence (same posture the
    * Stripe/Adyen webhook handlers take toward events they've already
    * processed).
+   *
+   * Both lookups below are forced onto master (`findByTransferIdOnMaster`/
+   * `findByReserveTransferIdOnMaster`), not the ambient replica-routed
+   * ones — the `transferId`/`reserveTransferId` this webhook refers to
+   * was itself written moments earlier by `initiateTransfer()`/
+   * `initiateReserveTransfer()` in the very same real-world flow (an
+   * admin action, then the rail's own async callback). A stale replica
+   * read here doesn't just risk a *slow* confirmation — it falls through
+   * to "no Payout found... ignoring" below and silently drops a real
+   * confirmation forever, since nothing ever retries a webhook this
+   * handler itself already returned 200 for.
    */
   async confirmTransfer(transferId: string, outcome: 'SETTLED' | 'FAILED', reason?: string): Promise<void> {
-    const payout = await this.payoutPort.findByTransferId(transferId);
+    const payout = await this.payoutPort.findByTransferIdOnMaster(transferId);
     if (payout) {
       await this.confirmNetAmountTransfer(payout, transferId, outcome, reason);
       return;
     }
 
-    const reservePayout = await this.payoutPort.findByReserveTransferId(transferId);
+    const reservePayout = await this.payoutPort.findByReserveTransferIdOnMaster(transferId);
     if (reservePayout) {
       await this.confirmReserveTransfer(reservePayout, transferId, outcome, reason);
       return;
@@ -498,10 +537,11 @@ export class PayoutService {
    * status (see `PayoutPort.findReserveTransferEligible()`). Same
    * real-vs-mock-rail behavior as `initiateTransfer()`: `PENDING` on a
    * real rail lands this in `PENDING_CONFIRMATION`, confirmed later via
-   * `confirmTransfer()`.
+   * `confirmTransfer()`. Reads via `findByIdOnMaster()` — see
+   * `releaseReserve()`'s own docblock for why.
    */
   async initiateReserveTransfer(payoutId: string): Promise<Payout> {
-    const payout = await this.payoutPort.findById(payoutId);
+    const payout = await this.payoutPort.findByIdOnMaster(payoutId);
     if (!payout) {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${payoutId} not found`, code: 'PAYOUT_NOT_FOUND' });
     }

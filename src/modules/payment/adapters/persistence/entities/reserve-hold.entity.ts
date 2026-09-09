@@ -17,6 +17,18 @@ export class ReserveHoldEntity {
   @Column({ name: 'amount_minor_units', type: 'bigint' })
   amountMinorUnits: string;
 
+  /**
+   * The full net amount (after platform fee, before this reserve slice
+   * was carved out) this hold was originally created from — needed to
+   * correctly recompute the target reserve amount at a *new* reserveBps
+   * on tier escalation (RiskTieringService via
+   * ReserveService.topUpHeldReservesForMerchant()). Same currency as
+   * amountMinorUnits (see ReserveHold's own docblock on why this is
+   * always the charge currency).
+   */
+  @Column({ name: 'net_amount_minor_units', type: 'bigint' })
+  netAmountMinorUnits: string;
+
   @Column({ name: 'currency_code', length: 3 })
   currencyCode: string;
 

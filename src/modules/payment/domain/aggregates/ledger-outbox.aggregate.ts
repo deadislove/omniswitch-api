@@ -300,6 +300,49 @@ export class LedgerOutboxEvent {
   }
 
   /**
+   * Factory: Withhold *more* into an already-`HELD` reserve — the
+   * opposite direction of createReserveReleaseEntries() above. Booked
+   * when RiskTieringService escalates a merchant's tier while one of
+   * their charges is still holding a reserve at the *old*, lower rate
+   * (see ReserveService.topUpHeldReservesForMerchant()) — the merchant's
+   * MERCHANT balance already received the full net amount at charge
+   * time (net of the original, smaller reserve slice), so topping up the
+   * reserve now means clawing part of that back, same direction a
+   * platform pulling money it's already credited would take in any other
+   * ledger.
+   */
+  static createReserveTopUpEntries(params: {
+    id: string;
+    paymentId: string;
+    merchantId: string;
+    amount: Money;
+  }): LedgerOutboxEvent {
+    const entries: LedgerEntry[] = [
+      {
+        accountId: params.merchantId,
+        accountType: 'MERCHANT',
+        entryType: 'DEBIT',
+        amount: params.amount,
+        description: `Reserve topped up (risk tier escalation) for payment ${params.paymentId}`,
+      },
+      {
+        accountId: `${params.merchantId}_RESERVE`,
+        accountType: 'RESERVE',
+        entryType: 'CREDIT',
+        amount: params.amount,
+        description: `Reserve topped up (risk tier escalation) for payment ${params.paymentId}`,
+      },
+    ];
+
+    return LedgerOutboxEvent.create({
+      id: params.id,
+      paymentId: params.paymentId,
+      eventType: 'RESERVE_TOPPED_UP',
+      entries,
+    });
+  }
+
+  /**
    * Factory: Create refund ledger entries.
    *
    * `settlementConversion` — present when the *original charge* this

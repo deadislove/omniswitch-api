@@ -156,3 +156,14 @@ List (optionally filtered by `delegationId`/`status`) or get a single
 charge approval — same `MERCHANT`-self-scoped /
 `ADMIN`/`OPERATOR`/`READONLY`-cross-merchant access model as
 `GET /delegations`.
+
+## Agent attribution on disputes (Phase 1)
+
+Every charge made through a `Delegation` is tagged with that
+delegation's id and `initiatedBy: 'agent'` on the underlying payment —
+real, indexed columns (not a free-form metadata bag). If that charge is
+later disputed, `GET /admin/disputes`/`GET /admin/disputes/:id` surface
+the same `delegationId`/`initiatedBy`, snapshotted at the moment the
+dispute was recorded. See
+[`disputes.md`](../../business-domain/disputes.md#agentdispute-attribution-phase-1)
+— this is audit-trail data capture only, not a liability determination.
