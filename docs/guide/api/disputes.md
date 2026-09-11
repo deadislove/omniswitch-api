@@ -13,7 +13,11 @@ initiated by the cardholder's bank, not by this system. See
 Every new dispute is auto-classified `ACCEPT`/`CONTEST`/`MANUAL_REVIEW`
 by amount and reason code the moment it's created — `CONTEST` already
 auto-submitted templated evidence to the PSP by the time you'd see it
-via these endpoints.
+via these endpoints. The amount threshold and reason-code set both now
+depend on the charging merchant's current risk tier (`LOW`/`MEDIUM`/`HIGH`
+— see [`business-domain-guide.md`](../business-domain-guide.md#8-disputes--chargebacks));
+`merchantRiskTierAtDecision` on the response is an audit-only snapshot of
+which tier was actually in effect when this decision was made.
 
 - **Roles** (all endpoints below): `ADMIN`, `OPERATOR`
 

@@ -161,6 +161,25 @@ export class RiskTieringService {
     merchant: MerchantEntity,
     now: Date,
   ): Promise<{ tier: RiskTier; changed: boolean } | null> {
+    // This class's own docblock says "only touches merchants with
+    // riskTierAutoManaged = true" — until this check existed, that was
+    // only actually enforced by runTieringSweep()'s upstream batch query
+    // (findActiveAutoManagedBatch()), not by this method itself. A caller
+    // reaching this through the public evaluateMerchant(merchantId, now)
+    // wrapper (Phase 2's DisputeService, reading a tier for the dispute
+    // auto-decision policy) had no such upstream filter and would
+    // silently recompute — and, via applyAutoRiskTier() below,
+    // overwrite — a manually-overridden merchant's reserveBps/
+    // reserveHoldDays just by evaluating them for an unrelated purpose.
+    // Enforcing the invariant here closes it for every caller, not just
+    // the sweep. `null` here means the same thing it means for
+    // insufficient sample size below: no confident auto-computed answer,
+    // callers treat that as "no tier signal" (e.g. dispute-policy.ts
+    // falls back to its MEDIUM-equivalent default).
+    if (!merchant.riskTierAutoManaged) {
+      return null;
+    }
+
     const merchantId = merchant.merchantId;
     const since = new Date(now.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 

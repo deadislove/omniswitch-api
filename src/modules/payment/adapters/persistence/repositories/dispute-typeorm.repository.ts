@@ -30,6 +30,7 @@ export class DisputeTypeOrmRepository implements DisputePort {
     entity.autoDecision = dispute.autoDecision;
     entity.delegationId = dispute.delegationId;
     entity.initiatedBy = dispute.initiatedBy;
+    entity.merchantRiskTierAtDecision = dispute.merchantRiskTierAtDecision;
     await this.repo.save(entity);
   }
 
@@ -118,6 +119,7 @@ export class DisputeTypeOrmRepository implements DisputePort {
       autoDecision: entity.autoDecision,
       delegationId: entity.delegationId,
       initiatedBy: entity.initiatedBy,
+      merchantRiskTierAtDecision: entity.merchantRiskTierAtDecision,
     });
   }
 }

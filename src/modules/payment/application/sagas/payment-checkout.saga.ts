@@ -15,6 +15,7 @@ import { PaymentEntity } from '../../adapters/persistence/entities/payment.entit
 import {
   ChargeLedgerParamsResolverService,
   ChargeLedgerParams,
+  toPaymentSplits,
 } from '../services/charge-ledger-params-resolver.service';
 import { ReserveService } from '../services/reserve.service';
 import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
@@ -238,7 +239,17 @@ export class PaymentCheckoutSaga {
     // controller, and REQUIRES_CAPTURE is only ever returned for
     // "manual".)
     if (chargeLedgerParams.splits && chargeLedgerParams.splits.length > 0) {
-      payment.recordSplits(chargeLedgerParams.splits);
+      // Recorded here (before the PSP is ever called) so a split survives
+      // a 3DS detour (see this block's own comment above). Each split's
+      // settlementConversion at this point is provisional — a 3DS-deferred
+      // confirmation re-resolves fresh FX rates for actual booking (see
+      // WebhookProcessingService.markSucceeded()), and
+      // PaymentAggregate.finalizeSplitConversions() (called from whichever
+      // path actually books this charge, below and in that service)
+      // overwrites it with whatever rate was actually used — so a later
+      // refund always replays the rate the money actually moved at, not
+      // this request-time guess.
+      payment.recordSplits(toPaymentSplits(chargeLedgerParams.splits));
     }
 
     // ─── Step 2: Risk Assessment ─────────────────────────────────────────────
@@ -375,7 +386,17 @@ export class PaymentCheckoutSaga {
       }
       // (splits were already recorded on `payment` right after
       // chargeLedgerParams resolved, above — recordSplits() is a no-op on
-      // a second call, so nothing to do here.)
+      // a second call. This immediate-capture path reuses that same
+      // resolve() result for booking, so finalizeSplitConversions() below
+      // is a same-data overwrite here — the call site that actually
+      // matters is WebhookProcessingService.markSucceeded()'s re-resolved
+      // splits, see PaymentAggregate.finalizeSplitConversions()'s
+      // docblock. Called unconditionally anyway so `payment.splits`'s FX
+      // portion always reflects whatever resolve() call actually fed
+      // createChargeEntries(), not an assumption about which path ran.)
+      if (splits && splits.length > 0) {
+        payment.finalizeSplitConversions(toPaymentSplits(splits));
+      }
       const outboxEvent = LedgerOutboxEvent.createChargeEntries({
         id: uuidv4(),
         paymentId: input.paymentId,

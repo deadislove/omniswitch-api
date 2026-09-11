@@ -13,10 +13,13 @@ import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { Money } from '../../domain/value-objects/money.vo';
 import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggregate';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
+import { RiskTieringService } from './risk-tiering.service';
 import {
   decideAutoDisposition,
   autoContestEvidenceFor,
   DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS,
+  DEFAULT_LOW_RISK_THRESHOLD_MULTIPLIER,
+  DEFAULT_HIGH_RISK_THRESHOLD_MULTIPLIER,
 } from '../../domain/services/dispute-policy';
 
 /**
@@ -40,6 +43,8 @@ export class DisputeService {
   // own. `ConfigService.get<number>()` doesn't actually cast (see
   // health.controller.ts's own comment on the same gap) — wrap explicitly.
   private readonly autoAcceptThresholdMajorUnits: number;
+  private readonly lowRiskThresholdMultiplier: number;
+  private readonly highRiskThresholdMultiplier: number;
 
   constructor(
     private readonly disputePort: DisputePort,
@@ -48,10 +53,17 @@ export class DisputeService {
     private readonly processorFactory: PaymentProcessorFactory,
     private readonly dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
+    private readonly riskTieringService: RiskTieringService,
     configService: ConfigService,
   ) {
     this.autoAcceptThresholdMajorUnits = Number(
       configService.get('DISPUTE_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS', DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS),
+    );
+    this.lowRiskThresholdMultiplier = Number(
+      configService.get('DISPUTE_LOW_RISK_THRESHOLD_MULTIPLIER', DEFAULT_LOW_RISK_THRESHOLD_MULTIPLIER),
+    );
+    this.highRiskThresholdMultiplier = Number(
+      configService.get('DISPUTE_HIGH_RISK_THRESHOLD_MULTIPLIER', DEFAULT_HIGH_RISK_THRESHOLD_MULTIPLIER),
     );
   }
 
@@ -71,6 +83,15 @@ export class DisputeService {
       return existing;
     }
 
+    // Re-evaluated fresh, right now, rather than reading a persisted tier
+    // — RiskTieringService doesn't persist the tier label itself (only
+    // the derived reserveBps/reserveHoldDays), so there's nothing to read.
+    // Accepts the extra synchronous DB round trip on this webhook path;
+    // `evaluateMerchant()` returns `null` for too-small a sample size or
+    // an unknown merchant, which decideAutoDisposition() below treats
+    // identically to 'MEDIUM' (base threshold, default reason set) — a
+    // risk-tier lookup failure should never block recording the dispute.
+    const tierResult = await this.riskTieringService.evaluateMerchant(params.merchantId, new Date());
     // See dispute-policy.ts's docblock for the (deliberately simple,
     // illustrative) thresholds. 'CONTEST' actually calls the PSP with a
     // template response right here, immediately, before this dispute is
@@ -78,7 +99,14 @@ export class DisputeService {
     // recommendations only — this system has no PSP "accept/close" action
     // to call, so 'ACCEPT' just tells the operator not to bother, it
     // doesn't take an action a human wouldn't otherwise need to.
-    const autoDecision = decideAutoDisposition(params.amount, params.reason);
+    const autoDecision = decideAutoDisposition(
+      params.amount,
+      params.reason,
+      this.autoAcceptThresholdMajorUnits,
+      tierResult?.tier,
+      this.lowRiskThresholdMultiplier,
+      this.highRiskThresholdMultiplier,
+    );
     // Forced onto master, not the ambient replica-routed connection — a
     // dispute can arrive (in tests, and in principle in production too)
     // moments after the charge that created this exact payment record,
@@ -91,6 +119,7 @@ export class DisputeService {
       id: uuidv4(),
       ...params,
       autoDecision,
+      merchantRiskTierAtDecision: tierResult?.tier,
       delegationId: payment?.delegationId,
       initiatedBy: payment?.initiatedBy,
     });
@@ -242,17 +271,7 @@ export class DisputeService {
         paymentId: payment.id,
         merchantId: payment.metadata.merchantId,
         refundAmount: dispute.amount,
-        settlementConversion: settlementConversion
-          ? {
-              convertedRefundAmount: dispute.amount.convertTo(
-                settlementConversion.currency,
-                settlementConversion.rate,
-                settlementConversion.provider,
-              ),
-              rate: settlementConversion.rate,
-              provider: settlementConversion.provider,
-            }
-          : undefined,
+        settlementConversion,
         splits,
         originalChargeAmount: splits ? payment.amount : undefined,
       });

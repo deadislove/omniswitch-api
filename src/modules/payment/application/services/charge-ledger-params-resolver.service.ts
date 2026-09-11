@@ -1,10 +1,10 @@
-import { Injectable, Logger, ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { Money } from '../../domain/value-objects/money.vo';
 import { MerchantEntity } from '../../../merchant/merchant.entity';
 import { MerchantService } from '../../../merchant/merchant.service';
 import { FXRateProviderPort } from '../../ports/outbound/fx-rate-provider.port';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
-import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
+import { PSPProvider, PaymentSplit } from '../../domain/aggregates/payment.aggregate';
 
 // Fallback only for the (shouldn't-happen) case of no merchant record —
 // every caller of this service already only runs for an authenticated,
@@ -15,6 +15,11 @@ const DEFAULT_PLATFORM_FEE_BPS = 150;
 
 export interface ChargeLedgerParams {
   platformFee: Money;
+  // When `splits` is present, this converts the *remainder* left to the
+  // charging merchant after all splits are carved out — not the full
+  // payout amount. Each split can independently carry its own conversion
+  // (see `splits` below); this field and each split's own conversion are
+  // no longer mutually exclusive, and may use different rates/currencies.
   settlementConversion?: { convertedNetAmount: Money; rate: number; provider: string };
   // netAmount alongside amount (the reserve slice itself) — ReserveHold
   // stores both, since a later reserveBps escalation needs the *original*
@@ -24,7 +29,13 @@ export interface ChargeLedgerParams {
   // assuming a bps that may not even be the one in effect when this hold
   // was created). See ReserveService.topUpHeldReservesForMerchant().
   reserveHold?: { amount: Money; holdDays: number; netAmount: Money };
-  splits?: { merchantId: string; amount: Money }[];
+  splits?: {
+    merchantId: string;
+    amount: Money;
+    // Present when this recipient has their own settlementCurrency,
+    // independent of the charging merchant's own conversion above.
+    settlementConversion?: { convertedAmount: Money; rate: number; provider: string };
+  }[];
   /**
    * The merchant's MerchantEntity.enabledPspProviders, cast to PSPProvider[]
    * — piggybacking on the merchant lookup this method already does rather
@@ -102,13 +113,45 @@ export class ChargeLedgerParamsResolverService {
   }
 
   /**
+   * A split recipient's own settlement-currency conversion is independent
+   * of the charging merchant's — a lookup failure here only drops *that*
+   * recipient back to charge-currency booking (same fallback posture as
+   * the charging merchant's own conversion below), it never blocks the
+   * other splits or the remainder from converting.
+   */
+  private async resolveSplitConversion(
+    recipientMerchantId: string,
+    splitAmount: Money,
+  ): Promise<{ convertedAmount: Money; rate: number; provider: string } | undefined> {
+    const recipient = await this.merchantService.findByMerchantId(recipientMerchantId);
+    const settlementCurrency = recipient?.settlementCurrency;
+    if (!settlementCurrency || settlementCurrency === splitAmount.currency.code) {
+      return undefined;
+    }
+    try {
+      const { rate, provider } = await this.fxRateProvider.getRate(splitAmount.currency.code, settlementCurrency);
+      return { convertedAmount: splitAmount.convertTo(settlementCurrency, rate, provider), rate, provider };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `FX conversion to ${settlementCurrency} failed for split recipient ${recipientMerchantId}, booking in ${splitAmount.currency.code} instead: ${msg}`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * `requestedSplits` — the marketplace `splits` a charge request asked
    * for, if any. Validated here, *before* the caller ever calls the PSP
    * (see PaymentCheckoutSaga.execute()'s docblock for why this method is
    * called up front rather than after a successful charge) — an invalid
-   * split (unknown/non-connected recipient, total exceeding the net
-   * payout, or a merchant with an active settlement-currency conversion)
-   * throws here rather than leaving a charged-but-unbooked payment behind.
+   * split (unknown/non-connected recipient, or total exceeding the net
+   * payout) throws here rather than leaving a charged-but-unbooked payment
+   * behind. A split recipient with their own `settlementCurrency` gets
+   * their own independent FX conversion (see resolveSplitConversion());
+   * the charging merchant's own `settlementCurrency` (if set) converts
+   * whatever's left after all splits are carved out — the two no longer
+   * exclude each other, and may use different rates/currencies.
    */
   async resolve(
     merchantId: string,
@@ -130,14 +173,8 @@ export class ChargeLedgerParamsResolverService {
     }
 
     let splits: ChargeLedgerParams['splits'];
+    let remainderAmount = payoutAmount;
     if (requestedSplits && requestedSplits.length > 0) {
-      if (merchant?.settlementCurrency && merchant.settlementCurrency !== amount.currency.code) {
-        throw new ConflictException({
-          statusCode: 409,
-          error: 'Marketplace splits are not supported together with a merchant settlement-currency conversion',
-          code: 'SPLIT_WITH_SETTLEMENT_CONVERSION_UNSUPPORTED',
-        });
-      }
       let splitTotal = Money.zero(amount.currency.code);
       for (const split of requestedSplits) {
         const recipient = await this.merchantService.findByMerchantId(split.merchantId);
@@ -157,7 +194,13 @@ export class ChargeLedgerParamsResolverService {
           code: 'SPLIT_EXCEEDS_NET_AMOUNT',
         });
       }
-      splits = requestedSplits;
+      remainderAmount = payoutAmount.subtract(splitTotal);
+      splits = await Promise.all(
+        requestedSplits.map(async (split) => ({
+          ...split,
+          settlementConversion: await this.resolveSplitConversion(split.merchantId, split.amount),
+        })),
+      );
     }
 
     const settlementCurrency = merchant?.settlementCurrency;
@@ -167,10 +210,11 @@ export class ChargeLedgerParamsResolverService {
 
     try {
       const { rate, provider } = await this.fxRateProvider.getRate(amount.currency.code, settlementCurrency);
-      const convertedNetAmount = payoutAmount.convertTo(settlementCurrency, rate, provider);
+      const convertedNetAmount = remainderAmount.convertTo(settlementCurrency, rate, provider);
       return {
         platformFee,
         reserveHold,
+        splits,
         settlementConversion: { convertedNetAmount, rate, provider },
         enabledPspProviders,
       };
@@ -179,7 +223,33 @@ export class ChargeLedgerParamsResolverService {
       this.logger.error(
         `FX conversion to ${settlementCurrency} failed for merchant ${merchantId}, booking in ${amount.currency.code} instead: ${msg}`,
       );
-      return { platformFee, reserveHold, enabledPspProviders };
+      return { platformFee, reserveHold, splits, enabledPspProviders };
     }
   }
+}
+
+/**
+ * Normalizes `ChargeLedgerParams.splits` (this service's booking shape —
+ * `settlementConversion: {convertedAmount: Money, rate, provider}`, the
+ * form `LedgerOutboxEvent.createChargeEntries()` needs) into
+ * `PaymentSplit[]` (the aggregate/persistence shape —
+ * `settlementConversion: {currency: string, rate, provider}`, no
+ * `convertedAmount` — the rate/currency is enough to replay a conversion
+ * later, the amount itself is re-derived from whatever's being refunded).
+ * Shared by every call site that calls `PaymentAggregate.recordSplits()`/
+ * `finalizeSplitConversions()`, so this mapping exists in exactly one
+ * place.
+ */
+export function toPaymentSplits(splits: ChargeLedgerParams['splits']): PaymentSplit[] {
+  return (splits ?? []).map((split) => ({
+    merchantId: split.merchantId,
+    amount: split.amount,
+    settlementConversion: split.settlementConversion
+      ? {
+          currency: split.settlementConversion.convertedAmount.currency.code,
+          rate: split.settlementConversion.rate,
+          provider: split.settlementConversion.provider,
+        }
+      : undefined,
+  }));
 }

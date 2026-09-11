@@ -51,6 +51,7 @@ export class PaymentMapper {
       ? entity.splits.map((s) => ({
           merchantId: s.merchantId,
           amount: Money.fromMinorUnits(BigInt(s.amountMinorUnits), s.currencyCode),
+          settlementConversion: s.settlementConversion ?? undefined,
         }))
       : undefined;
 
@@ -125,6 +126,7 @@ export class PaymentMapper {
       merchantId: s.merchantId,
       amountMinorUnits: s.amount.amountMinorUnits.toString(),
       currencyCode: s.amount.currency.code,
+      settlementConversion: s.settlementConversion,
     }));
 
     if (aggregate.binInfo) {

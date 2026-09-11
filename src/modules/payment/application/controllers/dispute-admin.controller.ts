@@ -112,6 +112,14 @@ class DisputeSummaryDto {
   })
   initiatedBy?: 'human' | 'agent';
 
+  @ApiPropertyOptional({
+    enum: ['LOW', 'MEDIUM', 'HIGH'],
+    nullable: true,
+    description:
+      "The charging merchant's risk tier at the exact moment autoDecision was computed (see dispute-policy.ts's merchantRiskTier param) — audit-only, a snapshot not a live join. Null if the merchant had no evaluable tier at that moment (treated the same as MEDIUM for the decision itself).",
+  })
+  merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH';
+
   @ApiProperty()
   createdAt: string;
 
@@ -136,6 +144,7 @@ function toSummary(dispute: Dispute): DisputeSummaryDto {
     evidenceGuidance: evidenceGuidanceFor(dispute.reason),
     delegationId: dispute.delegationId,
     initiatedBy: dispute.initiatedBy,
+    merchantRiskTierAtDecision: dispute.merchantRiskTierAtDecision,
     createdAt: dispute.createdAt.toISOString(),
     updatedAt: dispute.updatedAt.toISOString(),
   };

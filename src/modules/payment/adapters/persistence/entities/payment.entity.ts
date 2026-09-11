@@ -153,9 +153,17 @@ export class PaymentEntity {
    * PaymentAggregate.recordSplits()'s docblock) so a later refund or lost
    * dispute can reverse each recipient's share proportionally rather than
    * only ever debiting the charging (platform) merchant's own account.
+   * `settlementConversion` per split is present when that recipient had
+   * their own settlement currency at charge time — independent of this
+   * payment's own `settlementConversion` column above.
    */
   @Column({ name: 'splits', type: 'jsonb', nullable: true })
-  splits?: { merchantId: string; amountMinorUnits: string; currencyCode: string }[];
+  splits?: {
+    merchantId: string;
+    amountMinorUnits: string;
+    currencyCode: string;
+    settlementConversion?: { currency: string; rate: number; provider: string };
+  }[];
 
   /**
    * Audit trail for AmbiguousPaymentService.resolve() — deliberately

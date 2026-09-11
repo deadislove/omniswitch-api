@@ -70,7 +70,16 @@ alone would say.
 reserve directly *and* flips `riskTierAutoManaged` to `false` — the next
 sweep leaves that merchant alone until an operator explicitly
 re-enables automation via `PATCH /admin/merchants/:id/risk-tier-auto`. A
-hand-tuned reserve is never silently overwritten by the sweep. A manual
+hand-tuned reserve is never silently overwritten by the sweep. This isn't
+just a sweep-scheduling detail — `RiskTieringService.evaluateMerchant()`
+itself (the single-merchant entry point, not just the sweep's batch
+query) refuses to evaluate a `riskTierAutoManaged = false` merchant at
+all, returning no tier. Every caller of `evaluateMerchant()` inherits
+this, including `DisputeService`'s dispute-policy tier lookup (see
+[`disputes.md`](./disputes.md#the-auto-decision-policy)) — a manually
+overridden merchant falls back to the base dispute threshold/reason set,
+the same as an unclassified one, rather than the system's own recomputed
+tier silently influencing a decision the operator has already overridden. A manual
 *escalation* through this endpoint also tops up already-`HELD` reserves
 to the new rate, the same way the automated sweep's own escalation does
 (see "Escalation now reaches back to already-booked reserves" below) —

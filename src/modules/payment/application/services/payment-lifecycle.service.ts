@@ -140,17 +140,7 @@ export class PaymentLifecycleService {
       paymentId: payment.id,
       merchantId: payment.metadata.merchantId,
       refundAmount,
-      settlementConversion: settlementConversion
-        ? {
-            convertedRefundAmount: refundAmount.convertTo(
-              settlementConversion.currency,
-              settlementConversion.rate,
-              settlementConversion.provider,
-            ),
-            rate: settlementConversion.rate,
-            provider: settlementConversion.provider,
-          }
-        : undefined,
+      settlementConversion,
       splits,
       originalChargeAmount: splits ? payment.amount : undefined,
     });

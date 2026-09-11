@@ -53,25 +53,43 @@ Every new dispute gets classified once, at creation, into `ACCEPT`,
 `CONTEST`, or `MANUAL_REVIEW` — so routine disputes don't all sit at
 `NEEDS_RESPONSE` waiting on an operator to make an obvious call by hand.
 
-**Amount is checked first.** Below a threshold (illustrative default
-$15, `DISPUTE_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS`), the recommendation is
-`ACCEPT` regardless of reason — an economically cheap dispute usually
-isn't worth contesting no matter why it was filed, the same call a human
-operator would make first. See
+**Amount is checked first, against a threshold that now depends on the
+charging merchant's own risk tier.** Base threshold is illustrative
+default $15 (`DISPUTE_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS`); below it, the
+recommendation is `ACCEPT` regardless of reason — an economically cheap
+dispute usually isn't worth contesting no matter why it was filed, the
+same call a human operator would make first. `DisputeService.recordDispute()`
+now re-evaluates the merchant's current tier (via `RiskTieringService.
+evaluateMerchant()`, live, not a persisted value — see
+[`risk-and-fraud.md`](./risk-and-fraud.md)) right before applying this
+threshold:
+
+| Merchant risk tier | Effective threshold | Why |
+|---|---|---|
+| `LOW` | base × 0.5 (`DISPUTE_LOW_RISK_THRESHOLD_MULTIPLIER`) | Fewer disputes auto-accepted outright — worth contesting more aggressively for a merchant with a strong track record. |
+| `MEDIUM` / no evaluable tier | base, unchanged | Same behavior as before this existed. |
+| `HIGH` | base × 2 (`DISPUTE_HIGH_RISK_THRESHOLD_MULTIPLIER`) | More small disputes auto-accepted outright — not spending contest effort on a merchant already flagged higher-risk. |
+
+A merchant under a manual `reserve-policy` override
+(`riskTierAutoManaged = false`) has no evaluable tier for this purpose
+either — `RiskTieringService.evaluateMerchant()` returns no tier for a
+manually-overridden merchant (same invariant that keeps the nightly sweep
+from touching one), so the dispute policy falls back to the base
+threshold, same as an unclassified merchant. See
 [`future-directions.md`](./future-directions.md#dispute-resolution-workflow)
 for the real break-even calculation
 [`../technical/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
-ran against synthetic data to check this default against.
+ran against synthetic data to check the base default against.
 
-**Reason code decides the rest.** Only two reason codes are templated for
-automatic contest today:
+**Reason code decides the rest — and a `LOW`-tier merchant gets one more
+contestable reason than everyone else:**
 
 | Reason code | Auto-decision | Why |
 |---|---|---|
 | `product_not_received` | `CONTEST` (templated) | Shipment/delivery records are the kind of evidence a template can point at generically. |
 | `duplicate` | `CONTEST` (templated) | "These are two distinct transactions" is checkable from records alone. |
-| `fraudulent` | `MANUAL_REVIEW` | Deliberately **not** auto-contested even though it's likely the most common real-world reason — a card-not-present fraud claim needs real evidence (AVS/CVV match, 3DS proof, account history) and often turns on liability-shift rules a generic template can't speak to. Automating a templated response here would be more likely to waste the response window than win it. |
-| `subscription_canceled` | `MANUAL_REVIEW` | No template — needs the actual cancellation-policy/timestamp comparison, not generic language. |
+| `subscription_canceled` | `CONTEST` (templated) for `LOW`-tier merchants; `MANUAL_REVIEW` otherwise | Needs the actual cancellation-policy/timestamp comparison — templatable in principle, but only extended to merchants with a strong-enough track record to trust the template's default framing. |
+| `fraudulent` | `MANUAL_REVIEW`, at every tier | Deliberately **never** auto-contested regardless of risk tier — a card-not-present fraud claim needs real evidence (AVS/CVV match, 3DS proof, account history) and often turns on liability-shift rules a generic template can't speak to. This is an evidentiary limitation, not a risk-tier judgment call, so tier never changes it. |
 | anything unrecognized | `MANUAL_REVIEW` | Default when this platform hasn't classified a reason code. |
 
 `CONTEST` is the one recommendation that actually *acts*: it immediately
@@ -83,14 +101,18 @@ PSP "accept/close" action to call, so `ACCEPT` just tells an operator not
 to bother. Every dispute — regardless of which way the auto-decision
 went — also carries `evidenceGuidance`, reason-code-specific guidance on
 what evidence would actually be needed to win, so an operator overriding
-a `MANUAL_REVIEW` recommendation isn't starting from nothing.
+a `MANUAL_REVIEW` recommendation isn't starting from nothing. The
+`GET /admin/disputes` response also carries `merchantRiskTierAtDecision`
+— an audit-only snapshot of what tier was actually in effect at the
+moment this decision was made, not a live join, so a later tier change
+never rewrites the historical record of what this dispute's decision was
+actually based on.
 
 **Deliberately simple, illustrative thresholds — not calibrated against
-real chargeback win-rate data.** Same posture as merchant risk tiering
-(see [`risk-and-fraud.md`](./risk-and-fraud.md)): a real policy would
-also weigh the merchant's own dispute history, the card network involved,
-and jurisdiction-specific evidence requirements, none of which this
-platform's dispute policy considers today.
+real chargeback win-rate data.** The merchant's own dispute history now
+*does* feed in, via risk tier (a change from before) — the card network
+involved and jurisdiction-specific evidence requirements still don't,
+which remain out of scope for this platform's dispute policy today.
 
 ## Representment
 

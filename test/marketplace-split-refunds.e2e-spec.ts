@@ -207,6 +207,105 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     expect(platformDebit.amountMinorUnits).toBe('4000'); // $60 - $20
   });
 
+  it('a full refund of a split payment replays each side\'s original FX rate, not a fresh lookup', async () => {
+    const platform = await seedMerchant(app, { merchantId: uniqueId('platformfxr'), settlementCurrency: 'EUR' });
+    const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
+    const connected = await seedMerchant(app, {
+      merchantId: uniqueId('connectedfxr'),
+      accountType: 'CONNECTED',
+      platformMerchantId: platform.merchantId,
+      settlementCurrency: 'GBP',
+    });
+
+    // $100 charge, fee $1.50, net $98.50, split $30 to connected (GBP @
+    // 0.79 = 23.70 GBP), remainder $68.50 to platform (EUR @ 0.92 = 63.02
+    // EUR) — same charge as the "different currencies, different rates"
+    // case in marketplace-splits.e2e-spec.ts.
+    const chargeRes = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
+      amount: 100,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      splits: [{ merchantId: connected.merchantId, amount: 30 }],
+    }).expect(201);
+
+    const refundRes = await signedRequest(
+      platform,
+      platformToken,
+      'post',
+      `/api/v1/payments/${chargeRes.body.paymentId}/refund`,
+      {},
+    ).expect(200);
+    expect(refundRes.body.status).toBe('REFUNDED');
+
+    const entries = await ledgerEntries(chargeRes.body.paymentId);
+    const merchantDebits = entries.filter((e) => e.accountType === 'MERCHANT' && e.entryType === 'DEBIT');
+    expect(merchantDebits).toHaveLength(2);
+
+    // Connected's full $30 original split, reversed at the *original* 0.79
+    // rate — 30 * 0.79 = 23.70 GBP, exactly what it was credited.
+    const connectedDebit = merchantDebits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedDebit.currencyCode).toBe('GBP');
+    expect(connectedDebit.amountMinorUnits).toBe('2370');
+
+    // Platform's share of a refund is $100 - $30 = $70 (fee never given
+    // back, same pre-existing behavior as the plain-USD refund test above),
+    // reversed at the *original* 0.92 rate — 70 * 0.92 = 64.40 EUR.
+    const platformDebit = merchantDebits.find((e) => e.accountId === platform.merchantId);
+    expect(platformDebit.currencyCode).toBe('EUR');
+    expect(platformDebit.amountMinorUnits).toBe('6440');
+  });
+
+  it('a partial refund of a split payment with FX conversion proportions each side in the original charge currency first, then converts at each side\'s original rate', async () => {
+    const platform = await seedMerchant(app, { merchantId: uniqueId('platformfxpr'), settlementCurrency: 'EUR' });
+    const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
+    const connected = await seedMerchant(app, {
+      merchantId: uniqueId('connectedfxpr'),
+      accountType: 'CONNECTED',
+      platformMerchantId: platform.merchantId,
+      settlementCurrency: 'GBP',
+    });
+
+    const chargeRes = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
+      amount: 100,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      splits: [{ merchantId: connected.merchantId, amount: 30 }],
+    }).expect(201);
+
+    // 50% partial refund ($50 of $100). The proportional-reversal math
+    // (LedgerOutboxEvent.createRefundEntries()) works in the *original
+    // charge currency* first — connected's share is
+    // 30 * (5000/10000) = 15.00 USD, platform absorbs the rest,
+    // 50 - 15 = 35.00 USD — and only *then* does each side convert at its
+    // own original rate: 15.00 * 0.79 = 11.85 GBP, 35.00 * 0.92 = 32.20
+    // EUR. Converting the already-split USD amounts (not, say, splitting
+    // pre-converted GBP/EUR amounts) is what this test actually proves.
+    const refundRes = await signedRequest(
+      platform,
+      platformToken,
+      'post',
+      `/api/v1/payments/${chargeRes.body.paymentId}/refund`,
+      { amount: 50 },
+    ).expect(200);
+    expect(refundRes.body.status).toBe('PARTIALLY_REFUNDED');
+
+    const entries = await ledgerEntries(chargeRes.body.paymentId);
+    const merchantDebits = entries.filter((e) => e.accountType === 'MERCHANT' && e.entryType === 'DEBIT');
+    expect(merchantDebits).toHaveLength(2);
+
+    const connectedDebit = merchantDebits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedDebit.currencyCode).toBe('GBP');
+    expect(connectedDebit.amountMinorUnits).toBe('1185');
+
+    const platformDebit = merchantDebits.find((e) => e.accountId === platform.merchantId);
+    expect(platformDebit.currencyCode).toBe('EUR');
+    expect(platformDebit.amountMinorUnits).toBe('3220');
+  });
+
   it('a split charge that needs a 3DS challenge still books the correct split once confirmed via webhook', async () => {
     const { platform, platformToken, connected } = await platformWithConnected();
 
@@ -262,5 +361,97 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     expect(merchantCredits).toHaveLength(2);
     const connectedCredit = merchantCredits.find((e) => e.accountId === connected.merchantId);
     expect(connectedCredit.amountMinorUnits).toBe('1500');
+  });
+
+  it('a 3DS-deferred split charge with FX books the correct converted amounts once confirmed, and a later refund replays the same rates — not the request-time snapshot', async () => {
+    const platform = await seedMerchant(app, { merchantId: uniqueId('platform3dsfx'), settlementCurrency: 'EUR' });
+    const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
+    const connected = await seedMerchant(app, {
+      merchantId: uniqueId('connected3dsfx'),
+      accountType: 'CONNECTED',
+      platformMerchantId: platform.merchantId,
+      settlementCurrency: 'GBP',
+    });
+
+    // Same FORCE_3DS forcing mechanism as the plain-USD 3DS test above.
+    // PaymentAggregate.recordSplits() runs at request time (Step 1, before
+    // the PSP is ever called) with whatever FX rate that first resolve()
+    // call found — this is the regression case for a real gap found
+    // during Phase 2 review: a 3DS-deferred confirmation re-resolves FX
+    // fresh (WebhookProcessingService.markSucceeded()), and without
+    // PaymentAggregate.finalizeSplitConversions() overwriting the
+    // request-time snapshot with whatever was actually booked,
+    // `payment.splits` (what a refund replays against) could in principle
+    // drift from the ledger. The mock FX provider returns a fixed rate
+    // per currency pair, so this test can't force the two resolve() calls
+    // to actually disagree — what it *does* prove is that the full
+    // record → finalize → persist → refund-replay pipeline produces
+    // correct, consistent numbers end-to-end for this combination, which
+    // had zero test coverage before.
+    const bodyObj = {
+      amount: 40,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      description: 'FORCE_3DS e2e test',
+      binInfo: USD_BIN,
+      preferredProvider: 'STRIPE',
+      splits: [{ merchantId: connected.merchantId, amount: 15 }],
+    };
+    const chargeRes = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', bodyObj).expect(
+      201,
+    );
+    expect(chargeRes.body.status).toBe('REQUIRES_ACTION');
+    expect(await ledgerEntries(chargeRes.body.paymentId)).toHaveLength(0);
+
+    const webhookBody = JSON.stringify({
+      id: 'evt_' + uniqueId('split3dsfx'),
+      type: 'payment_intent.succeeded',
+      data: { object: { id: chargeRes.body.pspTransactionId, status: 'succeeded' } },
+    });
+    await request(app.getHttpServer())
+      .post('/api/v1/webhooks/stripe')
+      .set('Stripe-Signature', signStripeWebhook(STRIPE_WEBHOOK_SECRET, webhookBody))
+      .set('Content-Type', 'application/json')
+      .send(webhookBody)
+      .expect(200);
+
+    // $40 charge, fee $0.60, net $39.40, split $15 to connected (GBP @
+    // 0.79 = $11.85 GBP), remainder $24.40 to platform (EUR @ 0.92 =
+    // $22.45 EUR).
+    const entries = await ledgerEntries(chargeRes.body.paymentId);
+    const merchantCredits = entries.filter((e) => e.accountType === 'MERCHANT');
+    const connectedCredit = merchantCredits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedCredit.currencyCode).toBe('GBP');
+    expect(connectedCredit.amountMinorUnits).toBe('1185');
+    const platformCredit = merchantCredits.find((e) => e.accountId === platform.merchantId);
+    expect(platformCredit.currencyCode).toBe('EUR');
+    expect(platformCredit.amountMinorUnits).toBe('2245');
+
+    // Full refund — replays whatever `payment.splits` actually holds
+    // post-confirmation (finalizeSplitConversions()'s job), which should
+    // exactly match what was just booked above, at the same rates. Note
+    // the platform's refund share is $40 - $15 = $25.00 (original charge
+    // minus the split), *not* the $24.40 fee-adjusted remainder it was
+    // actually credited at charge time — same "the fee is never given
+    // back on refund" behavior the plain-USD refund tests above document,
+    // converted at the same original 0.92 rate: 25.00 * 0.92 = 23.00 EUR.
+    const refundRes = await signedRequest(
+      platform,
+      platformToken,
+      'post',
+      `/api/v1/payments/${chargeRes.body.paymentId}/refund`,
+      {},
+    ).expect(200);
+    expect(refundRes.body.status).toBe('REFUNDED');
+
+    const afterRefund = await ledgerEntries(chargeRes.body.paymentId);
+    const merchantDebits = afterRefund.filter((e) => e.accountType === 'MERCHANT' && e.entryType === 'DEBIT');
+    const connectedDebit = merchantDebits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedDebit.currencyCode).toBe('GBP');
+    expect(connectedDebit.amountMinorUnits).toBe('1185'); // exactly what was credited — full refund
+    const platformDebit = merchantDebits.find((e) => e.accountId === platform.merchantId);
+    expect(platformDebit.currencyCode).toBe('EUR');
+    expect(platformDebit.amountMinorUnits).toBe('2300');
   });
 });

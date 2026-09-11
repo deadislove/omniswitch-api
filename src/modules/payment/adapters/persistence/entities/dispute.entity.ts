@@ -62,6 +62,19 @@ export class DisputeEntity {
   @Column({ name: 'initiated_by', type: 'varchar', nullable: true })
   initiatedBy?: 'human' | 'agent';
 
+  /**
+   * Audit-only snapshot of the charging merchant's risk tier at the exact
+   * moment `decideAutoDisposition()` ran (see dispute-policy.ts's
+   * merchantRiskTier param and DisputeService.recordDispute()) — not a
+   * live join, so a later tier change never rewrites what this dispute's
+   * decision was actually based on. `null` when the merchant had no
+   * evaluable tier at that moment (RiskTieringService.evaluateMerchant()
+   * returned `null` — e.g. too little dispute history — which the policy
+   * treated the same as 'MEDIUM').
+   */
+  @Column({ name: 'merchant_risk_tier_at_decision', type: 'varchar', nullable: true })
+  merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH';
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

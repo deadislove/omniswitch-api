@@ -61,11 +61,11 @@ See [`marketplace-and-payouts.md`](./marketplace-and-payouts.md#marketplace-spli
 and [`../../DEV_README.md`](../../DEV_README.md#marketplace--split-payments-phase-1---resolved)
 for the mechanism.
 
-What's still genuinely missing:
-- **Multi-party splits with per-recipient FX.** A split charge can't be
-  combined with the platform's own settlement-currency conversion at all
-  today, let alone give each connected account its own settlement
-  currency.
+- **Multi-party splits with per-recipient FX — ✅ resolved.** A split
+  charge now composes with the platform's own settlement-currency
+  conversion, and each connected account can independently have its own
+  settlement currency — see
+  [`marketplace-and-payouts.md`](./marketplace-and-payouts.md#splits--each-partys-own-settlement-currency-conversion-phase-2).
 
 ## Merchant Risk Tiering & Reserves
 
@@ -267,11 +267,14 @@ what was built is explicitly a mechanism demonstration, same posture as
   cost/reason model used here. See
   [`../technical/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
   for how to run it.
-- **No connection to the merchant's own risk tier.** `RiskTieringService`
-  already reads dispute *outcomes* to set a merchant's reserve, but the
-  relationship is one-way — the dispute policy doesn't read a merchant's
-  risk tier back to decide, say, "auto-contest more aggressively for a
-  LOW-risk merchant with a strong track record."
+- **Connection to the merchant's own risk tier — ✅ resolved.** The
+  relationship used to be one-way (`RiskTieringService` read dispute
+  *outcomes* to set a merchant's reserve, but the dispute policy never
+  read a tier back). `DisputeService.recordDispute()` now re-evaluates
+  the merchant's current tier live and adjusts both the auto-accept
+  threshold and the auto-contestable reason set — see
+  [`disputes.md`](./disputes.md#the-auto-decision-policy) for the
+  resulting table.
 - **No decline-code-nuanced learning.** The policy is static; a real
   system would adjust its auto-contestable reason-code list over time
   based on which reasons this specific platform's merchants actually win.

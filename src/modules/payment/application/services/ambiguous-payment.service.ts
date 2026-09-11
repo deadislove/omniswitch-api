@@ -9,7 +9,7 @@ import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggrega
 import { PaymentAggregate } from '../../domain/aggregates/payment.aggregate';
 import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
-import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
+import { ChargeLedgerParamsResolverService, toPaymentSplits } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
 import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
@@ -176,6 +176,14 @@ export class AmbiguousPaymentService {
       });
       const taxRecord = buildCrossBorderTaxRecord(payment.amount, payment.binInfo);
       if (taxRecord) payment.recordTaxRecord(taxRecord);
+    }
+    // Same re-resolve-then-finalize reasoning as
+    // WebhookProcessingService.markSucceeded() — this `resolve()` call is
+    // fresh, possibly a different FX rate than whatever `payment.splits`
+    // already held from request time. See
+    // PaymentAggregate.finalizeSplitConversions()'s docblock.
+    if (splits && splits.length > 0) {
+      payment.finalizeSplitConversions(toPaymentSplits(splits));
     }
     const outboxEvent = LedgerOutboxEvent.createChargeEntries({
       id: uuidv4(),

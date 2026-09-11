@@ -63,15 +63,30 @@ PSP charge" step, unlike the pre-charge failure paths it already has.
   would silently be dropped at capture time rather than routed to the
   connected merchant. Rejecting it up front is more honest than silently
   losing the split.
-- **A merchant settlement-currency conversion at the same time**
-  (`SPLIT_WITH_SETTLEMENT_CONVERSION_UNSUPPORTED`, 409) — deciding which
-  FX rate applies to a charge that's partly "platform pricing" and partly
-  "connected-account pricing" is a real design question (does each
-  connected account have its own settlement currency? the same one as the
-  platform?) this system doesn't attempt to answer yet.
 - **No connected-account KYC/onboarding review** before the account can
   start *receiving* splits — see "Connected-account KYC" below for what
   KYC actually gates instead.
+
+### Splits × each party's own settlement-currency conversion (Phase 2)
+
+A split and a settlement-currency conversion now compose — each split
+recipient can have their own `settlementCurrency`, independent of the
+charging (platform) merchant's own, and both can be active on the same
+charge with different rates:
+
+| Account | Entry | Amount | Currency |
+|---|---|---|---|
+| `{connectedMerchantId}` | CREDIT | split amount, converted at *that recipient's* rate if they have a `settlementCurrency` | recipient's settlement currency, or charge currency if unset |
+| `{platformMerchantId}` | CREDIT | (payout amount − Σ splits), converted at the *platform's own* rate if it has a `settlementCurrency` | platform's settlement currency, or charge currency if unset |
+
+The platform's own conversion applies to what's left over **after** all
+splits are carved out (the remainder), not the full payout — see
+`ChargeLedgerParamsResolverService.resolve()`. Each conversion is resolved
+and can fail independently: an FX lookup failure for one recipient falls
+back to booking that recipient in the charge currency without affecting
+any other recipient's conversion or the platform's own. Refunds and lost-
+dispute clawbacks replay each side's *original* charge-time rate (not a
+fresh lookup) — see `LedgerOutboxEvent.createRefundEntries()`.
 
 ### Reversing a split on refund or dispute loss
 

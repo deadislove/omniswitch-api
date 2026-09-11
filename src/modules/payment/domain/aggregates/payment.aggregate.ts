@@ -75,6 +75,11 @@ export interface TaxRecord {
 export interface PaymentSplit {
   merchantId: string;
   amount: Money;
+  // Present when this recipient had their own settlementCurrency at
+  // charge time — independent of this payment's own top-level
+  // `settlementConversion` (see that field's docblock). Replayed, not
+  // recomputed, on refund — see LedgerOutboxEvent.createRefundEntries().
+  settlementConversion?: SettlementConversion;
 }
 
 /**
@@ -536,6 +541,34 @@ export class PaymentAggregate {
     if (this._splits) return;
     if (splits.length === 0) return;
     this._splits = splits;
+  }
+
+  /**
+   * Overwrites each split's `settlementConversion` with whatever was
+   * actually used to book this charge's ledger entries — called exactly
+   * once, at the moment a charge is *actually* confirmed successful
+   * (immediate capture, or a 3DS-deferred webhook confirmation), from
+   * whichever call site's `ChargeLedgerParamsResolverService.resolve()`
+   * produced the `splits` that went into `LedgerOutboxEvent.
+   * createChargeEntries()`.
+   *
+   * `recordSplits()` above already ran earlier, at request time (before
+   * the PSP was ever called) — necessary so a 3DS-deferred charge's split
+   * *identity* (which recipients, what amounts) survives the detour (see
+   * PaymentCheckoutSaga.execute()'s docblock). But each split's FX
+   * conversion is resolved fresh every time `resolve()` runs, and a 3DS
+   * challenge can take real time to complete — the rate available at
+   * request time isn't necessarily the rate available when the charge
+   * actually confirms. Without this, `payment.splits` (what refunds/
+   * dispute-loss clawbacks replay) could carry a *different* rate than
+   * what the ledger was actually booked at. Matches merchantId identity
+   * exactly (same recipients/amounts either way — only the FX portion can
+   * differ), so this only ever refines, never changes, what `recordSplits()`
+   * already established.
+   */
+  finalizeSplitConversions(bookedSplits: PaymentSplit[]): void {
+    if (!this._splits) return;
+    this._splits = bookedSplits;
   }
 
   // ─── Risk Assessment ────────────────────────────────────────────────────────

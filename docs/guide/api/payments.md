@@ -67,7 +67,7 @@ for the full internal flow.
 
 **Errors**: `400` missing `Idempotency-Key`; `403` an `AGENT`'s
 delegation has been revoked; `409` `splits` combined with
-`captureMethod: 'manual'`, or a split's settlement-currency conflict;
+`captureMethod: 'manual'`;
 `422` a raw-card-number-shaped reference, request validation failure,
 an invalid split recipient, `preferredProvider` names a PSP outside
 the merchant's PSP entitlement (`PREFERRED_PROVIDER_NOT_ENTITLED` —

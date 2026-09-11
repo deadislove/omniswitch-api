@@ -1171,14 +1171,13 @@ part of the proceeds directly to its own sellers:
 - Rejected up front (before the PSP is ever called, see the real bug
   below): an unknown/non-connected/wrong-platform recipient
   (`SPLIT_RECIPIENT_INVALID`, 422), a split total exceeding the net
-  payout (`SPLIT_EXCEEDS_NET_AMOUNT`, 422), `captureMethod: "manual"`
+  payout (`SPLIT_EXCEEDS_NET_AMOUNT`, 422), and `captureMethod: "manual"`
   together with `splits` (`SPLIT_REQUIRES_AUTOMATIC_CAPTURE`, 409, since
   `PaymentLifecycleService.capture()` doesn't accept splits and would
-  silently drop them), and a platform merchant with an active
-  settlement-currency conversion (`SPLIT_WITH_SETTLEMENT_CONVERSION_UNSUPPORTED`,
-  409 — deciding which FX rate applies to a partly-platform,
-  partly-connected-account charge is a real design question this phase
-  doesn't attempt).
+  silently drop them). A platform merchant's own settlement-currency
+  conversion and each split recipient's own are no longer mutually
+  exclusive — see
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#splits--each-partys-own-settlement-currency-conversion-phase-2).
 
 **A real bug found and fixed during implementation, not just during
 testing**: `ChargeLedgerParamsResolverService.resolve()` — which now

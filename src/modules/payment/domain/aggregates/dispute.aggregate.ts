@@ -35,6 +35,7 @@ export class Dispute {
     private readonly _autoDecision: DisputeAutoDecision | undefined,
     private readonly _delegationId?: string,
     private readonly _initiatedBy?: PaymentInitiator,
+    private readonly _merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH',
   ) {}
 
   static create(params: {
@@ -50,6 +51,8 @@ export class Dispute {
     /** Snapshotted at creation from the disputed Payment — see DisputeEntity.delegationId's docblock for why this is a snapshot, not a live join. */
     delegationId?: string;
     initiatedBy?: PaymentInitiator;
+    /** Audit-only snapshot of the merchant's risk tier at the moment decideAutoDisposition() ran — see dispute-policy.ts's merchantRiskTier param. `undefined` when the merchant had no evaluable tier (same as 'MEDIUM' for the decision itself). */
+    merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH';
   }): Dispute {
     const now = new Date();
     const respondBy = new Date(now.getTime() + DEFAULT_RESPONSE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -69,6 +72,7 @@ export class Dispute {
       params.autoDecision,
       params.delegationId,
       params.initiatedBy,
+      params.merchantRiskTierAtDecision,
     );
   }
 
@@ -88,6 +92,7 @@ export class Dispute {
     autoDecision?: DisputeAutoDecision;
     delegationId?: string;
     initiatedBy?: PaymentInitiator;
+    merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH';
   }): Dispute {
     return new Dispute(
       params.id,
@@ -105,6 +110,7 @@ export class Dispute {
       params.autoDecision,
       params.delegationId,
       params.initiatedBy,
+      params.merchantRiskTierAtDecision,
     );
   }
 
@@ -176,5 +182,8 @@ export class Dispute {
   }
   get initiatedBy(): PaymentInitiator | undefined {
     return this._initiatedBy;
+  }
+  get merchantRiskTierAtDecision(): 'LOW' | 'MEDIUM' | 'HIGH' | undefined {
+    return this._merchantRiskTierAtDecision;
   }
 }

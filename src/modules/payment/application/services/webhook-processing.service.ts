@@ -10,7 +10,7 @@ import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { AdyenNotificationRequestItem } from '../../adapters/psp/adyen/adyen-webhook.guard';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
 import { DisputeService } from './dispute.service';
-import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
+import { ChargeLedgerParamsResolverService, toPaymentSplits } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
 import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 
@@ -178,6 +178,16 @@ export class WebhookProcessingService {
       });
       const taxRecord = buildCrossBorderTaxRecord(payment.amount, payment.binInfo);
       if (taxRecord) payment.recordTaxRecord(taxRecord);
+    }
+    // This `resolve()` call just re-derived FX rates fresh — possibly
+    // different from whatever `payment.splits` already held from request
+    // time (see PaymentAggregate.finalizeSplitConversions()'s docblock
+    // for why: a 3DS challenge can take real time, and FX rates aren't
+    // pinned across that gap). Overwrite with what's actually about to be
+    // booked below, so a later refund replays the rate the money actually
+    // moved at.
+    if (splits && splits.length > 0) {
+      payment.finalizeSplitConversions(toPaymentSplits(splits));
     }
     const outboxEvent = LedgerOutboxEvent.createChargeEntries({
       id: uuidv4(),
