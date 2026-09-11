@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe, VersioningType, RequestMethod } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import * as request from 'supertest';
 import { AppModule } from '../../src/app.module';
 
@@ -68,6 +69,28 @@ export async function createTestApp(): Promise<INestApplication> {
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+
+  // @nestjs/schedule's SchedulerOrchestrator only implements
+  // onApplicationBootstrap() (registers each @Cron() job) — it has no
+  // onApplicationShutdown()/onModuleDestroy() counterpart, so a plain
+  // app.close() never stops a single one of them. Every one of this
+  // app's ~10 @Cron() services (ledger-outbox-relay's EVERY_10_SECONDS
+  // relay among them) keeps firing for the rest of this Jest worker
+  // process's life, each tick still holding a closure over this
+  // "closed" app's injected DataSource/repositories — the exact source
+  // of the `TypeORMError: Driver not Connected ... at CronJob.<anonymous>`
+  // errors and the heap growth that eventually trips
+  // HEALTH_CHECK_HEAP_THRESHOLD_BYTES late in a full e2e run (dozens of
+  // these accumulate, one set per test file, none ever released).
+  // Wrapping close() here — the one place every test file's own
+  // afterAll(() => app.close()) already goes through — fixes it for the
+  // whole suite without touching 40+ individual test files.
+  const originalClose = app.close.bind(app);
+  app.close = async () => {
+    const scheduler = app.get(SchedulerRegistry, { strict: false });
+    scheduler?.getCronJobs().forEach((job) => job.stop());
+    return originalClose();
+  };
 
   return app;
 }
