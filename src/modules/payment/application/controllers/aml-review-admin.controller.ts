@@ -5,7 +5,11 @@ import { RolesGuard } from '../../../../shared/guards/roles.guard';
 import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
 import { MerchantService } from '../../../merchant/merchant.service';
 import { toSummary } from '../../../merchant/merchant-admin.controller';
-import { UpdateAmlReviewFlagDto, UpdateAmlReviewAutoDto, MerchantSummaryDto } from '../../../merchant/dto/create-merchant.dto';
+import {
+  UpdateAmlReviewFlagDto,
+  UpdateAmlReviewAutoDto,
+  MerchantSummaryDto,
+} from '../../../merchant/dto/create-merchant.dto';
 
 /**
  * AML Review Admin Controller — see AmlReviewMonitoringService's

@@ -612,7 +612,10 @@ export class PaymentAggregate {
     score += 10;
 
     if (agentContext?.isFirstChargeToMerchant) score += 15;
-    if (agentContext?.percentOfRemainingMonthlyBudget !== undefined && agentContext.percentOfRemainingMonthlyBudget >= 50) {
+    if (
+      agentContext?.percentOfRemainingMonthlyBudget !== undefined &&
+      agentContext.percentOfRemainingMonthlyBudget >= 50
+    ) {
       score += 15;
     }
 

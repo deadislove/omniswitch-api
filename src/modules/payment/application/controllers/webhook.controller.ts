@@ -74,7 +74,9 @@ export class WebhookController {
   async bankTransferWebhook(
     @Body() body: { id: string; topic: string; resourceId: string },
   ): Promise<{ received: true }> {
-    this.logger.debug(`Bank transfer webhook received: id=${body?.id} topic=${body?.topic} resourceId=${body?.resourceId}`);
+    this.logger.debug(
+      `Bank transfer webhook received: id=${body?.id} topic=${body?.topic} resourceId=${body?.resourceId}`,
+    );
     const settled = body.topic === 'customer_transfer_completed';
     let reason: string | undefined;
     if (!settled) {

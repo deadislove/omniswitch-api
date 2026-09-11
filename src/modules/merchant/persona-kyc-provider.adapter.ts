@@ -64,7 +64,9 @@ export class PersonaKycProviderAdapter extends KYCProviderPort {
       return { status, applicationId, reason: status === 'REJECTED' ? 'Application rejected' : undefined };
     }
 
-    this.logger.log(`KYC application submitted for "${params.legalName}": applicationId=${applicationId} (pending review)`);
+    this.logger.log(
+      `KYC application submitted for "${params.legalName}": applicationId=${applicationId} (pending review)`,
+    );
     return { status: 'PENDING', applicationId };
   }
 }

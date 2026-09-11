@@ -23,8 +23,15 @@ export function buildCheckoutSagaInput(params: {
   initiatedBy?: PaymentInitiator;
   agentPercentOfRemainingMonthlyBudget?: number;
 }): CheckoutSagaInput {
-  const { paymentId, merchantId, idempotencyKey, dto, delegationId, initiatedBy, agentPercentOfRemainingMonthlyBudget } =
-    params;
+  const {
+    paymentId,
+    merchantId,
+    idempotencyKey,
+    dto,
+    delegationId,
+    initiatedBy,
+    agentPercentOfRemainingMonthlyBudget,
+  } = params;
   const amount = Money.of(dto.amount, dto.currency);
   const splits = dto.splits?.map((s) => ({ merchantId: s.merchantId, amount: Money.of(s.amount, dto.currency) }));
 

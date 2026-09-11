@@ -182,7 +182,8 @@ export class SubscriptionResponseDto {
 
   @ApiPropertyOptional({
     enum: ['STRIPE', 'ADYEN', 'PAYPAL', 'CHASE'],
-    description: 'Which PSP produced lastDeclineCode — needed to interpret it against the right decline-code vocabulary.',
+    description:
+      'Which PSP produced lastDeclineCode — needed to interpret it against the right decline-code vocabulary.',
   })
   lastDeclinePspProvider?: string;
 

@@ -137,7 +137,9 @@ export class RiskTieringService {
   ) {
     this.highRiskThreshold = Number(configService.get('RISK_TIER_HIGH_THRESHOLD', DEFAULT_HIGH_RISK_THRESHOLD));
     this.mediumRiskThreshold = Number(configService.get('RISK_TIER_MEDIUM_THRESHOLD', DEFAULT_MEDIUM_RISK_THRESHOLD));
-    this.newMerchantAgeDays = Number(configService.get('RISK_TIER_NEW_MERCHANT_AGE_DAYS', DEFAULT_NEW_MERCHANT_AGE_DAYS));
+    this.newMerchantAgeDays = Number(
+      configService.get('RISK_TIER_NEW_MERCHANT_AGE_DAYS', DEFAULT_NEW_MERCHANT_AGE_DAYS),
+    );
   }
 
   /**
@@ -203,7 +205,9 @@ export class RiskTieringService {
 
     const lostDisputeRate = lostDisputes / settledCharges;
     let tier = tierFor(lostDisputeRate, this.highRiskThreshold, this.mediumRiskThreshold);
-    const reasons = [`${(lostDisputeRate * 100).toFixed(2)}% lost-dispute rate over ${settledCharges} charges/${WINDOW_DAYS}d`];
+    const reasons = [
+      `${(lostDisputeRate * 100).toFixed(2)}% lost-dispute rate over ${settledCharges} charges/${WINDOW_DAYS}d`,
+    ];
 
     // Modifiers only ever escalate — see escalate()'s own comment. A
     // merchant with a clean dispute history but a high-risk MCC or no
@@ -290,9 +294,7 @@ export class RiskTieringService {
       if (batch.length === 0) break;
       totalCandidates += batch.length;
 
-      const results = await Promise.allSettled(
-        batch.map((merchant) => this.evaluateMerchantEntity(merchant, now)),
-      );
+      const results = await Promise.allSettled(batch.map((merchant) => this.evaluateMerchantEntity(merchant, now)));
       results.forEach((result, i) => {
         if (result.status === 'rejected') {
           skipped++;

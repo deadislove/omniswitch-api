@@ -516,7 +516,12 @@ export class LedgerOutboxEvent {
         if (debitMinorUnits > 0n) {
           const debitAmount = Money.fromMinorUnits(debitMinorUnits, params.refundAmount.currency.code);
           if (split.settlementConversion) {
-            pushConvertedDebit(split.merchantId, debitAmount, split.settlementConversion, 'Marketplace split refund debit');
+            pushConvertedDebit(
+              split.merchantId,
+              debitAmount,
+              split.settlementConversion,
+              'Marketplace split refund debit',
+            );
           } else {
             pushDebit(split.merchantId, debitAmount, 'Marketplace split refund debit');
           }

@@ -41,7 +41,7 @@ describe('PaymentAggregate.declineCategory', () => {
     expect(payment.declineCategory).toBe('RETRYABLE');
   });
 
-  it("classifies against the provider that actually produced the failure, not whichever provider first attempted the charge", () => {
+  it('classifies against the provider that actually produced the failure, not whichever provider first attempted the charge', () => {
     const payment = PaymentAggregate.reconstitute({
       id: 'pay_decline_fallback',
       amount: Money.of(20, 'USD'),

@@ -511,7 +511,6 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         return pspProvider === 'ADYEN' ? ADYEN_REFUSAL_REASON_CODES[semanticCode] : semanticCode;
       }
 
-
       it('a retryable decline (insufficient_funds) records the code and still uses the day 1/3/7 backoff schedule', async () => {
         const merchant = await seedMerchant(app, { merchantId: uniqueId('subretryable') });
         const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);

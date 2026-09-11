@@ -62,7 +62,9 @@ export async function createTestApp(): Promise<INestApplication> {
     const res = await request(app.getHttpServer()).get('/health/live');
     if (res.status === 200) break;
     if (attempt === 20) {
-      throw new Error(`createTestApp(): /health/live never returned 200 after ${attempt} attempts (last status: ${res.status})`);
+      throw new Error(
+        `createTestApp(): /health/live never returned 200 after ${attempt} attempts (last status: ${res.status})`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }

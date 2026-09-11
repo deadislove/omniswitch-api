@@ -100,7 +100,7 @@ describe('Agent-specific risk scoring signals (e2e)', () => {
     expect(first.body.riskScore).toBeGreaterThan(second.body.riskScore);
   });
 
-  it('a charge consuming most of a delegation\'s remaining monthly budget scores higher than an equivalent charge with plenty of budget left, all else equal', async () => {
+  it("a charge consuming most of a delegation's remaining monthly budget scores higher than an equivalent charge with plenty of budget left, all else equal", async () => {
     const tightMerchant = await seedMerchant(app, { merchantId: uniqueId('risktight') });
     const tightToken = await login(app, tightMerchant.apiKeyId, tightMerchant.apiKeySecret);
     const tightDelegation = await createDelegation(tightToken, {

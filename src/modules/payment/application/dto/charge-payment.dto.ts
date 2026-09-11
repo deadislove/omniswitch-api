@@ -309,7 +309,8 @@ export class PaymentDetailResponseDto {
 
   @ApiPropertyOptional({
     example: { campaign: 'summer_sale', source: 'mobile_app' },
-    description: 'Custom metadata key-value pairs, echoed back exactly as sent on charge — see ChargePaymentDto.metadata',
+    description:
+      'Custom metadata key-value pairs, echoed back exactly as sent on charge — see ChargePaymentDto.metadata',
   })
   metadata?: Record<string, string>;
 

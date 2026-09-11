@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AmlReviewNotificationPort, AmlReviewNotificationPayload } from '../../ports/outbound/aml-review-notification.port';
+import {
+  AmlReviewNotificationPort,
+  AmlReviewNotificationPayload,
+} from '../../ports/outbound/aml-review-notification.port';
 import { postJsonNotification } from './notification-delivery.util';
 
 /**

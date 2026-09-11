@@ -74,7 +74,9 @@ describe('Agent/dispute attribution linkage (e2e)', () => {
     const body = JSON.stringify({
       id: 'evt_' + uniqueId('agentdispute'),
       type: 'charge.dispute.created',
-      data: { object: { id: 'dp_' + uniqueId('agentdispute'), payment_intent: pspTransactionId, reason: 'fraudulent' } },
+      data: {
+        object: { id: 'dp_' + uniqueId('agentdispute'), payment_intent: pspTransactionId, reason: 'fraudulent' },
+      },
     });
     await request(app.getHttpServer())
       .post('/api/v1/webhooks/stripe')

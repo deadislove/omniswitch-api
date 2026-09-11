@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AmlReviewNotificationPort, AmlReviewNotificationPayload } from '../../ports/outbound/aml-review-notification.port';
+import {
+  AmlReviewNotificationPort,
+  AmlReviewNotificationPayload,
+} from '../../ports/outbound/aml-review-notification.port';
 import { MerchantService } from '../../../merchant/merchant.service';
 import { VaultTransitService } from '../../../../shared/vault/vault-transit.service';
 import { postJsonNotification, signOmniSwitchPayload } from './notification-delivery.util';

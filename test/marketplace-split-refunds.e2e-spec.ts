@@ -207,7 +207,7 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     expect(platformDebit.amountMinorUnits).toBe('4000'); // $60 - $20
   });
 
-  it('a full refund of a split payment replays each side\'s original FX rate, not a fresh lookup', async () => {
+  it("a full refund of a split payment replays each side's original FX rate, not a fresh lookup", async () => {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platformfxr'), settlementCurrency: 'EUR' });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {
@@ -257,7 +257,7 @@ describe('Marketplace splits: refund & dispute-loss reversal (e2e)', () => {
     expect(platformDebit.amountMinorUnits).toBe('6440');
   });
 
-  it('a partial refund of a split payment with FX conversion proportions each side in the original charge currency first, then converts at each side\'s original rate', async () => {
+  it("a partial refund of a split payment with FX conversion proportions each side in the original charge currency first, then converts at each side's original rate", async () => {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platformfxpr'), settlementCurrency: 'EUR' });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {

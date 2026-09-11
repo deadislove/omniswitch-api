@@ -132,7 +132,7 @@ describe('KYC review: Persona async provider (e2e)', () => {
     expect(merchant.kycStatus).toBe('REJECTED');
   });
 
-  it("a non-decision event (e.g. inquiry.created) is a no-op — only approved/declined reach confirmKyc()", async () => {
+  it('a non-decision event (e.g. inquiry.created) is a no-op — only approved/declined reach confirmKyc()', async () => {
     const connected = await connectedMerchant('connected-persona-nondecision');
     const submitRes = await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
     const applicationId = submitRes.body.kycApplicationId as string;

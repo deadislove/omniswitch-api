@@ -370,7 +370,7 @@ export class UpdateAmlReviewFlagDto {
   @ApiProperty({
     example: 'Manually flagging pending compliance review of recent chargebacks',
     description:
-      "Required — same audit-trail posture as UpdateAmbiguousRiskFlagDto.reason. Setting this also disables amlReviewAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../aml-review-auto.",
+      'Required — same audit-trail posture as UpdateAmbiguousRiskFlagDto.reason. Setting this also disables amlReviewAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../aml-review-auto.',
   })
   @IsString()
   @MinLength(1)
@@ -576,7 +576,7 @@ export class MerchantSummaryDto {
   @ApiProperty({
     example: false,
     description:
-      "Passive AML-review observation flag (HIGH industryRiskCategory merchants only) — set when AmlReviewMonitoringService sees enough hard-decline events in a rolling window. Does not affect how charges are processed; visibility only.",
+      'Passive AML-review observation flag (HIGH industryRiskCategory merchants only) — set when AmlReviewMonitoringService sees enough hard-decline events in a rolling window. Does not affect how charges are processed; visibility only.',
   })
   amlReviewFlagged: boolean;
 
