@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource, SelectQueryBuilder } from 'typeorm';
 import { ChargeApprovalPort, FindChargeApprovalsFilter } from '../../../ports/outbound/charge-approval.port';
 import { ChargeApproval } from '../../../domain/aggregates/charge-approval.aggregate';
 import { Money } from '../../../domain/value-objects/money.vo';
@@ -11,6 +11,7 @@ export class ChargeApprovalTypeOrmRepository implements ChargeApprovalPort {
   constructor(
     @InjectRepository(ChargeApprovalEntity)
     private readonly repo: Repository<ChargeApprovalEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async save(approval: ChargeApproval): Promise<void> {
@@ -35,8 +36,41 @@ export class ChargeApprovalTypeOrmRepository implements ChargeApprovalPort {
     return entity ? this.toDomain(entity) : null;
   }
 
+  // See ChargeApprovalPort.findByIdOnMaster()'s docblock for why this is
+  // forced onto master rather than the ambient replica-routed connection.
+  async findByIdOnMaster(id: string): Promise<ChargeApproval | null> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entity: ChargeApprovalEntity | null;
+    try {
+      entity = await queryRunner.manager.findOne(ChargeApprovalEntity, { where: { id } });
+    } finally {
+      await queryRunner.release();
+    }
+    return entity ? this.toDomain(entity) : null;
+  }
+
   async findMany(filter?: FindChargeApprovalsFilter): Promise<ChargeApproval[]> {
-    const qb = this.repo.createQueryBuilder('c');
+    return this.runFindMany(this.repo.createQueryBuilder('c'), filter);
+  }
+
+  // See ChargeApprovalPort.findManyOnMaster()'s docblock — same reasoning
+  // as findByIdOnMaster().
+  async findManyOnMaster(filter?: FindChargeApprovalsFilter): Promise<ChargeApproval[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await this.runFindMany(
+        queryRunner.manager.createQueryBuilder(ChargeApprovalEntity, 'c'),
+        filter,
+      );
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  private async runFindMany(
+    qb: SelectQueryBuilder<ChargeApprovalEntity>,
+    filter?: FindChargeApprovalsFilter,
+  ): Promise<ChargeApproval[]> {
     if (filter?.merchantId) {
       qb.andWhere('c.merchantId = :merchantId', { merchantId: filter.merchantId });
     }

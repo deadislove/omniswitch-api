@@ -48,8 +48,17 @@ export class ChargeApprovalService {
     return approval;
   }
 
+  /**
+   * Reads via findByIdOnMaster(), not the ambient replica-routed
+   * findById() — this hold state only exists so an operator can act on
+   * it right away, so every read here (the general detail view included)
+   * has to see a just-written approval immediately. Low enough volume
+   * (only above-threshold agent charges create one) that unconditionally
+   * forcing master, rather than PayoutService's more surgical per-call-site
+   * split, is the right tradeoff.
+   */
   async findById(id: string): Promise<ChargeApproval> {
-    const approval = await this.chargeApprovalPort.findById(id);
+    const approval = await this.chargeApprovalPort.findByIdOnMaster(id);
     if (!approval) {
       throw new NotFoundException({
         statusCode: 404,
@@ -60,8 +69,9 @@ export class ChargeApprovalService {
     return approval;
   }
 
+  /** Reads via findManyOnMaster() — see findById()'s docblock for why. */
   async findMany(filter?: FindChargeApprovalsFilter): Promise<ChargeApproval[]> {
-    return this.chargeApprovalPort.findMany(filter);
+    return this.chargeApprovalPort.findManyOnMaster(filter);
   }
 
   /**

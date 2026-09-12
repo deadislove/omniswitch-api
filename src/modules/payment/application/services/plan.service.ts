@@ -42,9 +42,19 @@ export class PlanService {
     return plan;
   }
 
-  /** Used by SubscriptionService before subscribing/changing to a plan — a merchant can't subscribe a customer to another merchant's plan, deactivated or not. */
+  /**
+   * Used by SubscriptionService before subscribing/changing to a plan — a
+   * merchant can't subscribe a customer to another merchant's plan,
+   * deactivated or not. Reads via findByIdOnMaster(), not the ambient
+   * replica-routed findById() getOrThrow() uses: a merchant creating a
+   * plan and immediately subscribing a customer to it is an ordinary
+   * sequence, and the plan write may not have reached the replica yet.
+   */
   async getUsablePlanOrThrow(id: string, merchantId: string): Promise<Plan> {
-    const plan = await this.getOrThrow(id);
+    const plan = await this.planPort.findByIdOnMaster(id);
+    if (!plan) {
+      throw new NotFoundException({ statusCode: 404, error: `Plan ${id} not found`, code: 'PLAN_NOT_FOUND' });
+    }
     if (plan.merchantId !== merchantId) {
       throw new ForbiddenException({ statusCode: 403, error: 'Forbidden', code: 'ACCESS_DENIED' });
     }

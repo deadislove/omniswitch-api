@@ -18,7 +18,21 @@ export abstract class ChargeApprovalPort {
 
   abstract findById(id: string): Promise<ChargeApproval | null>;
 
+  /**
+   * Same as findById(), but forced onto the master connection.
+   * ChargeApprovalService uses this exclusively (not findById()) — a
+   * fresh approval created moments earlier by the same request cycle
+   * (the whole point of this hold state is that an operator acts on it
+   * quickly) can't tolerate replica lag the way a high-volume, general
+   * read could. See PaymentRepositoryPort.findByIdOnMaster()'s docblock
+   * for the general reasoning.
+   */
+  abstract findByIdOnMaster(id: string): Promise<ChargeApproval | null>;
+
   abstract findMany(filter?: FindChargeApprovalsFilter): Promise<ChargeApproval[]>;
+
+  /** Same as findMany(), but forced onto master — see findByIdOnMaster()'s docblock. */
+  abstract findManyOnMaster(filter?: FindChargeApprovalsFilter): Promise<ChargeApproval[]>;
 
   /**
    * Atomic, conditional on status currently being PENDING — an operator's
