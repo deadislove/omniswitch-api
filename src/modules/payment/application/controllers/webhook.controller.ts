@@ -31,7 +31,7 @@ export class WebhookController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Stripe webhook receiver (verified via Stripe-Signature)' })
   @ApiResponse({ status: 200, description: 'Event accepted for processing' })
-  @ApiResponse({ status: 400, description: 'Missing/invalid Stripe-Signature header' })
+  @ApiResponse({ status: 401, description: 'Missing/invalid Stripe-Signature header' })
   async stripeWebhook(@Body() event: any): Promise<{ received: true }> {
     this.logger.debug(`Stripe webhook received: ${event?.type}`);
     await this.webhookProcessing.handleStripeEvent(event);

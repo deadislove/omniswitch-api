@@ -51,11 +51,13 @@ erDiagram
     merchants ||--o{ plans : "merchant_id -> merchant_id"
     merchants ||--o{ payouts : "merchant_id -> merchant_id"
     merchants ||--o{ delegations : "merchant_id -> merchant_id"
+    merchants ||--o{ charge_approvals : "merchant_id -> merchant_id"
     merchants ||--o{ merchants : "platform_merchant_id -> merchant_id (self, CONNECTED accounts)"
 
     payments ||--o{ ledger_outbox : "id -> payment_id"
     payments ||--o{ disputes : "id -> payment_id"
     payments ||--o{ reserve_holds : "id -> payment_id"
+    delegations ||--o{ charge_approvals : "id -> delegation_id"
 
     plans ||--o{ subscriptions : "id -> plan_id (nullable)"
     payout_sweep_runs ||--o{ payouts : "id -> sweep_run_id"
@@ -117,6 +119,13 @@ erDiagram
     }
     delegations {
         uuid id PK
+        varchar merchant_id
+        varchar status
+    }
+    charge_approvals {
+        uuid id PK
+        varchar payment_id
+        varchar delegation_id
         varchar merchant_id
         varchar status
     }

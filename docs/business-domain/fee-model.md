@@ -15,11 +15,12 @@ The platform fee rate is per-merchant: `MerchantEntity.platformFeeBps`
 set otherwise at onboarding or via `PATCH
 /admin/merchants/:id/fee-rate`). Every place that books a `FEE` ledger
 entry — `PaymentCheckoutSaga` (immediate capture),
-`PaymentLifecycleService.capture()` (manual capture), and
-`WebhookProcessingService.markSucceeded()` (async/3DS-confirmed charges)
-— looks this rate up through the same shared
+`PaymentLifecycleService.capture()` (manual capture),
+`WebhookProcessingService.markSucceeded()` (async/3DS-confirmed charges),
+and `AmbiguousPaymentService.bookSucceeded()` (manually-resolved
+ambiguous outcome) — looks this rate up through the same shared
 `ChargeLedgerParamsResolverService.resolve()` call rather than each
-maintaining its own copy, so all three can't drift from each other the
+maintaining its own copy, so none of them can drift from each other the
 way they once did (see DEV_README.md's Fee model entry for the real bug
 this duplication caused). This used to be a single hardcoded `0.015`
 across every call site, with no way to differentiate merchants at all.

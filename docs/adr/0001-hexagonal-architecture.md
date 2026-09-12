@@ -37,8 +37,16 @@ value objects, `SmartRoutingStrategy`.
 `PSPAdapterPort`, `LedgerOutboxPort`, `CachePort`, `FXRateProviderPort`,
 `BankTransferPort`, and one port per other aggregate (`DisputePort`,
 `ReserveHoldPort`, `SubscriptionPort`, `PlanPort`, `PayoutPort`,
-`DelegationPort`) — the contracts `application/` depends on. A port
-never imports or names a concrete adapter.
+`DelegationPort`, `ChargeApprovalPort`, `ReconciliationPort`) — the
+contracts `application/` depends on. A port never imports or names a
+concrete adapter, with one deliberate exception: the notification
+dispatchers (`DisputeNotificationPort`, `SubscriptionNotificationPort`,
+`AmlReviewNotificationPort`) are injected as their concrete
+adapter class directly, not resolved through a `useClass` binding in
+`payment.module.ts` — each merchant picks its own channel
+(EMAIL/SLACK/WEBHOOK) at runtime, so the dispatcher itself does the
+adapter selection rather than Nest's DI container picking one adapter
+for the whole port at wiring time.
 
 `adapters/` implements those ports against real infrastructure:
 `persistence/` (TypeORM entities, mappers, repositories),
@@ -82,14 +90,15 @@ boilerplate-per-change started to dominate.
 
 **A concrete case this shape prevented, not just a theoretical one**:
 `ChargeLedgerParamsResolverService.resolve()` — which computes
-fee/FX/reserve/split parameters for a charge — is shared by all three
+fee/FX/reserve/split parameters for a charge — is shared by all four
 ledger-booking call sites (`PaymentCheckoutSaga`, immediate capture;
 `PaymentLifecycleService.capture()`, manual capture;
-`WebhookProcessingService.markSucceeded()`, async/3DS-confirmed) *because*
-it sits in `application/services/` depending only on ports, not on
-which adapter happens to be booking at that moment. Before it was
-extracted, an identical fee-lookup snippet was copy-pasted into all
-three sites and drifted (see
+`WebhookProcessingService.markSucceeded()`, async/3DS-confirmed;
+`AmbiguousPaymentService.bookSucceeded()`, manually-resolved ambiguous
+outcome) *because* it sits in `application/services/` depending only
+on ports, not on which adapter happens to be booking at that moment.
+Before it was extracted, an identical fee-lookup snippet was
+copy-pasted into each site and drifted (see
 [`../business-domain/fee-model.md`](../business-domain/fee-model.md))
 — the layering made "extract to `application/`, depend on the port"
 the obvious fix rather than "extract to wherever's convenient."

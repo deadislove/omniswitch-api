@@ -1,6 +1,6 @@
 # Documentation
 
-Six kinds of documentation live here, kept separate because they
+Five kinds of documentation live here, kept separate because they
 answer different questions for different readers.
 
 ## [`guide/`](./guide/)

@@ -106,10 +106,14 @@ On failure, `recordFailedCharge(now, maxAttempts, errorCode?)` first
 classifies *why* the charge failed via `classifyDeclineCode(errorCode)`:
 
 - **`HARD_DECLINE`** — `errorCode` is one of a known set of
-  non-retryable decline reasons (`HARD_DECLINE_CODES` in
-  `subscription.aggregate.ts`: `stolen_card`, `lost_card`, `fraudulent`,
-  `pickup_card`, `restricted_card`, `expired_card`). Retrying these is
-  actively harmful, not just futile — a real system that keeps
+  non-retryable decline reasons, looked up per-PSP via
+  `HARD_DECLINE_CODES` in `decline-code-classifier.ts`: Stripe's set is
+  `stolen_card`, `lost_card`, `fraudulent`, `pickup_card`,
+  `restricted_card`, `expired_card`; Adyen's is its own 9-code numeric
+  `refusalReasonCode` set (`5`, `6`, `14`, `20`, `22`, `25`, `26`, `31`,
+  `50`) — the two PSPs return different decline-code vocabularies
+  entirely, so neither set can be reused for the other. Retrying these
+  is actively harmful, not just futile — a real system that keeps
   representing a card reported stolen risks the acquirer flagging the
   merchant account itself. The subscription skips the retry schedule
   entirely and goes straight to `CANCELED` on the very first attempt,

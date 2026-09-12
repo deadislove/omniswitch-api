@@ -17,7 +17,7 @@ export type IndustryRiskCategory = 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
  * reference sources (WebSearch/WebFetch, not trained-data recall) for
  * two separate things: does the code number actually mean what the
  * inline comment says, and is the risk tier consistent with how card
- * networks/acquirers actually classify that category. All 18 entries
+ * networks/acquirers actually classify that category. All 19 entries
  * confirmed accurate on both counts — e.g. `7995`/`7273`/`5967` are
  * explicitly named `HIGH RISK` in card-brand-facing acquirer guidance
  * (not just this codebase's own judgment call), and every code-to-name

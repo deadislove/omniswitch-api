@@ -72,6 +72,10 @@ List, optionally filtered by `merchantId`.
   "transferId": null,
   "transferInitiatedAt": null,
   "transferError": null,
+  "reserveTransferStatus": "NOT_INITIATED",
+  "reserveTransferId": null,
+  "reserveTransferInitiatedAt": null,
+  "reserveTransferError": null,
   "createdAt": "2026-01-01T00:00:00.000Z"
 }
 ```
@@ -80,6 +84,12 @@ List, optionally filtered by `merchantId`.
 `reserveStatus: "NONE"` (no reserve configured) and still `kycBlocked:
 true`, or vice versa. Both must clear before a transfer can be
 initiated.
+
+`reserveTransferStatus` is a separate follow-up transfer from
+`transferStatus` — it only becomes meaningful once `reserveStatus` is
+`RELEASED`, and covers sending the *released reserve* to the
+merchant's bank, independent of whether the original net-amount
+transfer already completed.
 
 ### `POST /admin/marketplace/run-payouts`
 

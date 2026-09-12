@@ -124,10 +124,11 @@ src/
 │           │                      # SubscriptionController, PlanController,
 │           │                      # DelegationController, ChargeApprovalController (the
 │           │                      # PENDING_APPROVAL hold state for an above-threshold
-│           │                      # agent charge), plus 10 focused admin controllers
+│           │                      # agent charge), plus 12 focused admin controllers
 │           │                      # (Outbox/Reconciliation/Dispute/Reserve/Subscription/
 │           │                      # RiskTiering/MarketplacePayout/LegalHold/AmbiguousPayment/
-│           │                      # AmbiguousRisk — LegalHold is
+│           │                      # AmbiguousRisk/AmlReview/PspCostReconciliation —
+│           │                      # LegalHold is
 │           │                      # POST/DELETE admin/payments/:id/legal-hold, see
 │           │                      # docs/compliance/data-retention.md)
 │           ├── sagas/             # PaymentCheckoutSaga (charge, compensating txns) — also
@@ -137,15 +138,20 @@ src/
 │           │                      # ChargeLedgerParamsResolverService (fee/FX/reserve/split
 │           │                      # params, one merchant lookup shared by every
 │           │                      # ledger-booking call site), DisputeService,
-│           │                      # ReconciliationService, OutboxRecoveryService,
-│           │                      # ReserveService, SubscriptionService, RiskTieringService,
-│           │                      # PlanService, PayoutService, DelegationService (spend-policy
-│           │                      # reservation/release, agent JWT issuance/revocation),
+│           │                      # DisputeNotificationDispatcherService,
+│           │                      # ReconciliationService, PspCostReconciliationService,
+│           │                      # PspFeeScheduleService, OutboxRecoveryService,
+│           │                      # ReserveService, SubscriptionService,
+│           │                      # SubscriptionNotificationDispatcherService,
+│           │                      # RiskTieringService, PlanService, PayoutService,
+│           │                      # DelegationService (spend-policy reservation/release,
+│           │                      # agent JWT issuance/revocation), ChargeApprovalService,
 │           │                      # LegalHoldService, LedgerOutboxRelayService,
-│           │                      # AmbiguousPaymentService, AmbiguousRiskMonitoringService —
-│           │                      # several of these are recurring @Cron sweeps, each also
-│           │                      # exposed on demand via an admin POST endpoint (see the
-│           │                      # pattern table below)
+│           │                      # AmbiguousPaymentService, AmbiguousRiskMonitoringService,
+│           │                      # AmlReviewMonitoringService,
+│           │                      # AmlReviewNotificationDispatcherService — several of these
+│           │                      # are recurring @Cron sweeps, each also exposed on demand
+│           │                      # via an admin POST endpoint (see the pattern table below)
 │           ├── interceptors/      # IdempotencyInterceptor
 │           └── dto/               # ChargePaymentDto, RefundPaymentDto, SubscriptionDto,
 │                                  # PlanDto, DelegationDto, ...

@@ -179,7 +179,8 @@ deploy cycles — expand, then contract — never combined into one.
 - Full stack brought up from **entirely fresh volumes** (`docker compose
   down -v` then `up`), confirmed zero tables existed before migrations ran,
   then `npm run test:e2e` — whose `pretest:e2e` hook runs `migration:run`
-  automatically — passed 33/33 against the migration-created schema.
+  automatically — passed against the migration-created schema (43/43 spec
+  files as of this writing).
 - The exact production command (`node ./node_modules/typeorm/cli.js -d
   dist/database/data-source.js migration:run`) was run directly against
   compiled output (`nest build`'s `dist/`), not just the `ts-node` dev path,

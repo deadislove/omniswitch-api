@@ -41,16 +41,28 @@ List, optionally filtered by `merchantId` and/or `status`
   "pspDisputeId": "dp_stripe_abc123",
   "amount": 99.99,
   "currency": "USD",
-  "reason": "fraudulent",
+  "reason": "product_not_received",
   "status": "UNDER_REVIEW",
   "respondBy": "2026-01-08T00:00:00.000Z",
   "evidence": "Tracking number 1Z999 shows delivery confirmed...",
   "autoDecision": "CONTEST",
   "evidenceGuidance": "...",
+  "delegationId": null,
+  "initiatedBy": "human",
+  "merchantRiskTierAtDecision": "MEDIUM",
   "createdAt": "2026-01-01T00:00:00.000Z",
   "updatedAt": "2026-01-01T00:00:00.000Z"
 }
 ```
+
+`delegationId`/`initiatedBy` are snapshotted from the disputed charge
+at dispute-creation time — data capture only, this system doesn't
+decide liability based on whether a charge was agent-initiated.
+`merchantRiskTierAtDecision` is likewise a snapshot, of the charging
+merchant's risk tier at the exact moment `autoDecision` was computed —
+audit-only, not a live join; `null` means the merchant had no evaluable
+tier at that moment (treated the same as `MEDIUM` for the decision
+itself).
 
 `autoDecision` is advisory for `ACCEPT`/`MANUAL_REVIEW` (there's no PSP
 "accept" action to call — an `ACCEPT`ed dispute is simply left

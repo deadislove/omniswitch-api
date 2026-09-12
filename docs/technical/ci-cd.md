@@ -9,19 +9,26 @@ either workflow file.
 
 ## `.github/workflows/ci.yml`
 
-Two jobs, run in parallel.
+Two jobs. `e2e` itself runs as a 2-way shard matrix
+(`strategy.matrix.shard: [1, 2]`), so three job instances run in
+parallel in total.
 
 **`build-and-unit-test`**: `npm ci` → lint (blocking, see below) →
 `tsc --noEmit` → `npm run build` → `npm test` (unit tests, mocked
 dependencies).
 
-**`e2e`**: brings up `postgres-master`, `postgres-replica`, `redis`,
-`vault`, `mock-psp` via `docker compose up -d --wait` (same services,
-same host-mapped ports `test/setup-env.ts` already assumes — see
+**`e2e`** (× 2 shards): each shard brings up its own, fully independent
+`postgres-master`, `postgres-replica`, `redis`, `vault`, `mock-psp` via
+`docker compose up -d --wait` (same services, same host-mapped ports
+`test/setup-env.ts` already assumes — see
 [`architecture.md`'s Testing section](./architecture.md#testing)), then
-runs `npm run test:e2e`. `api` itself is deliberately not started — the
-e2e suite talks to a Nest app booted in-process by Jest/Supertest
-(`test/utils/test-app.ts`), not to the containerized `api` service.
+runs `npm run test:e2e -- --shard=${{ matrix.shard }}/2` — Jest's own
+built-in sharding splits the spec files roughly in half, not a
+hand-maintained file list. `api` itself is deliberately not started —
+the e2e suite talks to a Nest app booted in-process by Jest/Supertest
+(`test/utils/test-app.ts`), not to the containerized `api` service. See
+["The e2e heap-threshold health check failure"](#the-e2e-heap-threshold-health-check-failure)
+for why the job runs sharded at all.
 
 Note: this job does **not** bring up `pgbouncer-master`/`pgbouncer-replica`
 — `test/setup-env.ts`'s defaults point straight at Postgres, same as
@@ -256,9 +263,10 @@ read from `ConfigService`
 defaulting to the same 512MB/1GB — production's behavior and
 `k8s/deployment.yaml` are untouched, since no env var sets these outside
 the test environment. `test/setup-env.ts` raises them to 1.5GB/2GB for
-e2e runs only; the `jest --shard` change in `ci.yml` was reverted, since
-it added CI runtime without fully solving the problem on its own.
-`ConfigService.get<number>()` does not actually cast — an env var
+e2e runs only; at this point the `jest --shard` change in `ci.yml` was
+reverted, since sharding alone added CI runtime without fully solving
+the problem — see "Sharding, reintroduced" below for what changed that
+conclusion. `ConfigService.get<number>()` does not actually cast — an env var
 override comes back as a string despite the generic type argument — so
 both threshold reads in `health.controller.ts` are wrapped in
 `Number(...)` explicitly rather than relying on `checkHeap()`'s internal
@@ -275,6 +283,44 @@ asking whether that number's calibration context still applies to the
 environment actually running the test — not just whether the code under
 test can be made to fit under it.
 
+### Sharding, reintroduced — a genuine leak, not the earlier per-process-baseline theory
+
+The 1.5GB threshold held on a development machine, but the same suite
+still tripped `HEALTH_CHECK_HEAP_THRESHOLD_BYTES` on GitHub Actions'
+smaller `ubuntu-latest` runners (2 vCPU, 7GB total, shared with
+Postgres/Redis/Vault/mock-psp's own containers). The gap turned out to
+be a real, independently-diagnosable defect, not just a tighter
+resource envelope: `@nestjs/schedule`'s `SchedulerOrchestrator`
+implements `onApplicationBootstrap()` (registers every `@Cron()` job)
+but has no `onApplicationShutdown()`/`onModuleDestroy()` counterpart —
+`app.close()` never stops a single registered job. This codebase has 14
+`@Cron()`-decorated methods (the ledger outbox relay's
+`EVERY_10_SECONDS` tick among them — see
+[`distributed-state.md`](./distributed-state.md)); every e2e spec file
+that boots an app via `createTestApp()` leaves all 14 running for the
+rest of that Jest worker process's life, each tick still holding a live
+closure over that "closed" app's injected `DataSource`/repositories.
+The visible symptom was intermittent `TypeORMError: Driver not
+Connected` errors from a `CronJob.<anonymous>` stack frame — a zombie
+job from an earlier, already-closed test file firing against a
+connection pool that file's own shutdown had already torn down. This is
+a genuine, unbounded leak (more test files run, more zombie jobs
+accumulate, forever) — a different failure mode than the "per-process
+baseline is already high" theory the shard experiment above ruled
+out, which was about a single fresh process's *starting* cost, not
+runaway growth within one.
+
+**Fix**: `test/utils/test-app.ts`'s `createTestApp()` wraps the returned
+app's `close()` to stop every job in `SchedulerRegistry` before
+delegating to the real close — one change, since every spec file's own
+`afterAll(() => app.close())` already routes through it. With the leak
+closed, reintroducing `jest --shard` (now `strategy.matrix.shard: [1, 2]`
+in `ci.yml`, two independent job instances rather than the earlier
+same-job multi-shard attempt) gives the smaller CI runner headroom on
+top of the fix rather than working around an open leak — each shard's
+single worker process now bootstraps roughly half as many test apps
+sequentially as the full suite would in one process.
+
 ## Parallelizing e2e workers
 
 **Status: root cause found and measured; fix applied; residual risk is
@@ -286,8 +332,8 @@ root cause of the flakiness an earlier pass into this only got as far as
 "unexplained," and why the fix is a worker-count *strategy*, not a fixed
 number.
 
-**The goal**: `maxWorkers: 1` means all 33 e2e spec files run
-sequentially in one process, which is slow (~340s for a full run).
+**The goal**: `maxWorkers: 1` means all e2e spec files (43 as of this
+writing) run sequentially in one process, which is slow.
 Running several files at once was blocked by every spec file's
 `AppModule` instance sharing the same Redis keyspace and the same
 Postgres `max_connections` budget — several spec files' own comments

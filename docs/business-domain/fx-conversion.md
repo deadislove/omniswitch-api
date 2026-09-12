@@ -44,17 +44,19 @@ last two balance on their own. `LedgerOutboxEvent.createChargeEntries()`'s
 `settlementConversion` param produces this shape — `validateDoubleEntry()`
 itself didn't need to change at all.
 
-**Where this is wired in**: all three ledger-booking call sites
+**Where this is wired in**: all four ledger-booking call sites
 (`PaymentCheckoutSaga`, `PaymentLifecycleService.capture()`,
-`WebhookProcessingService.markSucceeded()`) — the same three sites the
+`WebhookProcessingService.markSucceeded()`,
+`AmbiguousPaymentService.bookSucceeded()`) — the same four sites the
 [fee model](./fee-model.md) is wired into, via
 `ChargeLedgerParamsResolverService`. This used to be an identical private
-method copy-pasted into all three (each one's own comment explicitly
+method copy-pasted into each site (each one's own comment explicitly
 flagged it as "kept local for a small helper, not worth a shared
 service" — first for two callers, then noted again as a judgment call
-once it became three); it was finally extracted when the reserve
-mechanism (see [`risk-and-fraud.md`](./risk-and-fraud.md)) added a third
-concern to the same lookup. An FX rate lookup failure does **not** fail the
+once it became three, and again once a fourth was added); it was
+finally extracted when the reserve mechanism (see
+[`risk-and-fraud.md`](./risk-and-fraud.md)) added a third concern to
+the same lookup. An FX rate lookup failure does **not** fail the
 charge or lose the ledger entry — funds have already moved by the time
 this runs — it falls back to booking in the original charge currency and
 logs an error, the same "degrade to a safe default, alert, don't lose the

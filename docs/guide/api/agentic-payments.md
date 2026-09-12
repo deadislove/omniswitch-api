@@ -52,14 +52,24 @@ Authorizes a new agent with its own spend policy.
     "updatedAt": "2026-01-01T00:00:00.000Z"
   },
   "agentToken": "eyJhbGciOiJIUzI1NiIs...",
+  "agentSigningKey": "dlg_sign_9f2a1c...",
   "tokenType": "Bearer",
   "expiresIn": 86400
 }
 ```
 
-**`agentToken` is shown exactly once** — same posture as an API key
-secret. There's no "retrieve it again later" endpoint; if it's lost,
-revoke the delegation and create a new one.
+**`agentToken` and `agentSigningKey` are each shown exactly once** —
+same posture as an API key secret. There's no "retrieve it again later"
+endpoint; if either is lost, revoke the delegation and create a new one.
+
+**`agentSigningKey` is required for every charge this agent makes.**
+`POST /payments/charge` is HMAC-signed for every role, `AGENT` included
+— an `AGENT` caller signs with this delegation's own
+`agentSigningKey` instead of the merchant's HMAC secret (same signature
+scheme, just keyed by delegation instead of merchant; see
+[`payments.md`](./payments.md)). A charge signed with the wrong key, or
+not signed at all, is rejected by the same HMAC guard every other
+caller goes through.
 
 ## `GET /delegations/:id`
 
@@ -98,6 +108,7 @@ against, and atomically reserved from, the delegation's spend policy
 | `category` not in `allowedCategories` | 422 | `DELEGATION_CATEGORY_NOT_ALLOWED` |
 | Charge currency ≠ delegation's currency | 422 | `DELEGATION_CURRENCY_MISMATCH` |
 | Delegation has been revoked | 403 | `DELEGATION_REVOKED` |
+| Lost a race with a concurrent charge against the same delegation (the checks above passed against a now-stale read) | 422 | `DELEGATION_SPEND_LIMIT_EXCEEDED` |
 
 None of these create a `Payment` row — the reservation happens before
 Step 1 of the saga. A charge that goes on to actually decline at the PSP

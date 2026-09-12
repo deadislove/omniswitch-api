@@ -103,7 +103,8 @@ application/
 ```
 
 If you're adding a new feature that needs its own aggregate (the last
-one added was `Delegation`, for agentic payments), you'll touch all
+one added was `ChargeApproval`, for the agentic-payment hold-for-approval
+flow), you'll touch all
 three of `domain/aggregates/`, `ports/outbound/`, and
 `adapters/persistence/` — plus register the new entity in **three
 places** (see §6's migration checklist; forgetting one is the single
@@ -224,14 +225,15 @@ piece of state becomes available, and where the two failure branches
   failure sets a *terminal* `FAILED` status (not auto-retried) — an
   operator resets it via `POST /admin/outbox/:id/retry`, deliberately,
   so a systemic downstream outage doesn't retry-storm forever.
-- **Marketplace payout sweep** (`PayoutService`, four independent
+- **Marketplace payout sweep** (`PayoutService`, five independent
   `@Cron` sweeps): batches split proceeds into `Payout` records with a
   rolling reserve, separately releases reserves once their hold period
   elapses, separately rechecks KYC-blocked payouts as merchants get
-  verified, separately initiates bank transfers for eligible ones. Four
-  sweeps, not one, because each concern (batching, reserve release,
-  KYC, transfer) can become eligible at a different time from the
-  others.
+  verified, separately initiates bank transfers for eligible net-amount
+  payouts, and separately initiates bank transfers for eligible
+  *released-reserve* payouts. Five sweeps, not one, because each concern
+  (batching, reserve release, KYC, net-amount transfer, reserve
+  transfer) can become eligible at a different time from the others.
 
 ## 5. Cross-cutting infrastructure concerns
 

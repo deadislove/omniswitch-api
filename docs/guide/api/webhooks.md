@@ -9,7 +9,7 @@ instead, one per provider.
 
 - **Guard**: `StripeWebhookGuard` — verifies the `Stripe-Signature`
   header against the raw request body.
-- **Errors**: `400` missing/invalid signature.
+- **Errors**: `401` missing/invalid signature.
 
 Handled event types:
 
@@ -46,6 +46,47 @@ Handled notification event codes (`notificationItems[].NotificationRequestItem`)
 | `NOTIFICATION_OF_CHARGEBACK` | Creates a `Dispute` — this notification's own `pspReference` becomes the dispute's `pspDisputeId`, so a later `CHARGEBACK`/`CHARGEBACK_REVERSED` can resolve the *same* dispute |
 | `CHARGEBACK` | Resolves the dispute `LOST` (the actual debit) |
 | `CHARGEBACK_REVERSED` | Resolves the dispute `WON` (the bank reversed it) |
+
+## `POST /webhooks/bank-transfer`
+
+- **Guard**: `BankTransferWebhookGuard` — verifies an
+  `X-Bank-Transfer-Signature: t=<unix seconds>,v1=<hex digest>` header
+  (`HMAC-SHA256(BANK_TRANSFER_WEBHOOK_SECRET, "${t}.${rawBody}")`) —
+  same scheme as the Stripe signature check, just a different header and
+  secret.
+- **Errors**: `401` missing/malformed/invalid signature, timestamp
+  outside a 5-minute tolerance window, or `BANK_TRANSFER_WEBHOOK_SECRET`
+  not configured.
+- **Body**: `{ "id": string, "topic": string, "resourceId": string }` —
+  a lightweight event envelope (no settlement detail inline), matching
+  the real bank-transfer rail's own callback shape (see
+  `AchBankTransferAdapter`/`WireBankTransferAdapter`).
+
+`topic: "customer_transfer_completed"` settles the transfer; any other
+topic is treated as a failure, and the handler makes an authenticated
+follow-up call back to the transfer rail to fetch the failure reason
+before recording it — the envelope itself doesn't carry one. Either
+outcome resolves whichever `Payout` (net-amount or reserve) this
+`resourceId` belongs to from `PENDING_CONFIRMATION` to `INITIATED` or
+`FAILED`.
+
+## `POST /webhooks/kyc`
+
+- **Guard**: `KycWebhookGuard` — verifies an `X-KYC-Signature` header,
+  same HMAC scheme as the bank-transfer guard, keyed by
+  `KYC_WEBHOOK_SECRET`.
+- **Errors**: `401` missing/invalid signature.
+- **Body**: a real KYC provider's event envelope —
+  `{ "data": { "attributes": { "name": string, "payload": { "data": { "id": string, "attributes": { "status": string } } } } } }`
+  — the review decision is nested under `data.attributes.payload.data`,
+  not a flat `{applicationId, status}` shape.
+
+Only a decisive event (an `id` present and a status that isn't
+`PENDING`) actually updates anything — resolves the merchant's
+`kycApplicationId` to `kycStatus: 'VERIFIED'` or `'REJECTED'`. Any other
+event (still under review, or one this system doesn't recognize) is
+logged and ignored, not an error, matching every other webhook
+receiver's redelivery-tolerant posture.
 
 ## Testing webhooks locally
 

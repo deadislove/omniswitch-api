@@ -14,9 +14,11 @@ internally — see [`system-design.md`](../system-design.md#3-a-charge-end-to-en
 for the full internal flow.
 
 - **Roles**: `MERCHANT`, `ADMIN`, `AGENT`
-- **Guards**: HMAC + Idempotency-Key — HMAC is **skipped** for an
-  `AGENT` caller (see [`agentic-payments.md`](./agentic-payments.md));
-  `Idempotency-Key` is required unconditionally, for every role
+- **Guards**: HMAC + Idempotency-Key — required for every role including
+  `AGENT`, which signs with its own delegation-issued signing key
+  instead of the merchant's (see
+  [`agentic-payments.md`](./agentic-payments.md)); `Idempotency-Key` is
+  required unconditionally, for every role
 - **Rate limit**: 100/min
 
 **Request body**
@@ -63,7 +65,18 @@ for the full internal flow.
 
 `status` is one of `SUCCEEDED`, `REQUIRES_ACTION` (3DS challenge —
 `actionUrl` is set, resolved later via webhook), `REQUIRES_CAPTURE`
-(manual capture), or `FAILED`.
+(manual capture), `FAILED`, or `AMBIGUOUS` (the PSP call itself timed
+out or every configured PSP failed — genuinely unknown whether the
+card was charged, not a decline; see
+[`risk-and-reserves.md`](./risk-and-reserves.md) for how this gets
+resolved).
+
+An `AGENT` charge above its delegation's `requireApprovalAboveAmount`
+returns a different, minimal shape instead —
+`{ paymentId, status: "PENDING_APPROVAL", requiresAction: false,
+usedFallback: false, approvalId, createdAt }`, with no PSP call made
+yet. See [`agentic-payments.md`](./agentic-payments.md) for the
+approve/deny flow that resolves it.
 
 **Errors**: `400` missing `Idempotency-Key`; `403` an `AGENT`'s
 delegation has been revoked; `409` `splits` combined with
@@ -172,3 +185,16 @@ gauges expose, here as a JSON snapshot for a human/dashboard rather than
 Prometheus).
 
 - **Roles**: `ADMIN`, `OPERATOR`
+
+## `POST /payments/routing/circuit-breaker/:provider/reset`
+
+Operator escape hatch — forces a PSP's circuit breaker back to `CLOSED`,
+bypassing the normal automated recovery flow. No other way to intervene
+short of reaching into Redis directly if automated recovery isn't
+behaving as expected.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+- **Response `200`**: the same per-provider shape `GET
+  /payments/routing/health` returns, for just this provider, reflecting
+  the reset.
+- **Errors**: `400` unknown provider (`UNKNOWN_PSP_PROVIDER`).

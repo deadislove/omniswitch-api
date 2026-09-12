@@ -26,9 +26,12 @@ docblock, not a migration.
 `PaymentCheckoutSaga` — the orchestrator every `POST /payments/charge`
 call runs through — directly depends on `PaymentRepositoryPort`,
 `LedgerOutboxPort`, `AcquirerRoutingService`,
-`ChargeLedgerParamsResolverService`, `ReserveService`, and
-`AmbiguousRiskMonitoringService` in a single constructor. That list is
-exactly one thing each from the three candidate boundaries below —
+`ChargeLedgerParamsResolverService`, `ReserveService`,
+`AmbiguousRiskMonitoringService`, and `AmlReviewMonitoringService` in a
+single constructor (plus `DataSource` and `EventEmitter2`, its
+transaction/event-emission plumbing rather than another boundary's
+service). The domain-service list is one or two things each from the
+three candidate boundaries below —
 Ledger, Routing, and Risk are already synchronously entangled in the hot
 path of every charge, inside one in-process saga, inside one Postgres
 transaction. Any split has to answer what happens to that saga: either
@@ -85,7 +88,8 @@ be a second, new failure mode on top of that, not a replacement for it.
 **Owns**: risk tiering (`RiskTieringService`), dispute policy
 (`DisputeService`, `dispute-policy.ts`), ambiguous-payment
 monitoring/resolution (`AmbiguousPaymentService`,
-`AmbiguousRiskMonitoringService`), legal holds (`LegalHoldService`).
+`AmbiguousRiskMonitoringService`), AML-review monitoring
+(`AmlReviewMonitoringService`), legal holds (`LegalHoldService`).
 
 **Easiest to separate**: `RiskTieringService`'s own sweep already reads
 *settled* charge history after the fact (a daily `@Cron`, plus an

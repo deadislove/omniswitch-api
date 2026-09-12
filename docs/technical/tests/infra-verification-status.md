@@ -140,12 +140,17 @@ it's believed to work.
 
 ---
 
-## What's not covered
+## What's covered, and what still isn't
 
 Load testing is covered — see [`load-testing.md`](./load-testing.md)
 for real, reproducible charge-path/read-path capacity numbers against
-the production Docker image. What's still not exercised is a
-**chaos-style** test (killing a container mid-request, e.g. restarting
-`postgres-master` while a payment is in flight): resilience under
-*mid-operation failure*, as opposed to sustained load, remains
-unverified. See Tier 2 item #11 in `DEV_README.md`.
+the production Docker image. **Chaos-style** testing (killing a
+container mid-request — a PSP outage, Redis unreachable, the Postgres
+primary unreachable) is also covered — see
+[`chaos-testing.md`](./chaos-testing.md) for the three real scripts in
+`scripts/chaos/` and what each one found against a live stack. That same
+document is explicit about what those three scripts still don't reach:
+a primary dying mid-transaction (as opposed to between transactions), a
+network partition that isn't a clean stop/start, more than one fault
+at once, and replica failover — see its own "What this doesn't cover"
+section.

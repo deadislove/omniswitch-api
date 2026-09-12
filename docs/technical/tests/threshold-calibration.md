@@ -129,7 +129,7 @@ documented gaps, not oversights:
   MCC code inherently risky" to derive from synthetic data; a real
   calibration would need actual chargeback-rate-by-MCC data, not a
   statistical technique applied to a stand-in population. **Verified,
-  2026** — every one of the 18 codes checked against real MCC reference
+  2026** — every one of the 19 codes checked against real MCC reference
   sources for both the code-to-category mapping and the risk tier; all
   confirmed accurate (several, like gambling/dating-services/inbound-
   telemarketing, are explicitly labeled `HIGH RISK` in real

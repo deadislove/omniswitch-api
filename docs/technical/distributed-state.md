@@ -227,16 +227,17 @@ state where cluster-wide state was actually needed) — but unlike those
 two, **it has not been fixed here**, only worked around, unevenly, on a
 service-by-service basis.
 
-There are thirteen of these today (two of them purely read-only —
+There are fourteen of these today (two of them purely read-only —
 log/alert only, no state mutation):
 `LedgerOutboxRelayService.relay()` (every 10s) and its
 `detectStaleEvents()` (every 5min, log/alert-only — no state mutation,
 so not a duplication concern the way the others below are);
 `ReconciliationService` (hourly, not daily); `ReserveService`,
 `SubscriptionService`, and `RiskTieringService` (all daily);
-`PayoutService`'s four separate sweeps — `runSweep()` (noon),
+`PayoutService`'s five separate sweeps — `runSweep()` (noon),
 `releaseEligibleReserves()` (midnight), `recheckKycBlocks()` (1am),
-and `initiateEligibleTransfers()` (2am); `AmbiguousPaymentService`'s
+`initiateEligibleTransfers()` (2am), and
+`initiateEligibleReserveTransfers()` (3am); `AmbiguousPaymentService`'s
 `runAutoResolutionSweep()` (every 10min) and `alertOnStale()` (every
 5min, log/alert-only, same posture as `detectStaleEvents()` above); and
 `AmbiguousRiskMonitoringService.runAutoClearSweep()` (3am). At 20
@@ -260,9 +261,10 @@ up to 20 times, all within roughly the same moment.
   duplication specifically — but the same mechanism happens to cover both.
 - **`PayoutService` — mixed mechanisms, all verified race-safe.**
   `releaseEligibleReserves()`/`recheckKycBlocks()`/
-  `initiateEligibleTransfers()` each go through an atomically-conditional
-  `UPDATE ... WHERE` (`PayoutPort.markReserveReleased()`/
-  `markKycCleared()`/`markTransferInitiated()`) — the same
+  `initiateEligibleTransfers()`/`initiateEligibleReserveTransfers()` each
+  go through an atomically-conditional `UPDATE ... WHERE`
+  (`PayoutPort.markReserveReleased()`/`markKycCleared()`/
+  `markTransferInitiated()`/`markReserveTransferInitiated()`) — the same
   race-safe-by-construction pattern `ReserveService` uses. `runSweep()`
   (the noon job that creates `Payout` rows from a windowStart/windowEnd
   derived from `findLatestSweepRun()`) used a different mechanism: two

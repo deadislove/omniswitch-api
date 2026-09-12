@@ -81,6 +81,14 @@ TOTP/backup code. The pending token is revoked immediately after use
 - **Response `200`**: `TokenResponseDto` (a full, normal token)
 - **Errors**: `401` invalid code; `409` MFA not enabled.
 
+**MFA isn't optional for an ADMIN-role caller**: `RolesGuard` rejects
+every `@Roles(...)`-decorated endpoint with `403
+MFA_REQUIRED_FOR_ADMIN` if the calling token carries `ADMIN` and that
+merchant's `mfaEnabled` is false — regardless of whether `ADMIN` is the
+only role the route allows or one of several. Only the MFA self-service
+endpoints above are exempt, since an ADMIN with MFA not yet enabled
+still needs a way to enroll. `OPERATOR` and other roles are unaffected.
+
 ---
 
 ## Merchant Admin (`/admin/merchants`)
@@ -202,6 +210,18 @@ PSP outside this list is rejected with `422
 PREFERRED_PROVIDER_NOT_ENTITLED` — not silently routed to a different
 PSP. See [`payments.md`](./payments.md#post-paymentscharge).
 
+### `PATCH /admin/merchants/:id/mcc-code`
+
+Sets this merchant's ISO 18245 Merchant Category Code, which derives
+`industryRiskCategory` via a static risk lookup table
+(`mcc-risk-lookup.ts`) — `RiskTieringService` factors that category
+into its tier-escalation logic. An MCC not in the table resolves to
+`UNKNOWN`, the same as leaving this unset.
+
+- **Body**: `{ mccCode?: string | null }` — 4 digits, or omit/`null` to
+  clear it back to `UNKNOWN`.
+- **Errors**: `422` if `mccCode` is set and isn't exactly 4 digits.
+
 ### Ambiguous risk observation
 
 `AmbiguousRiskMonitoringService` flags a merchant whose `AMBIGUOUS`
@@ -300,17 +320,24 @@ return the merchant summary:
   "reserveBps": 0,
   "reserveHoldDays": 0,
   "riskTierAutoManaged": true,
+  "mccCode": "5411",
+  "industryRiskCategory": "LOW",
   "accountType": "PLATFORM",
   "platformMerchantId": null,
   "payoutReserveBps": 0,
   "payoutReserveHoldDays": 0,
   "kycStatus": "NOT_STARTED",
+  "kycApplicationId": null,
   "enabledPspProviders": ["STRIPE", "ADYEN"],
   "ambiguousRiskFlagged": false,
   "ambiguousRiskFlaggedAt": null,
   "ambiguousRiskFlagReason": null,
   "ambiguousRiskFlaggedBy": null,
   "ambiguousRiskAutoManaged": true,
+  "disputeNotificationChannel": "WEBHOOK",
+  "disputeNotificationTarget": null,
+  "subscriptionNotificationChannel": "WEBHOOK",
+  "subscriptionNotificationTarget": null,
   "amlReviewFlagged": false,
   "amlReviewFlaggedAt": null,
   "amlReviewFlagReason": null,

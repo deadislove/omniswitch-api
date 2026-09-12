@@ -64,6 +64,10 @@ transition that confirms them:
 - Async/3DS-confirmed: in `WebhookProcessingService`, when a
   `payment_intent.succeeded`/`AUTHORISATION` webhook confirms a payment that
   was `PROCESSING` or `REQUIRES_ACTION`.
+- Manually-resolved ambiguous outcome: in
+  `AmbiguousPaymentService.bookSucceeded()`, when an operator resolves a
+  payment whose PSP outcome couldn't be determined automatically (see
+  [`risk-and-fraud.md`](./risk-and-fraud.md)) to `SUCCEEDED`.
 
 This is intentional and was a bug fix, not the original design: entries used
 to be written speculatively at payment-intent creation (`PENDING`), before
