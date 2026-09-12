@@ -81,13 +81,29 @@ describe('Dispute resolution policy layer (e2e)', () => {
     return disputeId;
   }
 
-  async function getDisputeByPaymentId(paymentId: string) {
-    const res = await request(app.getHttpServer())
-      .get('/api/v1/admin/disputes')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .query({ merchantId: merchant.merchantId })
-      .expect(200);
-    return res.body.find((d: any) => d.paymentId === paymentId);
+  // GET /admin/disputes already forces its read onto master (see
+  // DisputeTypeOrmRepository.findMany()'s docblock) specifically for this
+  // "list right after a webhook just created one" shape, but this still
+  // polls briefly rather than asserting on a single call — cheap
+  // insurance against any other source of delay between the webhook's
+  // 200 response and this list reflecting it, same posture as the
+  // waitFor() helper dispute-notification.e2e-spec.ts/
+  // aml-review-monitoring.e2e-spec.ts already use for their own
+  // async-completion waits.
+  async function getDisputeByPaymentId(paymentId: string, timeoutMs = 3000) {
+    const deadline = Date.now() + timeoutMs;
+    let found: any;
+    do {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/admin/disputes')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .query({ merchantId: merchant.merchantId })
+        .expect(200);
+      found = res.body.find((d: any) => d.paymentId === paymentId);
+      if (found) return found;
+      await new Promise((r) => setTimeout(r, 50));
+    } while (Date.now() < deadline);
+    return found;
   }
 
   it('a low-value dispute is auto-decided ACCEPT and left untouched (no PSP action, still NEEDS_RESPONSE)', async () => {
@@ -229,13 +245,21 @@ describe('Dispute resolution policy layer (e2e)', () => {
       .expect(200);
   }
 
-  async function getDisputeByPaymentIdFor(m: SeededMerchant, paymentId: string) {
-    const res = await request(app.getHttpServer())
-      .get('/api/v1/admin/disputes')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .query({ merchantId: m.merchantId })
-      .expect(200);
-    return res.body.find((d: any) => d.paymentId === paymentId);
+  // Same polling posture as getDisputeByPaymentId() above.
+  async function getDisputeByPaymentIdFor(m: SeededMerchant, paymentId: string, timeoutMs = 3000) {
+    const deadline = Date.now() + timeoutMs;
+    let found: any;
+    do {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/admin/disputes')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .query({ merchantId: m.merchantId })
+        .expect(200);
+      found = res.body.find((d: any) => d.paymentId === paymentId);
+      if (found) return found;
+      await new Promise((r) => setTimeout(r, 50));
+    } while (Date.now() < deadline);
+    return found;
   }
 
   it('a LOW-risk-tier merchant gets a lower auto-accept threshold and an expanded contestable-reason set (subscription_canceled auto-CONTESTs instead of MANUAL_REVIEW)', async () => {

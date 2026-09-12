@@ -11,15 +11,20 @@ export abstract class PlanPort {
   abstract findById(id: string): Promise<Plan | null>;
 
   /**
-   * Same as findById(), but forced onto the master connection — for a
-   * caller that may have just written this exact Plan and can't tolerate
-   * replica lag. See PaymentRepositoryPort.findByIdOnMaster()'s docblock
-   * for the general reasoning; PlanService.getUsablePlanOrThrow() is the
-   * one caller here (a merchant creating a plan and immediately
-   * subscribing/changing to it is an ordinary sequence, not just a test
-   * artifact).
+   * Same as findById(), but forced onto the master connection.
+   * PlanService uses this exclusively for every single-plan lookup (not
+   * just findById()) — a merchant creating a plan and immediately
+   * viewing, subscribing to, or deactivating it is an ordinary sequence,
+   * and the catalog's read volume is low enough that unconditionally
+   * forcing master, rather than PaymentRepositoryPort's more surgical
+   * per-call-site split, is the right tradeoff. See
+   * PaymentRepositoryPort.findByIdOnMaster()'s docblock for the general
+   * reasoning.
    */
   abstract findByIdOnMaster(id: string): Promise<Plan | null>;
 
   abstract findMany(filter?: FindPlansFilter): Promise<Plan[]>;
+
+  /** Same as findMany(), but forced onto master — see findByIdOnMaster()'s docblock. */
+  abstract findManyOnMaster(filter?: FindPlansFilter): Promise<Plan[]>;
 }

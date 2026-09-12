@@ -95,6 +95,31 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
     return res.body;
   }
 
+  /**
+   * GET /payments/:id is deliberately served off the replica (see
+   * PaymentRepositoryPort.findByIdOnMaster()'s docblock) — read-only,
+   * latency-insensitive, fine to lag by the replica's ~1s streaming
+   * window. Every test in this file that checks "did the webhook I just
+   * sent actually take effect" via this endpoint has to tolerate that
+   * documented window instead of asserting on a single immediate read.
+   * Polls until `expectedStatus` shows up or `timeoutMs` elapses; returns
+   * the last response either way so the caller's own `expect(...)` still
+   * produces the real failure message if it never arrives.
+   */
+  async function getPaymentEventually(paymentId: string, expectedStatus: string, timeoutMs = 3000) {
+    const deadline = Date.now() + timeoutMs;
+    let res: request.Response;
+    do {
+      res = await request(app.getHttpServer())
+        .get(`/api/v1/payments/${paymentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      if (res.body.status === expectedStatus) return res;
+      await new Promise((r) => setTimeout(r, 50));
+    } while (Date.now() < deadline);
+    return res;
+  }
+
   async function refundPayment(paymentId: string, amount: number) {
     const bodyObj = { amount };
     const bodyStr = JSON.stringify(bodyObj);
@@ -150,10 +175,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .send(body)
         .expect(200);
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'SUCCEEDED');
       expect(getRes.body.status).toBe('SUCCEEDED');
     });
 
@@ -179,10 +201,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
           .expect(200);
       }
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'SUCCEEDED');
       expect(getRes.body.status).toBe('SUCCEEDED');
     });
   });
@@ -241,10 +260,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         })
         .expect(200);
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'SUCCEEDED');
       expect(getRes.body.status).toBe('SUCCEEDED');
     });
   });
@@ -276,10 +292,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
           .expect(200);
       }
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'DISPUTED');
       expect(getRes.body.status).toBe('DISPUTED');
 
       const listRes = await request(app.getHttpServer())
@@ -316,10 +329,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .send(body)
         .expect(200);
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'DISPUTED');
       expect(getRes.body.status).toBe('DISPUTED');
 
       const listRes = await request(app.getHttpServer())
@@ -401,10 +411,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .send(closeBody)
         .expect(200);
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'SUCCEEDED');
       expect(getRes.body.status).toBe('SUCCEEDED');
 
       const listRes = await request(app.getHttpServer())
@@ -457,10 +464,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .send(closeBody)
         .expect(200);
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'REFUNDED');
       expect(getRes.body.status).toBe('REFUNDED');
 
       const entriesAfterResolution = await countOnMaster(payment.paymentId);
@@ -507,10 +511,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .send(closeBody)
         .expect(200);
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'PARTIALLY_REFUNDED');
       expect(getRes.body.status).toBe('PARTIALLY_REFUNDED');
       // Still exactly the one $40 refund from before the dispute — winning
       // it didn't erase that history or add a second entry.
@@ -561,10 +562,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         .send(closeBody)
         .expect(200);
 
-      const getRes = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getRes = await getPaymentEventually(payment.paymentId, 'REFUNDED');
       expect(getRes.body.status).toBe('REFUNDED');
       // Exactly two refund records ($40 original + $60 dispute-lost), not
       // a third double-counting one, and they sum to the full $100 — not
@@ -629,10 +627,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         })
         .expect(200);
 
-      const getResAfterDispute = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getResAfterDispute = await getPaymentEventually(payment.paymentId, 'DISPUTED');
       expect(getResAfterDispute.body.status).toBe('DISPUTED');
 
       const reversalFields = {
@@ -660,10 +655,7 @@ describe('Webhooks: Stripe & Adyen (e2e)', () => {
         })
         .expect(200);
 
-      const getResAfterReversal = await request(app.getHttpServer())
-        .get(`/api/v1/payments/${payment.paymentId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
+      const getResAfterReversal = await getPaymentEventually(payment.paymentId, 'SUCCEEDED');
       expect(getResAfterReversal.body.status).toBe('SUCCEEDED');
     });
   });

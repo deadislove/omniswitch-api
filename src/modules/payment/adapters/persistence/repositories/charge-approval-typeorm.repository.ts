@@ -58,10 +58,7 @@ export class ChargeApprovalTypeOrmRepository implements ChargeApprovalPort {
   async findManyOnMaster(filter?: FindChargeApprovalsFilter): Promise<ChargeApproval[]> {
     const queryRunner = this.dataSource.createQueryRunner('master');
     try {
-      return await this.runFindMany(
-        queryRunner.manager.createQueryBuilder(ChargeApprovalEntity, 'c'),
-        filter,
-      );
+      return await this.runFindMany(queryRunner.manager.createQueryBuilder(ChargeApprovalEntity, 'c'), filter);
     } finally {
       await queryRunner.release();
     }

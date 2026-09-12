@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, SelectQueryBuilder } from 'typeorm';
 import { PlanPort, FindPlansFilter } from '../../../ports/outbound/plan.port';
 import { Plan } from '../../../domain/aggregates/plan.aggregate';
 import { Money } from '../../../domain/value-objects/money.vo';
@@ -46,7 +46,21 @@ export class PlanTypeOrmRepository implements PlanPort {
   }
 
   async findMany(filter?: FindPlansFilter): Promise<Plan[]> {
-    const qb = this.repo.createQueryBuilder('p');
+    return this.runFindMany(this.repo.createQueryBuilder('p'), filter);
+  }
+
+  // See PlanPort.findManyOnMaster()'s docblock — same reasoning as
+  // findByIdOnMaster().
+  async findManyOnMaster(filter?: FindPlansFilter): Promise<Plan[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await this.runFindMany(queryRunner.manager.createQueryBuilder(PlanEntity, 'p'), filter);
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  private async runFindMany(qb: SelectQueryBuilder<PlanEntity>, filter?: FindPlansFilter): Promise<Plan[]> {
     if (filter?.merchantId) {
       qb.andWhere('p.merchantId = :merchantId', { merchantId: filter.merchantId });
     }
