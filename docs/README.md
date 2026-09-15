@@ -21,8 +21,51 @@ engineer needs before their first PR.
 
 How the system is built — architecture, data & jobs, compliance &
 security, operations & reliability, deployment, and testing
-methodology. Read this if you're changing code. See
-[`technical/README.md`](./technical/README.md) for the full index.
+methodology. Read this if you're changing code.
+
+- [`architecture.md`](./technical/architecture.md) — module map,
+  testing setup, and the design decisions behind the module layout
+- [`distributed-state.md`](./technical/distributed-state.md) — rate
+  limiting, circuit breaker, and scheduled-job state kept consistent
+  across replicas
+- [`service-boundaries.md`](./technical/service-boundaries.md) —
+  evaluation of where the modular monolith could split into services,
+  and why it isn't recommended yet
+- [`api-versioning-policy.md`](./technical/api-versioning-policy.md) —
+  current URI-versioning state and the deprecation policy for when a
+  v2 arrives
+- [`database-migrations.md`](./technical/database-migrations.md) —
+  the migration workflow, from entity file to running schema
+- [`databases/`](./technical/databases/) — schema reference, ERD,
+  physical deployment (replication, PgBouncer, partitioning)
+- [`jobs.md`](./technical/jobs.md) — the background-job subsystem:
+  archiving, deletion, partition maintenance, cutover cleanup
+- [`reconciliation.md`](./technical/reconciliation.md) — closing the
+  ledger against the PSP's own record of what actually settled
+- [`security-and-compliance.md`](./technical/security-and-compliance.md) —
+  JWT revocation design and an honest PCI DSS scope/gap assessment
+- [`compliance-certification-roadmap.md`](./technical/compliance-certification-roadmap.md) —
+  the SOC 2 / PCI DSS certification path, not a certification itself
+- [`secret-management.md`](./technical/secret-management.md) —
+  Vault-backed envelope encryption for the one secret this app mints
+  itself
+- [`ci-cd.md`](./technical/ci-cd.md) — the two GitHub Actions
+  workflows, Dependabot, and known flaky-test classes
+- [`incident-response.md`](./technical/incident-response.md) —
+  runbook for the alerts defined in `monitoring/alert.rules.yml`
+- [`disaster-recovery.md`](./technical/disaster-recovery.md) —
+  multi-region/cross-AZ strategy (documented, not verified against
+  real infrastructure)
+- [`k8s/`](./technical/k8s/) — what's actually in `k8s/` and why it's
+  shaped the way it is
+- [`deployment/`](./technical/deployment/) — how to actually get
+  `k8s/` running
+- [`clouds/`](./technical/clouds/) — the one cloud-provider-specific
+  integration point (`BackupStorage`), one file per provider
+- [`tests/`](./technical/tests/) — load testing, chaos testing,
+  contract testing against real Stripe/Adyen sandboxes, and threshold
+  calibration, all verified against real infrastructure rather than
+  documented as a plan
 
 ## [`business-domain/`](./business-domain/)
 
