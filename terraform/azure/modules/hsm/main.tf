@@ -20,7 +20,8 @@ terraform {
 #
 # Real Azure Managed HSM (dedicated, single-tenant hardware — Azure's
 # CloudHSM/Cloud HSM equivalent) is explicitly NOT built here, same
-# "十、開放決策" item 4 reasoning as the other two clouds' hsm modules.
+# reasoning as the other two clouds' hsm modules — see
+# ../../aws/modules/hsm/main.tf's own note on this.
 
 locals {
   name = "${var.project}-${var.environment}"

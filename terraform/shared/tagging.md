@@ -11,7 +11,7 @@ independently inventing their own key set.
 | `project` | `omniswitch-api` | Identify which project a resource belongs to across accounts/subscriptions |
 | `environment` | `dev` / `staging` / `production` | Environment isolation and cost splitting |
 | `managed-by` | `terraform` | Signals this resource is IaC-managed — don't hand-edit it in a console |
-| `component` | `network` / `iam` / `container-service` / `cloud-saas` / `hsm` | Maps to the module categories in the plan doc |
+| `component` | `network` / `iam` / `container-service` / `cloud-saas` / `hsm` | Maps to each cloud's module categories |
 | `owner` | (team/individual) | Audit and on-call routing |
 | `cost-center` | (optional) | Only if cost needs to be split further |
 
@@ -25,4 +25,4 @@ shape other modules and other clouds should match.
 
 A stricter version of this (not built yet) would add a CI policy check
 (`checkov`/`tfsec` custom rule) that fails `terraform plan` if a
-resource is missing a required tag — see the plan doc's CI section.
+resource is missing a required tag.

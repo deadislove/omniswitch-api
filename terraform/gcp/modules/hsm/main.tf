@@ -20,7 +20,8 @@ terraform {
 # failure mode — there's no equivalent footgun to defend against here.
 #
 # Real CloudHSM-equivalent (Cloud HSM, dedicated hardware-backed keys) is
-# NOT built here, same "十、開放決策" item 4 reasoning as the AWS module.
+# NOT built here, same reasoning as the AWS module — see
+# ../../aws/modules/hsm/main.tf's own note on this.
 
 locals {
   name = "${var.project}-${var.environment}"

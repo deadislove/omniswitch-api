@@ -21,7 +21,7 @@ variable "vpc_id" {
 
 variable "private_subnet_ids" {
   type        = list(string)
-  description = "Private subnet IDs the node group and control-plane ENIs use — output of ../network. Must span at least 3 AZs (see the plan doc's HA section)."
+  description = "Private subnet IDs the node group and control-plane ENIs use — output of ../network. Must span at least 3 AZs for real multi-AZ HA."
 }
 
 variable "cluster_version" {

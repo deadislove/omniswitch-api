@@ -2,18 +2,17 @@
 
 Provisions the cloud infrastructure `k8s/`'s manifests assume already
 exists — the VPC, the Kubernetes cluster itself, IAM, managed
-database/cache, and key-management/HSM. Planning document (design,
-module boundaries, open decisions, and the execution checklist this
-directory is being built against):
-[`../docs/spec/future/20260916-terraform-plan.md`](../docs/spec/future/20260916-terraform-plan.md).
+database/cache, and key-management/HSM.
 
 **Status**: AWS (`aws/`), GCP (`gcp/`), and Azure (`azure/`) all have
 real modules, written and `terraform fmt`/`validate`-clean, but **not
 yet applied against a real account on any of the three** — no cloud
 credentials exist in the environment this was authored in, so
 `terraform plan`/`apply` and every real connectivity check are still
-outstanding across all three clouds (see the plan doc's checklists for
-exactly which items).
+outstanding across all three clouds. See
+[`../docs/technical/deployment/infrastructure-as-code.md`](../docs/technical/deployment/infrastructure-as-code.md)
+for the full breakdown of what's built, the security posture, and every
+known gap.
 
 ## The boundary with `k8s/` — read this before adding anything here
 
@@ -88,8 +87,8 @@ a different story: a real production-grade EKS setup carries a lot of
 accumulated operational detail (launch template quirks, IRSA OIDC
 wiring, addon lifecycle management) that a well-maintained community
 module has already gotten right — re-deriving that from scratch buys
-little and risks missing something subtle. This split is a deliberate
-choice recorded in the plan doc, not an inconsistency.
+little and risks missing something subtle. This split is deliberate,
+not an inconsistency.
 
 ## Running this
 

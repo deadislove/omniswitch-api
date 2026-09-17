@@ -13,14 +13,14 @@ terraform {
 # self-host Postgres (streaming-replication master+replica) and Redis
 # *inside* the cluster, mirroring docker-compose.yml — this module does
 # NOT replace them automatically. It builds the managed-service target
-# state (RDS, ElastiCache) that 20260912-gap-improvement-plan.md's gap
-# analysis calls out as more production-grade than self-hosting stateful
-# services in Kubernetes. Adopting it is a real cutover with a real
-# migration (pg_dump/restore or logical replication onto RDS, redis
-# RDB/AOF onto ElastiCache, then repointing DB_HOST/REDIS_HOST and
-# retiring postgres.yaml/redis.yaml/pgbouncer.yaml) — not something this
-# module does by existing. See the plan doc's Cloud SaaS checklist entry
-# for this call-out.
+# state (RDS, ElastiCache), which is more production-grade than
+# self-hosting stateful services in Kubernetes. Adopting it is a real
+# cutover with a real migration (pg_dump/restore or logical replication
+# onto RDS, redis RDB/AOF onto ElastiCache, then repointing
+# DB_HOST/REDIS_HOST and retiring postgres.yaml/redis.yaml/
+# pgbouncer.yaml) — not something this module does by existing. See
+# ../../../docs/technical/deployment/infrastructure-as-code.md's known
+# gaps.
 
 locals {
   name = "${var.project}-${var.environment}"

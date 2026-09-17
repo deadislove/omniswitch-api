@@ -96,11 +96,10 @@ resource "aws_ecr_repository" "app" {
 #     ../../../k8s/ per the boundary documented in ../../README.md: low
 #     change frequency, cluster-scoped (not this-application-scoped), and
 #     the application's own k8s/hpa.yaml already silently assumes
-#     metrics-server exists (see the plan doc's Container Service section
-#     for that gap). Chart versions below are pinned to a recent release
-#     as of this module's authoring — confirm against each chart's current
-#     release before the first real apply, same as any other dependency
-#     bump. ---
+#     metrics-server exists — a gap this module closes. Chart versions
+#     below are pinned to a recent release as of this module's
+#     authoring — confirm against each chart's current release before
+#     the first real apply, same as any other dependency bump. ---
 
 resource "helm_release" "metrics_server" {
   name       = "metrics-server"
@@ -112,13 +111,12 @@ resource "helm_release" "metrics_server" {
   depends_on = [module.eks]
 }
 
-# kube-prometheus-stack is not one of the checklist's three named add-ons,
-# but it's a real, previously-unstated prerequisite for the other two: the
-# Prometheus Adapter add-on below needs an actual Prometheus server to read
-# metrics from, and k8s/prometheus-rules.yaml already documents itself as
-# "not applied by any deploy path in this repo" because no cluster here has
-# ever run the Prometheus Operator it targets — this closes that gap rather
-# than silently leaving Prometheus Adapter pointed at nothing.
+# kube-prometheus-stack is a real prerequisite for the Prometheus
+# Adapter add-on below, which needs an actual Prometheus server to read
+# metrics from — k8s/prometheus-rules.yaml already documents itself as
+# "not applied by any deploy path in this repo" because no cluster here
+# has ever run the Prometheus Operator it targets. This closes that gap
+# rather than silently leaving Prometheus Adapter pointed at nothing.
 resource "helm_release" "kube_prometheus_stack" {
   name             = "kube-prometheus-stack"
   repository       = "https://prometheus-community.github.io/helm-charts"
@@ -161,10 +159,10 @@ resource "helm_release" "vpa" {
 }
 
 # Prometheus Adapter — exposes custom Prometheus metrics (this project's
-# omniswitch_* series, plus the new traffic-rate metric the plan doc's
-# section 4 calls for) via custom.metrics.k8s.io, so the application's own
-# HPA (in ../../../k8s/hpa.yaml) can eventually scale on something other
-# than CPU/Memory.
+# omniswitch_* series, plus a future traffic-rate metric) via
+# custom.metrics.k8s.io, so the application's own HPA (in
+# ../../../k8s/hpa.yaml) can eventually scale on something other than
+# CPU/Memory.
 resource "helm_release" "prometheus_adapter" {
   name       = "prometheus-adapter"
   repository = "https://prometheus-community.github.io/helm-charts"

@@ -367,7 +367,7 @@ run produced hard numbers:
   processes measured at **60–85% CPU each, simultaneously** (`ps aux`
   sampled mid-run). Four workers alone demand ~250–340% CPU; this
   specific machine also had substantial *pre-existing, unrelated* load
-  (Safari, VS Code, WindowServer, another active Claude Code session
+  (Safari, VS Code, WindowServer, another active IDE/CLI session
   against a different project, Docker Desktop's own VM) — load average
   was already 6–10 *before* any e2e run started.
 - Docker container CPU (`postgres-master`, `redis`, `mock-psp`) stayed

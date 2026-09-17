@@ -22,7 +22,7 @@ variable "vpc_cidr" {
 
 variable "availability_zones" {
   type        = list(string)
-  description = "Availability zones to spread subnets across. At least 3 for real HA — see the plan doc's HA section for why."
+  description = "Availability zones to spread subnets across. At least 3 for real multi-AZ HA."
 
   validation {
     condition     = length(var.availability_zones) >= 3
@@ -32,7 +32,7 @@ variable "availability_zones" {
 
 variable "single_nat_gateway" {
   type        = bool
-  description = "If true, all private subnets share one NAT Gateway (cheaper, single point of failure for egress). If false, one NAT Gateway per AZ (real HA, ~3x the NAT Gateway cost). Recommended: true for dev, false for production — this is exactly the kind of cost/HA tradeoff the plan doc says must be recorded explicitly, not decided silently."
+  description = "If true, all private subnets share one NAT Gateway (cheaper, single point of failure for egress). If false, one NAT Gateway per AZ (real HA, ~3x the NAT Gateway cost). Recommended: true for dev, false for production — a real cost/HA tradeoff that should be recorded explicitly, not decided silently."
   default     = true
 }
 

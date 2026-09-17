@@ -30,8 +30,8 @@ locals {
 #     either. Same HA outcome, different mechanism.
 #
 #     `enable_vertical_pod_autoscaling` and `horizontal_pod_autoscaling`
-#     are native module toggles — this is the real, checklist-documented
-#     platform difference from AWS: GKE has first-party VPA/HPA-adjacent
+#     are native module toggles — this is a real platform difference
+#     from AWS: GKE has first-party VPA/HPA-adjacent
 #     support built into the cluster resource itself, so unlike
 #     ../../aws/modules/container-service this module does NOT need to
 #     separately Helm-install VPA's 3 controller components or

@@ -23,10 +23,9 @@ terraform {
 # which only exists after the cluster in ../container-service is created —
 # building it here would either be a dangling resource with no real issuer
 # to point at, or force an artificial dependency on the cluster module that
-# breaks the network/iam → container-service ordering the plan doc lays
-# out. Real IRSA role wiring belongs in ../container-service, once the EKS
-# module's OIDC issuer output actually exists. See the plan doc's IAM
-# checklist item and the "十、開放決策" section for this call.
+# breaks the network/iam → container-service ordering. Real IRSA role
+# wiring belongs in ../container-service, once the EKS module's OIDC
+# issuer output actually exists.
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}

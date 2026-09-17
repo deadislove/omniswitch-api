@@ -31,7 +31,7 @@ variable "private_subnet_ids" {
 
 variable "allowed_security_group_ids" {
   type        = list(string)
-  description = "Security groups allowed to reach RDS (5432) and ElastiCache (6379) — normally just the EKS node security group (../container-service's node_security_group_id output), so ingress is scoped to real cluster traffic instead of the whole VPC CIDR. See the plan doc's stance on minimal-capability-over-broad-grant."
+  description = "Security groups allowed to reach RDS (5432) and ElastiCache (6379) — normally just the EKS node security group (../container-service's node_security_group_id output), so ingress is scoped to real cluster traffic instead of the whole VPC CIDR, not a broader grant than necessary."
 }
 
 variable "db_name" {
@@ -60,7 +60,7 @@ variable "db_engine_version" {
 
 variable "db_multi_az" {
   type        = bool
-  description = "Multi-AZ standby (separate from the read replica below — Multi-AZ is synchronous failover protection, the read replica is for read scaling/DR). Recommended: true outside dev, matching the plan doc's HA section and 20260912-gap-improvement-plan.md's P0-1 (real DR needs this on)."
+  description = "Multi-AZ standby (separate from the read replica below — Multi-AZ is synchronous failover protection, the read replica is for read scaling/DR). Recommended: true outside dev — real disaster recovery needs this on."
   default     = false
 }
 

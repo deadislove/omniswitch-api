@@ -21,11 +21,10 @@ terraform {
 # Same "target state, not automatic cutover" posture as ../cloud-saas.
 #
 # Real CloudHSM (dedicated, single-tenant hardware) is explicitly NOT
-# built here — see the plan doc's "十、開放決策" section, item 4: KMS's
-# shared-tenancy HSM backing is judged sufficient for this project's
-# actual compliance requirements, and CloudHSM's operational cost
-# (cluster management, own backup/HA story) isn't justified without a
-# real HSM mandate driving it.
+# built here. KMS's shared-tenancy HSM backing is judged sufficient for
+# this project's actual compliance requirements, and CloudHSM's
+# operational cost (cluster management, own backup/HA story) isn't
+# justified without a real HSM mandate driving it.
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}

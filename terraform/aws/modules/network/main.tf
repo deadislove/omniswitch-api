@@ -162,9 +162,8 @@ resource "aws_route_table_association" "private" {
 
 # --- Base security group — deliberately minimal. Ingress rules for the
 #     cluster (node-to-node, control-plane-to-node) and for managed
-#     services (RDS, ElastiCache) are each added by their own module in a
-#     later phase, not centralized here — see the plan doc's own note on
-#     this under "Network". ---
+#     services (RDS, ElastiCache) are each added by their own module,
+#     not centralized here. ---
 
 resource "aws_security_group" "base" {
   name        = "${local.name}-base"
