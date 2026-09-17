@@ -168,15 +168,21 @@ resource "aws_route_table_association" "private" {
 
 resource "aws_security_group" "base" {
   name        = "${local.name}-base"
-  description = "Base security group - egress-open, no ingress rules. Later phases add their own scoped ingress rules rather than widening this one."
+  description = "Base security group - egress scoped to the VPC only, no ingress rules. Later phases add their own scoped ingress rules rather than widening this one."
   vpc_id      = aws_vpc.this.id
 
   egress {
-    description = "Allow all outbound - inbound is deliberately not opened here"
+    # Scoped to the VPC's own CIDR, not 0.0.0.0/0 - nothing currently
+    # attaches to this group (it's exposed as an output for future use),
+    # and unrestricted egress to the public internet is unnecessary for
+    # anything that would. A resource that genuinely needs internet
+    # egress (e.g. via NAT Gateway) should get its own scoped security
+    # group, not rely on this one being wide open.
+    description = "Allow outbound within the VPC only - inbound is deliberately not opened here"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = merge(local.common_tags, {

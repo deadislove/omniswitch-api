@@ -59,11 +59,13 @@ resource "aws_security_group" "rds" {
   }
 
   egress {
-    description = "Allow all outbound"
+    # Scoped to the VPC, not 0.0.0.0/0 - RDS itself never needs to
+    # originate a connection to the public internet.
+    description = "Allow outbound within the VPC only"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = merge(local.common_tags, { Name = "${local.name}-rds" })
@@ -135,11 +137,13 @@ resource "aws_security_group" "redis" {
   }
 
   egress {
-    description = "Allow all outbound"
+    # Scoped to the VPC, not 0.0.0.0/0 - same reasoning as
+    # aws_security_group.rds above.
+    description = "Allow outbound within the VPC only"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = merge(local.common_tags, { Name = "${local.name}-redis" })

@@ -54,6 +54,8 @@ module "aks" {
   agents_max_count     = var.node_max_count
   auto_scaling_enabled = true
 
+  private_cluster_enabled = var.private_cluster_enabled
+
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 

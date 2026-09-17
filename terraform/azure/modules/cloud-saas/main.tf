@@ -160,6 +160,17 @@ resource "azurerm_storage_account" "backup" {
   account_tier             = "Standard"
   account_replication_type = var.backup_storage_replication_type
 
+  # Deny-by-default network ACL — same reasoning as
+  # ../../bootstrap/main.tf's state storage account. Real access (once
+  # the app is wired to write here — see
+  # ../../../docs/technical/deployment/infrastructure-as-code.md's known
+  # gaps) needs a private endpoint or an explicit ip_rules entry, not yet
+  # configured.
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
+
   tags = var.tags
 }
 
@@ -187,6 +198,18 @@ resource "azurerm_key_vault" "app_secrets" {
   sku_name = "standard"
 
   rbac_authorization_enabled = true
+
+  # Deny-by-default network ACL — same reasoning as the storage account
+  # above. Real, not-yet-resolved consequence: azurerm_key_vault_secret
+  # below calls this vault's own data-plane endpoint, which this ACL
+  # also gates — whoever applies this module for real needs their own
+  # IP allow-listed via ip_rules (or a private endpoint) before the
+  # secret-write step succeeds, not just before the vault itself is
+  # created. Same as ../hsm/main.tf's identical note on its own vault.
+  network_acls {
+    default_action = "Deny"
+    bypass         = "AzureServices"
+  }
 
   tags = var.tags
 }

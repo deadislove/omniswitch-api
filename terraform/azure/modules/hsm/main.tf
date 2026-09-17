@@ -46,6 +46,21 @@ resource "azurerm_key_vault" "hsm" {
   # ../../aws/modules/hsm's deletion_window_in_days on its KMS key.
   purge_protection_enabled = true
 
+  # Deny-by-default network ACL. Real, not-yet-resolved consequence: the
+  # RBAC role assignment below grants the Terraform identity permission
+  # to manage keys, but RBAC and network ACLs are enforced separately —
+  # azurerm_key_vault_key below calls this vault's own data-plane
+  # endpoint, which this ACL also gates. Whoever actually applies this
+  # module for real needs their own IP allow-listed via ip_rules (or a
+  # private endpoint) BEFORE the key-creation step will succeed, not
+  # just before the vault itself is created. Not yet configured — same
+  # class of gap as the connection-pooling gap documented in
+  # ../../../docs/technical/deployment/infrastructure-as-code.md.
+  network_acls {
+    default_action = "Deny"
+    bypass         = "AzureServices"
+  }
+
   tags = var.tags
 }
 

@@ -47,6 +47,23 @@ resource "azurerm_storage_account" "terraform_state" {
     versioning_enabled = true
   }
 
+  # Deny-by-default network ACL, with only first-party Azure services
+  # bypassing it — Azure's own default when no network_rules block is
+  # declared at all is "Allow" (see
+  # https://learn.microsoft.com/en-us/azure/storage/common/storage-network-security),
+  # which would leave the state backend reachable from any IP on the
+  # internet (auth-gated, but still a wider blast radius than needed).
+  # This does mean `terraform init` against this backend won't work from
+  # an arbitrary laptop/CI runner until whoever operates this adds their
+  # own IP via ip_rules or a private endpoint — not yet configured, same
+  # "secure by default, not yet wired for real usage" posture as the
+  # connection-pooling gap documented in
+  # ../../../docs/technical/deployment/infrastructure-as-code.md.
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
+
   tags = var.tags
 }
 

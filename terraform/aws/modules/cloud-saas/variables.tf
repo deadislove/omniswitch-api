@@ -21,7 +21,7 @@ variable "vpc_id" {
 
 variable "vpc_cidr" {
   type        = string
-  description = "VPC CIDR — output of ../network. Used only as a fallback ingress source if allowed_security_group_ids is empty; prefer scoping ingress to the actual cluster security group instead of the whole VPC."
+  description = "VPC CIDR — output of ../network. Scopes the RDS/Redis security groups' egress to the VPC instead of 0.0.0.0/0 — neither service needs to originate a connection to the public internet."
 }
 
 variable "private_subnet_ids" {

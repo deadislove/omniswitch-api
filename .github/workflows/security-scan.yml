@@ -39,17 +39,24 @@ jobs:
           docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \
             --scanners vuln,misconfig,secret \
             --secret-config /repo/trivy-secret.yaml \
+            --ignorefile /repo/.trivyignore.yaml \
             --severity CRITICAL,HIGH \
             /repo || true
 
       # Blocking gate, CRITICAL only — currently a clean baseline (0
       # findings), so this actually catches new critical issues instead of
-      # permanently failing on day one.
+      # permanently failing on day one. --ignorefile is explicit here for
+      # the same reason --secret-config is: Trivy's own default ignorefile
+      # lookup (".trivyignore", not the ".yaml" this repo uses for
+      # path-scoped entries) resolves relative to the container's own
+      # working directory, not /repo — see .trivyignore.yaml's own header
+      # comment for what's suppressed here and why.
       - name: Critical-only gate (blocking)
         run: |
           docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \
             --scanners vuln,misconfig,secret \
             --secret-config /repo/trivy-secret.yaml \
+            --ignorefile /repo/.trivyignore.yaml \
             --severity CRITICAL \
             --exit-code 1 \
             /repo

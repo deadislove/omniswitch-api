@@ -1,0 +1,20 @@
+misconfigurations:
+  # AWS-0104: unrestricted (0.0.0.0/0) egress on the EKS managed node
+  # group's security group. This rule lives inside the pinned, community
+  # terraform-aws-modules/eks module (node_groups.tf), not this repo's
+  # own code — it's the module's own documented default
+  # (node_security_group_enable_recommended_rules, on by default), not
+  # something this project wrote. Scoping it down would break the
+  # cluster: worker nodes pull container images from public registries
+  # (registry.k8s.io, ghcr.io, quay.io, docker.io, ...) whose IP ranges
+  # are neither fixed nor enumerable, so restricting node egress to a
+  # specific CIDR list isn't a viable fix, only a way to break image
+  # pulls. See terraform/aws/modules/container-service/main.tf's own
+  # comment on this module for the broader context. Every other
+  # AWS-0104 finding in this repo's own code (base/RDS/Redis security
+  # groups) is fixed for real (scoped to the VPC CIDR, not ignored) —
+  # this entry covers only the one finding that is genuinely outside
+  # this project's control.
+  - id: AWS-0104
+    paths:
+      - "terraform-aws-modules/eks/aws/node_groups.tf"

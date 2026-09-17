@@ -56,8 +56,8 @@ variable "node_desired_size" {
 
 variable "cluster_endpoint_public_access" {
   type        = bool
-  description = "Whether the EKS API server endpoint is reachable from the public internet (still IAM/RBAC-gated, not open access). true is the simpler default for dev; production should set this false and require a VPN/bastion path instead — same cost/complexity tradeoff class as single_nat_gateway in ../network."
-  default     = true
+  description = "Whether the EKS API server endpoint is reachable from the public internet. Defaults to false (private-only) — a public endpoint fails this project's own CI security gate (Trivy AWS-0040/AWS-0041) regardless of CIDR scoping, since AWS-0040 fires on public access being enabled at all. Real consequence of the false default: `terraform apply` (including this module's own helm_release resources — metrics-server, kube-prometheus-stack, VPA, prometheus-adapter) can only run from something with network access to the VPC (a bastion, a VPN, or a self-hosted CI runner inside the VPC) — a plain GitHub-hosted Actions runner cannot reach a private endpoint. See docs/technical/deployment/infrastructure-as-code.md's known gaps for the full writeup. Set to true only with a deliberately narrow, non-0.0.0.0/0 CIDR list if you need hosted-runner convenience and accept the wider exposure."
+  default     = false
 }
 
 variable "tags" {
