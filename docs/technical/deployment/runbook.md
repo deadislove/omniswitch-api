@@ -1,13 +1,47 @@
 # Deployment Runbook
 
-The literal command sequence for taking a fresh, empty Kubernetes
-cluster to a working deployment. See
-[`prerequisites.md`](./prerequisites.md) for *why* each prerequisite
-step below is needed and the specific silent-failure modes each one
-guards against — this document is the commands, that one is the
-reasoning.
+The literal command sequence for taking nothing but a cloud account to
+a working deployment: provisioning the cluster itself (step 1), then
+taking that fresh, empty Kubernetes cluster to a working deployment
+(steps 2 onward). See [`prerequisites.md`](./prerequisites.md) for
+*why* each prerequisite step below is needed and the specific
+silent-failure modes each one guards against — this document is the
+commands, that one is the reasoning.
 
-## 1. Cluster infrastructure
+## 1. Provisioning the cluster itself (Terraform)
+
+```bash
+# One-time, per cloud account/project/subscription — creates the
+# remote state backend itself, using local state (see
+# ../../../terraform/README.md for the chicken-egg reasoning):
+cd terraform/aws/bootstrap    # or terraform/gcp/bootstrap, terraform/azure/bootstrap
+terraform init
+terraform apply
+
+# Then, per environment:
+cd ../environments/dev
+cp terraform.tfvars.example terraform.tfvars   # fill in real values, never commit
+cp backend.hcl.example backend.hcl             # fill in the bootstrap output values, never commit
+terraform init -backend-config=backend.hcl
+terraform plan
+# terraform apply only after a human has reviewed the plan output
+```
+
+See [`infrastructure-as-code.md`](./infrastructure-as-code.md) for the
+module breakdown and known gaps, and
+[`../../../terraform/README.md`](../../../terraform/README.md) for the
+full per-module detail. This is the only step in this runbook that
+provisions the cluster, VPC/VNet, managed database/cache, and KMS/Key
+Vault themselves; everything from step 2 onward assumes those already
+exist and only touches what's *inside* the cluster. **As of this
+writing, this step has been written and validated (`terraform
+fmt`/`validate`) but never run against a
+real account** — `terraform plan`/`apply` need real cloud credentials,
+which don't exist in the environment this runbook itself was authored
+in. Treat steps 2 onward as the proven half of this runbook and step 1
+as the unproven half until someone has actually run it.
+
+## 2. Cluster infrastructure
 
 ```
 # ingress-nginx, cert-manager, and a ClusterIssuer named letsencrypt-prod —
@@ -19,7 +53,7 @@ A default `StorageClass` (prerequisites.md section 1) needs no action on
 a managed Kubernetes offering (EKS/GKE/AKS) — verify one exists with
 `kubectl get storageclass` before continuing on anything else.
 
-## 2. Namespace and configuration
+## 3. Namespace and configuration
 
 ```bash
 kubectl create namespace payments
@@ -33,7 +67,7 @@ real secrets backend — see [`../k8s/application.md`](../k8s/application.md)'s
 `external-secrets-example.yaml` section). Applying the file as-is is
 fine for a local/test cluster, not for anything real.
 
-## 3. Network policy
+## 4. Network policy
 
 ```bash
 kubectl apply -f k8s/network-policy.yaml
@@ -44,7 +78,7 @@ Applied here, before any of the pods it governs exist — see
 `default-deny-all` policy after pods are already talking to each other
 isn't reliably equivalent across every CNI.
 
-## 4. Data layer
+## 5. Data layer
 
 ```bash
 kubectl apply -f k8s/postgres.yaml
@@ -65,7 +99,7 @@ Waiting for each layer before applying the next isn't strictly required
 an immediate, localized error instead of a confusing failure two steps
 later.
 
-## 5. The application
+## 6. The application
 
 ```bash
 kubectl apply -f k8s/serviceaccount.yaml
@@ -95,7 +129,7 @@ migration-related error, this is the first thing to suspect; scaling to
 1 replica for the very first deploy, then back to 3, sidesteps the
 question entirely if it turns out to matter.
 
-## 6. Ingress
+## 7. Ingress
 
 ```bash
 kubectl apply -f k8s/ingress.yaml
@@ -107,7 +141,7 @@ HTTPS to work — `cert-manager` issuing against a real ACME server can
 take anywhere from a few seconds (self-signed, local testing) to a
 minute or more (real Let's Encrypt HTTP-01 challenge).
 
-## 7. Background jobs
+## 8. Background jobs
 
 ```bash
 kubectl apply -f k8s/archiving-cronjob.yaml
@@ -116,7 +150,7 @@ kubectl apply -f k8s/partition-maintenance-cronjob.yaml
 kubectl apply -f k8s/drop-cutover-tables-job.yaml
 ```
 
-No ordering dependency on step 6 or on each other — see
+No ordering dependency on step 7 or on each other — see
 [`../jobs.md`](../jobs.md) for what each one does.
 
 ## Verifying the deployment, not just that every `kubectl apply` succeeded

@@ -1,0 +1,25 @@
+# Copy to terraform.tfvars (gitignored — see ../../../.gitignore) and fill
+# in real values. Never commit the real file.
+
+aws_region  = "us-east-1"
+github_org  = "your-github-org"
+github_repo = "omniswitch-api"
+
+# Uncomment to override defaults:
+# vpc_cidr            = "10.0.0.0/16"
+# availability_zones  = ["us-east-1a", "us-east-1b", "us-east-1c"]
+# single_nat_gateway  = true
+# github_deploy_ref   = "refs/heads/main"
+# cluster_version     = "1.31"
+# node_instance_types = ["m6i.large"]
+# node_min_size       = 3
+# node_max_size       = 6
+# node_desired_size   = 3
+# db_name                  = "omniswitch_payments"
+# db_username              = "omniswitch_admin"
+# db_instance_class        = "db.t4g.medium"
+# db_multi_az              = false
+# db_create_read_replica   = false
+# redis_node_type          = "cache.t4g.micro"
+# redis_num_cache_clusters = 2
+# hsm_allowed_principal_arns = []

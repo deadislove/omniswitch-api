@@ -51,6 +51,22 @@ scripts/calibration/synthetic-agent-charges.json
 #claude
 .claude
 
+# Terraform (real state, real cloud IDs — never commit; see terraform/README.md)
+# .terraform.lock.hcl is deliberately NOT ignored — that file pins provider
+# versions (like package-lock.json) and should be committed for reproducibility.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+# backend.hcl holds the real state-bucket name (contains the AWS account ID)
+# — real values, not for commit. .terraform.lock.hcl is a different file
+# (provider version pins) and is NOT covered by this pattern.
+backend.hcl
+!backend.hcl.example
+crash.log
+crash.*.log
+
 # Other
 logs
 spec

@@ -1,0 +1,7 @@
+# Copy to backend.hcl (gitignored) and fill in the real value, then:
+#   terraform init -backend-config=backend.hcl
+#
+# bucket comes from `terraform output` in ../../bootstrap, after that
+# root module has been applied once for this GCP project.
+
+bucket = "<your-gcp-project-id>-terraform-state"
