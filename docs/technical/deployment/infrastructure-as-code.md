@@ -25,6 +25,33 @@ Each cloud's modules are wired together in its own
 `environments/dev/` root module. `staging/`/`production/` exist as
 empty scaffolding, not yet filled in.
 
+## Architecture diagrams
+
+Each diagram below is the same three-tier comparison, one per cloud:
+**local dev** (`docker-compose.yml`, the one tier that's actually
+verified to run) → **current** (the same topology self-hosted inside
+`k8s/` today) → **cloud target state** (this cloud's `terraform/`
+modules). Dashed arrows connect each component to its equivalent one
+tier down, and each cloud's own real connection-pooling gap (see
+"Known gaps" below) is called out directly on the diagram rather than
+left implicit.
+
+These are illustrative architecture diagrams, not screenshots of a
+running system — they visualize the design described in this doc and
+in `terraform/`, not proof that any of it has been applied.
+
+### AWS
+
+![AWS: docker-compose → self-hosted k8s → EKS/RDS/ElastiCache target state, with the RDS Proxy connection-pooling gap flagged](./img/aws.jpg)
+
+### GCP
+
+![GCP: docker-compose → self-hosted k8s → GKE/Cloud SQL/Memorystore target state, with the Cloud SQL Auth Proxy connection-pooling gap flagged](./img/gcp.jpg)
+
+### Azure
+
+![Azure: docker-compose → self-hosted k8s → AKS/PostgreSQL Flexible Server/Azure Cache target state, with the built-in pgbouncer.enabled parameter gap flagged, and the two separate Key Vaults (Standard for secrets, Premium HSM-backed for the crypto key) visible side by side](./img/azure.jpg)
+
 ## The boundary with `k8s/`
 
 Terraform's scope stops at the cluster and everything below it — VPC,
