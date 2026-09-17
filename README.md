@@ -1,5 +1,8 @@
 # OmniSwitch Payment Gateway API
 
+[![CI](https://github.com/deadislove/omniswitch-api/actions/workflows/ci.yml/badge.svg)](https://github.com/deadislove/omniswitch-api/actions/workflows/ci.yml)
+[![Security Scan](https://github.com/deadislove/omniswitch-api/actions/workflows/security-scan.yml/badge.svg)](https://github.com/deadislove/omniswitch-api/actions/workflows/security-scan.yml)
+
 > Enterprise-grade, high-reliability Payment Gateway API Service built with **NestJS (TypeScript)**, following **Modular Monolith + Hexagonal Architecture (Ports & Adapters)** and **Domain-Driven Design (DDD)**.
 
 A payment gateway sits between a merchant and the card networks — the
