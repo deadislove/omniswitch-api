@@ -8,7 +8,9 @@ import { MerchantEntity } from './merchant.entity';
 import { TokenRevocationService } from '../../shared/auth/token-revocation.service';
 import { VaultTransitService } from '../../shared/vault/vault-transit.service';
 import { KYCProviderPort } from './kyc-provider.port';
+import { KYBProviderPort, BeneficialOwner } from './kyb-provider.port';
 import { lookupIndustryRiskCategory } from './mcc-risk-lookup';
+import { SanctionsScreeningService } from './sanctions/sanctions-screening.service';
 
 const BCRYPT_ROUNDS = 12;
 // Fixed dummy hash compared against on an unknown apiKeyId, so lookup vs.
@@ -33,6 +35,8 @@ export class MerchantService {
     private readonly tokenRevocation: TokenRevocationService,
     private readonly vaultTransit: VaultTransitService,
     private readonly kycProvider: KYCProviderPort,
+    private readonly kybProvider: KYBProviderPort,
+    private readonly sanctionsScreening: SanctionsScreeningService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -158,6 +162,30 @@ export class MerchantService {
   }
 
   /**
+   * Same keyset-pagination shape as findActiveAutoManagedBatch() above,
+   * for SanctionsScreeningSweepService's weekly re-screening sweep —
+   * filters out merchants already `HIT` in SQL (a confirmed match
+   * doesn't need re-screening; the action it would have blocked already
+   * was), not merely `!riskTierAutoManaged`-style opt-out, since
+   * sanctions screening has no per-merchant opt-out at all.
+   */
+  async findActiveNotHitBatch(afterId: string | undefined, limit: number): Promise<MerchantEntity[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager
+        .createQueryBuilder(MerchantEntity, 'm')
+        .where('m.isActive = :isActive', { isActive: true })
+        .andWhere('m.sanctionsScreeningStatus != :hit', { hit: 'HIT' })
+        .andWhere(afterId ? 'm.id > :afterId' : '1=1', afterId ? { afterId } : {})
+        .orderBy('m.id', 'ASC')
+        .take(limit)
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
    * Creates a new merchant with a freshly generated API Key ID/Secret pair
    * and HMAC signing key. The plaintext secret and HMAC key are only ever
    * returned here, at creation time — the API key secret is hashed
@@ -165,10 +193,26 @@ export class MerchantService {
    * Vault Transit (it can't be hashed like the API key secret, since
    * HmacSignatureGuard needs the plaintext back to compute HMACs, not just
    * a yes/no comparison).
+   *
+   * Sanctions-screens the supplied `legalName` (or, if omitted, `name` at
+   * *degraded* confidence) before anything is persisted — a `HIT` throws
+   * and nothing is created at all: no merchant row, no API key, no HMAC
+   * secret. See docs/business-domain/merchants.md#step-1--identity-capture-and-sanctions-screening-at-creation.
+   * A `POTENTIAL_MATCH` does not block creation; the merchant is created
+   * normally with the flag set, and a notification fires once the row
+   * exists (emitted as `merchant.sanctions_screening.flagged` rather than
+   * calling `SanctionsNotificationDispatcherService` directly — that
+   * service depends on `MerchantService` to read notification config,
+   * so this module resolves the same "who calls whom" problem
+   * `updateReservePolicy()`'s `merchant.reserve_policy.escalated` event
+   * already solves, just within this module instead of across the
+   * Merchant/Payment boundary).
    */
   async createMerchant(params: {
     merchantId: string;
     name: string;
+    legalName?: string;
+    taxId?: string;
     roles: string[];
     platformFeeBps?: number;
     settlementCurrency?: string;
@@ -234,6 +278,22 @@ export class MerchantService {
       });
     }
 
+    const screening = await this.sanctionsScreening.screen({
+      legalName: params.legalName,
+      displayName: params.name,
+      taxId: params.taxId,
+    });
+    if (screening.status === 'HIT') {
+      this.logger.warn(
+        `Merchant creation blocked for "${params.merchantId}": sanctions HIT against "${screening.matchedListEntry}"`,
+      );
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: `Sanctions screening matched "${screening.matchedListEntry}" — merchant not created`,
+        code: 'SANCTIONS_SCREENING_HIT',
+      });
+    }
+
     const apiKeySecret = randomToken('sk');
     const hmacSecret = randomBytes(32).toString('hex');
     const merchant = this.merchantRepo.create({
@@ -245,6 +305,12 @@ export class MerchantService {
       hmacSecretCiphertext: await this.vaultTransit.encrypt(hmacSecret),
       roles: params.roles,
       isActive: true,
+      ...(params.legalName ? { legalName: params.legalName } : {}),
+      ...(params.taxId ? { taxId: params.taxId } : {}),
+      sanctionsScreeningStatus: screening.status,
+      sanctionsScreeningConfidence: screening.confidence,
+      sanctionsScreenedAt: new Date(),
+      sanctionsMatchDetails: this.sanctionsScreening.formatMatchDetails(screening.matchedListEntry, screening.score),
       ...(params.platformFeeBps !== undefined ? { platformFeeBps: params.platformFeeBps } : {}),
       ...(params.settlementCurrency ? { settlementCurrency: params.settlementCurrency.toUpperCase() } : {}),
       ...(params.reserveBps !== undefined ? { reserveBps: params.reserveBps } : {}),
@@ -258,6 +324,16 @@ export class MerchantService {
 
     await this.merchantRepo.save(merchant);
     this.logger.log(`Created merchant ${params.merchantId} (apiKeyId=${merchant.apiKeyId})`);
+
+    if (screening.status === 'POTENTIAL_MATCH') {
+      this.eventEmitter.emit('merchant.sanctions_screening.flagged', {
+        merchantId: params.merchantId,
+        status: screening.status,
+        matchedListEntry: screening.matchedListEntry,
+        score: screening.score,
+        confidence: screening.confidence,
+      });
+    }
 
     return { merchant, apiKeySecret, hmacSecret };
   }
@@ -489,12 +565,43 @@ export class MerchantService {
    * Resolves synchronously against the mock provider (`KYC_PROVIDER=mock`,
    * the default) or asynchronously against a real one (`=persona`) — see
    * `confirmKyc()` for the async completion path.
+   *
+   * Also re-screens sanctions against the submitted `legalName`, at full
+   * confidence — superseding whatever degraded-confidence result (based
+   * on the display `name` alone) this merchant got at creation, if it
+   * never supplied a `legalName` then. A `HIT` rejects the submission
+   * outright: nothing is persisted, `kycStatus` is left exactly as it
+   * was, same "block before anything is written" posture
+   * `createMerchant()` uses. See docs/business-domain/marketplace-and-payouts.md's
+   * "KYC submission also re-screens sanctions" note.
    */
   async submitKyc(merchantId: string, legalName: string, taxId: string): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
+
+    const screening = await this.sanctionsScreening.screen({ legalName, displayName: merchant.name, taxId });
+    if (screening.status === 'HIT') {
+      this.logger.warn(
+        `KYC submission blocked for merchant ${merchantId}: sanctions HIT against "${screening.matchedListEntry}"`,
+      );
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: `Sanctions screening matched "${screening.matchedListEntry}" — KYC submission rejected`,
+        code: 'SANCTIONS_SCREENING_HIT',
+      });
+    }
+
     const { status, applicationId, reason } = await this.kycProvider.verify({ legalName, taxId });
     merchant.kycLegalName = legalName;
     merchant.kycTaxId = taxId;
+    merchant.legalName = legalName;
+    merchant.taxId = taxId;
+    merchant.sanctionsScreeningStatus = screening.status;
+    merchant.sanctionsScreeningConfidence = screening.confidence;
+    merchant.sanctionsScreenedAt = new Date();
+    merchant.sanctionsMatchDetails = this.sanctionsScreening.formatMatchDetails(
+      screening.matchedListEntry,
+      screening.score,
+    );
     if (status === 'PENDING') {
       merchant.kycStatus = 'PENDING_REVIEW';
       merchant.kycApplicationId = applicationId;
@@ -506,6 +613,17 @@ export class MerchantService {
     this.logger.log(
       `KYC for merchant ${merchantId}: ${merchant.kycStatus} (applicationId=${applicationId}${reason ? `, reason=${reason}` : ''})`,
     );
+
+    if (screening.status === 'POTENTIAL_MATCH') {
+      this.eventEmitter.emit('merchant.sanctions_screening.flagged', {
+        merchantId,
+        status: screening.status,
+        matchedListEntry: screening.matchedListEntry,
+        score: screening.score,
+        confidence: screening.confidence,
+      });
+    }
+
     return merchant;
   }
 
@@ -539,6 +657,116 @@ export class MerchantService {
     await this.merchantRepo.save(merchant);
     this.logger.log(
       `KYC for merchant ${merchant.merchantId} confirmed ${outcome} (applicationId=${applicationId}${reason ? `, reason=${reason}` : ''})`,
+    );
+  }
+
+  /**
+   * Submits (or re-submits, after a REJECTED decision) a CONNECTED
+   * merchant's KYB (Know Your Business) application — structurally the
+   * same shape as `submitKyc()`, answering a different question (see
+   * `KYBProviderPort`'s docblock). Deliberately independent of
+   * `kycStatus`: a merchant can be `kycStatus: 'VERIFIED'` (the
+   * individual checks out) while `kybStatus` is still `NOT_STARTED` (the
+   * business itself was never separately verified) — this method exists
+   * specifically because those are different, both-required questions.
+   * Not currently wired into any payout gate — see `MerchantEntity.kybStatus`'s
+   * docblock for why.
+   *
+   * Also re-screens sanctions against the submitted `legalName`, same
+   * "any entry point that captures a real legal name re-screens" posture
+   * `submitKyc()` already established — a business's legal name is
+   * exactly the kind of identity sanctions screening exists to catch,
+   * and it would be an inconsistent gap if KYB submission were the one
+   * legal-name-capturing entry point that skipped it.
+   */
+  async submitKyb(
+    merchantId: string,
+    legalName: string,
+    taxId: string,
+    country: string,
+    beneficialOwners?: BeneficialOwner[],
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+
+    const screening = await this.sanctionsScreening.screen({ legalName, displayName: merchant.name, taxId });
+    if (screening.status === 'HIT') {
+      this.logger.warn(
+        `KYB submission blocked for merchant ${merchantId}: sanctions HIT against "${screening.matchedListEntry}"`,
+      );
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: `Sanctions screening matched "${screening.matchedListEntry}" — KYB submission rejected`,
+        code: 'SANCTIONS_SCREENING_HIT',
+      });
+    }
+
+    const { status, applicationId, reason } = await this.kybProvider.verify({
+      legalName,
+      taxId,
+      country,
+      beneficialOwners,
+    });
+    merchant.kybLegalName = legalName;
+    merchant.kybTaxId = taxId;
+    merchant.kybCountry = country;
+    merchant.kybBeneficialOwners = beneficialOwners ?? null;
+    merchant.legalName = legalName;
+    merchant.taxId = taxId;
+    merchant.sanctionsScreeningStatus = screening.status;
+    merchant.sanctionsScreeningConfidence = screening.confidence;
+    merchant.sanctionsScreenedAt = new Date();
+    merchant.sanctionsMatchDetails = this.sanctionsScreening.formatMatchDetails(
+      screening.matchedListEntry,
+      screening.score,
+    );
+    if (status === 'PENDING') {
+      merchant.kybStatus = 'PENDING_REVIEW';
+      merchant.kybApplicationId = applicationId;
+    } else {
+      merchant.kybStatus = status === 'APPROVED' ? 'VERIFIED' : 'REJECTED';
+      merchant.kybApplicationId = null;
+    }
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `KYB for merchant ${merchantId}: ${merchant.kybStatus} (applicationId=${applicationId}${reason ? `, reason=${reason}` : ''})`,
+    );
+
+    if (screening.status === 'POTENTIAL_MATCH') {
+      this.eventEmitter.emit('merchant.sanctions_screening.flagged', {
+        merchantId,
+        status: screening.status,
+        matchedListEntry: screening.matchedListEntry,
+        score: screening.score,
+        confidence: screening.confidence,
+      });
+    }
+
+    return merchant;
+  }
+
+  /**
+   * Called from `POST /webhooks/kyb` (see `KybWebhookGuard`) — identical
+   * shape to `confirmKyc()`, including that method's own replica-lag fix
+   * (`findMerchantOnMaster()`), for the same reason: `kybApplicationId`
+   * was itself written moments earlier by `submitKyb()`, in the same
+   * real-world flow this webhook reacts to.
+   */
+  async confirmKyb(applicationId: string, outcome: 'VERIFIED' | 'REJECTED', reason?: string): Promise<void> {
+    const merchant = await this.findMerchantOnMaster({ kybApplicationId: applicationId });
+    if (!merchant) {
+      this.logger.warn(`KYB webhook: no merchant found for applicationId=${applicationId}, ignoring`);
+      return;
+    }
+    if (merchant.kybStatus !== 'PENDING_REVIEW') {
+      this.logger.log(
+        `KYB webhook: merchant ${merchant.merchantId} (applicationId=${applicationId}) is already ${merchant.kybStatus}, ignoring duplicate confirmation`,
+      );
+      return;
+    }
+    merchant.kybStatus = outcome;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `KYB for merchant ${merchant.merchantId} confirmed ${outcome} (applicationId=${applicationId}${reason ? `, reason=${reason}` : ''})`,
     );
   }
 
@@ -682,6 +910,105 @@ export class MerchantService {
     merchant.amlReviewAutoManaged = enabled;
     await this.merchantRepo.save(merchant);
     this.logger.log(`amlReviewAutoManaged for merchant ${merchantId} set to ${enabled}`);
+    return merchant;
+  }
+
+  /**
+   * On-demand re-screen (`POST /admin/merchants/:id/sanctions/rescreen`)
+   * against this merchant's currently-stored `legalName`/`taxId` (or
+   * `name`, if no `legalName` was ever supplied) — the same check
+   * `createMerchant()`/`submitKyc()` run, without waiting for the weekly
+   * sweep. Unlike those two, a `HIT` here does **not** throw — the
+   * merchant already exists; there's no "creation" left to block. It's
+   * persisted and notified exactly like the sweep finding one, via
+   * `SanctionsScreeningSweepService`'s shared `applySanctionsScreeningResult()`
+   * path — this method is a thin, single-merchant wrapper over the same
+   * logic, not a separate code path.
+   */
+  async rescreenSanctions(merchantId: string): Promise<{ merchant: MerchantEntity; previousStatus: string }> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previousStatus = merchant.sanctionsScreeningStatus;
+    const screening = await this.sanctionsScreening.screen({
+      legalName: merchant.legalName,
+      displayName: merchant.name,
+      taxId: merchant.taxId,
+    });
+    const updated = await this.applySanctionsScreeningResult(merchantId, screening);
+    return { merchant: updated, previousStatus };
+  }
+
+  /**
+   * Persists a screening outcome onto an existing merchant — shared by
+   * `rescreenSanctions()` above and `SanctionsScreeningSweepService`'s
+   * batch sweep. Does not decide whether to notify; callers compare the
+   * returned entity's new status against whatever they already knew the
+   * previous status was (the sweep already has it from its own batch
+   * fetch; `rescreenSanctions()` captures it just before calling this).
+   */
+  async applySanctionsScreeningResult(
+    merchantId: string,
+    screening: {
+      status: 'CLEAR' | 'POTENTIAL_MATCH' | 'HIT';
+      confidence: 'FULL' | 'DEGRADED';
+      matchedListEntry?: string;
+      score?: number;
+    },
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.sanctionsScreeningStatus = screening.status;
+    merchant.sanctionsScreeningConfidence = screening.confidence;
+    merchant.sanctionsScreenedAt = new Date();
+    merchant.sanctionsMatchDetails = this.sanctionsScreening.formatMatchDetails(
+      screening.matchedListEntry,
+      screening.score,
+    );
+    await this.merchantRepo.save(merchant);
+    return merchant;
+  }
+
+  /**
+   * Operator-initiated via `PATCH .../sanctions-review` — records a
+   * determination on a `POTENTIAL_MATCH`/`HIT` (false positive vs.
+   * confirmed). Unlike `setAmbiguousRiskFlagManual()`/`setAmlReviewFlagManual()`,
+   * this does **not** disable future automatic re-screening — see
+   * `MerchantEntity.sanctionsReviewResolution`'s docblock for why. A
+   * `CLEARED` resolution resets `sanctionsScreeningStatus` back to
+   * `CLEAR` (the operator's determination that the current flag is a
+   * false positive); `CONFIRMED` leaves the status exactly as it was —
+   * a confirmed hit should stay visibly flagged, not appear to clear
+   * itself just because a human looked at it.
+   */
+  async applySanctionsReview(
+    merchantId: string,
+    resolution: 'CLEARED' | 'CONFIRMED',
+    reason: string,
+    reviewedBy: string,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.sanctionsReviewResolution = resolution;
+    merchant.sanctionsReviewedBy = reviewedBy;
+    merchant.sanctionsReviewedAt = new Date();
+    if (resolution === 'CLEARED') {
+      merchant.sanctionsScreeningStatus = 'CLEAR';
+    }
+    await this.merchantRepo.save(merchant);
+    this.logger.warn(`Sanctions review for merchant ${merchantId}: ${resolution} by ${reviewedBy} (${reason})`);
+    return merchant;
+  }
+
+  async updateSanctionsNotificationChannel(
+    merchantId: string,
+    channel: 'EMAIL' | 'SLACK' | 'WEBHOOK',
+    target: string | null,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = `${merchant.sanctionsNotificationChannel}:${merchant.sanctionsNotificationTarget ?? '(none)'}`;
+    merchant.sanctionsNotificationChannel = channel;
+    merchant.sanctionsNotificationTarget = target;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `Sanctions notification channel for merchant ${merchantId} changed from ${previous} to ${channel}:${target ?? '(none)'}`,
+    );
     return merchant;
   }
 

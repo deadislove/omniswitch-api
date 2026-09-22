@@ -3,7 +3,7 @@ import {
   AmlReviewNotificationPort,
   AmlReviewNotificationPayload,
 } from '../../ports/outbound/aml-review-notification.port';
-import { postJsonNotification } from './notification-delivery.util';
+import { postJsonNotification } from '../../../../shared/utils/notification-delivery.util';
 
 /**
  * Slack AML-Review Notification Adapter — same Incoming-Webhook-URL,

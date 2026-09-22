@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Req, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { MerchantService } from './merchant.service';
 import {
@@ -15,7 +15,10 @@ import {
   UpdatePayoutReservePolicyDto,
   UpdateRiskTierAutoDto,
   UpdatePspEntitlementDto,
+  UpdateSanctionsReviewDto,
+  UpdateSanctionsNotificationChannelDto,
   SubmitKycDto,
+  SubmitKybDto,
   MerchantSummaryDto,
   MerchantCreatedResponseDto,
   RotateApiKeyResponseDto,
@@ -60,6 +63,8 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     payoutReserveHoldDays: merchant.payoutReserveHoldDays,
     kycStatus: merchant.kycStatus,
     kycApplicationId: merchant.kycApplicationId ?? null,
+    kybStatus: merchant.kybStatus,
+    kybApplicationId: merchant.kybApplicationId ?? null,
     enabledPspProviders: merchant.enabledPspProviders,
     ambiguousRiskFlagged: merchant.ambiguousRiskFlagged,
     ambiguousRiskFlaggedAt: merchant.ambiguousRiskFlaggedAt?.toISOString() ?? null,
@@ -77,6 +82,15 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     amlReviewAutoManaged: merchant.amlReviewAutoManaged,
     amlReviewNotificationChannel: merchant.amlReviewNotificationChannel,
     amlReviewNotificationTarget: merchant.amlReviewNotificationTarget ?? null,
+    legalName: merchant.legalName ?? null,
+    taxId: merchant.taxId ?? null,
+    sanctionsScreeningStatus: merchant.sanctionsScreeningStatus,
+    sanctionsScreenedAt: merchant.sanctionsScreenedAt?.toISOString() ?? null,
+    sanctionsMatchDetails: merchant.sanctionsMatchDetails ?? null,
+    sanctionsReviewedBy: merchant.sanctionsReviewedBy ?? null,
+    sanctionsReviewedAt: merchant.sanctionsReviewedAt?.toISOString() ?? null,
+    sanctionsNotificationChannel: merchant.sanctionsNotificationChannel,
+    sanctionsNotificationTarget: merchant.sanctionsNotificationTarget ?? null,
     createdAt: merchant.createdAt.toISOString(),
     updatedAt: merchant.updatedAt.toISOString(),
   };
@@ -109,6 +123,10 @@ export class MerchantAdminController {
   @ApiOperation({ summary: 'Onboard a new merchant — returns the API key secret once' })
   @ApiResponse({ status: 201, type: MerchantCreatedResponseDto })
   @ApiResponse({ status: 409, description: 'A merchant with this merchantId already exists' })
+  @ApiResponse({
+    status: 422,
+    description: 'SANCTIONS_SCREENING_HIT — sanctions/watchlist match; nothing was created',
+  })
   async create(@Body() dto: CreateMerchantDto): Promise<MerchantCreatedResponseDto> {
     const { merchant, apiKeySecret, hmacSecret } = await this.merchantService.createMerchant(dto);
     return {
@@ -346,8 +364,91 @@ export class MerchantAdminController {
   })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
+  @ApiResponse({
+    status: 422,
+    description:
+      'SANCTIONS_SCREENING_HIT — sanctions/watchlist match against the submitted legalName; kycStatus is left unchanged',
+  })
   async submitKyc(@Param('merchantId') merchantId: string, @Body() dto: SubmitKycDto): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.submitKyc(merchantId, dto.legalName, dto.taxId);
+    return toSummary(merchant);
+  }
+
+  @Post(':merchantId/kyb/submit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Submit (or re-submit) this merchant's KYB (Know Your Business) application — verifies the business itself and its beneficial owners, independent of kycStatus (which only verifies an individual). Resolves synchronously against the mock provider (KYB_PROVIDER=mock, the default), or returns PENDING_REVIEW against a real one (KYB_PROVIDER=persona), with the final decision arriving later via POST /webhooks/kyb. Only meaningful for a CONNECTED merchant. Not currently wired into any payout gate.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  @ApiResponse({
+    status: 422,
+    description:
+      'SANCTIONS_SCREENING_HIT — sanctions/watchlist match against the submitted legalName; kybStatus is left unchanged',
+  })
+  async submitKyb(@Param('merchantId') merchantId: string, @Body() dto: SubmitKybDto): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.submitKyb(
+      merchantId,
+      dto.legalName,
+      dto.taxId,
+      dto.country,
+      dto.beneficialOwners,
+    );
+    return toSummary(merchant);
+  }
+
+  @Post(':merchantId/sanctions/rescreen')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Re-screen this merchant's sanctions/watchlist status on demand, against its currently-stored legalName/taxId (or name, if no legalName was ever supplied) — the same check onboarding/KYC-submit run, without waiting for the weekly sweep.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async rescreenSanctions(@Param('merchantId') merchantId: string): Promise<MerchantSummaryDto> {
+    const { merchant } = await this.merchantService.rescreenSanctions(merchantId);
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/sanctions-review')
+  @ApiOperation({
+    summary:
+      'Records a human determination on a POTENTIAL_MATCH/HIT — CLEARED resets sanctionsScreeningStatus back to CLEAR (false positive); CONFIRMED leaves it exactly as it was. Does not disable future automatic re-screening.',
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  @ApiResponse({ status: 422, description: 'reason is missing/empty' })
+  async updateSanctionsReview(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateSanctionsReviewDto,
+    @Req() req: any,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.applySanctionsReview(
+      merchantId,
+      dto.resolution,
+      dto.reason,
+      req.user.merchantId,
+    );
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/sanctions-notification-channel')
+  @ApiOperation({
+    summary:
+      "Changes which channel (EMAIL/SLACK/WEBHOOK) and destination this merchant's sanctions-screening notifications go out on — independent of every other *-notification-channel setting.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updateSanctionsNotificationChannel(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateSanctionsNotificationChannelDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updateSanctionsNotificationChannel(
+      merchantId,
+      dto.channel,
+      dto.target ?? null,
+    );
     return toSummary(merchant);
   }
 

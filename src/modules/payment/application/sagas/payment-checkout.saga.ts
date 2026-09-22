@@ -4,7 +4,12 @@ import { randomUUID as uuidv4 } from 'crypto';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { AcquirerRoutingService } from '../services/acquirer-routing.service';
-import { PaymentAggregate, PSPProvider, PaymentInitiator } from '../../domain/aggregates/payment.aggregate';
+import {
+  PaymentAggregate,
+  PSPProvider,
+  PaymentInitiator,
+  PspRiskSignal,
+} from '../../domain/aggregates/payment.aggregate';
 import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggregate';
 import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
@@ -365,7 +370,7 @@ export class PaymentCheckoutSaga {
 
     // ─── Step 5: Update Payment Status ──────────────────────────────────────
     if (chargeResult.status === 'SUCCEEDED') {
-      payment.markSucceeded(chargeResult.transactionId, chargeResult.rawResponse);
+      payment.markSucceeded(chargeResult.transactionId, chargeResult.rawResponse, chargeResult.riskSignal);
 
       // Funds are confirmed captured *now* — this is the only place in the
       // immediate-capture path where a ledger entry should be written.
@@ -442,7 +447,7 @@ export class PaymentCheckoutSaga {
     }
 
     if (chargeResult.status === 'REQUIRES_CAPTURE') {
-      payment.requiresCapture(chargeResult.transactionId, chargeResult.rawResponse);
+      payment.requiresCapture(chargeResult.transactionId, chargeResult.rawResponse, chargeResult.riskSignal);
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
 
@@ -487,6 +492,7 @@ export class PaymentCheckoutSaga {
       chargeResult.errorMessage || 'PSP declined',
       chargeResult.errorCode,
       finalProvider,
+      chargeResult.riskSignal,
     );
 
     return {
@@ -511,9 +517,10 @@ export class PaymentCheckoutSaga {
     reason: string,
     errorCode?: string,
     pspProvider?: PSPProvider,
+    pspRiskSignal?: PspRiskSignal,
   ): Promise<void> {
     try {
-      payment.markFailed(reason, errorCode, pspProvider);
+      payment.markFailed(reason, errorCode, pspProvider, pspRiskSignal);
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
       this.logger.warn(`[Saga] Compensating transaction: Payment ${payment.id} marked FAILED: ${reason}`);

@@ -1,0 +1,65 @@
+name: Chaos Drill
+
+# Monthly, plus on-demand — see scripts/chaos/run-drill.sh and
+# docs/technical/tests/chaos-testing.md for what each scenario proves.
+# Deliberately its own workflow, not folded into ci.yml: this brings up
+# the full docker-compose stack including the actual `api` container and
+# hits it over real HTTP (unlike ci.yml's e2e job, which talks to an
+# in-process Nest app and never runs the container image at all), and it
+# deliberately stops/restarts real containers mid-run — not something to
+# run on every push.
+on:
+  schedule:
+    - cron: '0 6 1 * *' # 06:00 UTC on the 1st of every month
+  workflow_dispatch: {}
+
+concurrency:
+  group: chaos-drill-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  chaos-drill:
+    name: Run chaos scenarios against a fresh docker-compose stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ephemeral stack, torn down (with volumes) at the end of this job
+      # regardless of outcome — a fresh, disposable target, not a shared
+      # staging environment this repo doesn't have. `api` itself is
+      # explicitly included here (unlike ci.yml's e2e job) because these
+      # scripts drive it over real HTTP and need the container's own
+      # startup-time migration run (see Dockerfile's CMD) and health gate.
+      - name: Start full stack (build api fresh)
+        run: |
+          docker compose up -d --build --wait \
+            postgres-master postgres-replica pgbouncer-master pgbouncer-replica \
+            redis vault mock-psp api
+
+      - name: Run chaos scenarios
+        run: bash scripts/chaos/run-drill.sh
+        env:
+          OUTPUT_DIR: ./chaos-drill-output
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs
+
+      # Kept as a workflow artifact (GitHub's default retention window)
+      # rather than auto-committed back into the repo — this workflow only
+      # needs `contents: read`, not a bot identity with write access.
+      - name: Upload drill output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-drill-output-${{ github.run_id }}
+          path: chaos-drill-output/
+          if-no-files-found: warn
+
+      - name: Tear down infrastructure
+        if: always()
+        run: docker compose down -v

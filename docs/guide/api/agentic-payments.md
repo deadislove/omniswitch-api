@@ -71,6 +71,12 @@ scheme, just keyed by delegation instead of merchant; see
 not signed at all, is rejected by the same HMAC guard every other
 caller goes through.
 
+- **Errors**: `422` `SANCTIONS_SCREENING_HIT` — the calling merchant has
+  a confirmed sanctions/watchlist match
+  (`sanctionsScreeningStatus: 'HIT'`). No delegation is created; existing
+  delegations for this merchant are unaffected. See
+  [`../../business-domain/merchants.md#sanctions-hit-and-agent-delegations`](../../business-domain/merchants.md#sanctions-hit-and-agent-delegations).
+
 ## `GET /delegations/:id`
 
 - **Roles**: `MERCHANT`, `ADMIN`, `OPERATOR`, `READONLY`

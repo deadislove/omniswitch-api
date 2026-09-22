@@ -153,6 +153,11 @@ setDefault('EMAIL_PROVIDER_URL', 'http://localhost:4000/v1/email');
 // rather than relying on mock-psp's own async callback.
 setDefault('PERSONA_PROVIDER_URL', 'http://localhost:4000/persona');
 setDefault('KYC_WEBHOOK_SECRET', 'kyc_e2e_test_placeholder');
+// Same reasoning as KYC_WEBHOOK_SECRET above — kyb-review.e2e-spec.ts
+// posts directly to POST /webhooks/kyb. Deliberately a different value
+// from KYC_WEBHOOK_SECRET, matching KybWebhookGuard's own separate-secret
+// posture.
+setDefault('KYB_WEBHOOK_SECRET', 'kyb_e2e_test_placeholder');
 
 setDefault('CORS_ORIGINS', 'http://localhost:3000');
 setDefault('APP_VERSION', 'e2e-test');

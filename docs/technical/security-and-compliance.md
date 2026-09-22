@@ -311,3 +311,92 @@ The core architectural decision — tokenize on the client, never let raw card
 data reach this backend — is the right one and is doing most of the real
 work of keeping PCI scope small. Everything above is about closing the gap
 between "architecturally out of scope" and "formally certified."
+
+---
+
+## Sanctions/Watchlist Screening
+
+Distinct from JWT/PCI above — this is an AML/BSA-adjacent obligation:
+screening a merchant's legal identity against a sanctions list (OFAC's
+SDN list, or an equivalent) before doing business with them at all. See
+[`../business-domain/compliance-and-security.md#sanctionswatchlist-screening-who-this-platform-is-legally-required-to-refuse`](../business-domain/compliance-and-security.md#sanctionswatchlist-screening-who-this-platform-is-legally-required-to-refuse)
+for the business framing and
+[`../business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening`](../business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening)
+for when it runs and what each outcome does. This section is the
+technical/audit-ready detail those two intentionally don't repeat.
+
+### Port/adapter shape
+
+`SanctionsScreeningPort` (`src/modules/merchant/sanctions-screening.port.ts`)
+has two implementations, selected via `SANCTIONS_PROVIDER`
+(`mock` (default) / `ofac-self-hosted`) at DI-container build time —
+the same `useFactory` idiom `KYCProviderPort`/`KYC_PROVIDER` and
+`BankTransferPort`/`BANK_TRANSFER_PROVIDER` already use:
+
+- **`MockSanctionsScreeningAdapter`** — calls
+  `scripts/mock-psp/server.js`'s `/sanctions/screen` endpoint,
+  deterministic by fixture marker (a `name` containing `SANCTIONED` →
+  `HIT`, containing `POTENTIAL` → `POTENTIAL_MATCH`, otherwise `CLEAR`)
+  — local dev/test default, same posture as `MockKYCProviderAdapter`.
+- **`OfacSdnSanctionsAdapter`** — matches against a real, public list:
+  the US Treasury OFAC Specially Designated Nationals (SDN) list. Real,
+  government-published data, not a paid vendor's proprietary database —
+  chosen specifically so this adapter is buildable and testable against
+  genuine list data without procuring a commercial screening contract
+  (ComplyAdvantage, Refinitiv World-Check, etc. remain valid future
+  adapters behind the same port if a real deployment wants broader
+  PEP/adverse-media coverage this self-hosted list doesn't cover).
+
+### List refresh
+
+`SanctionsListRefreshService` (`@Cron(CronExpression.EVERY_WEEK)` — a
+fixed schedule, the same idiom every other sweep in this codebase uses,
+not a configurable cron string) fetches the current SDN list
+from `SANCTIONS_LIST_SOURCE_URL` (the official Treasury CSV endpoint)
+when configured. **This requires outbound network egress from wherever
+this service runs** — not every deployment environment allows that by
+default (see the [network segmentation](#network-segmentation--defense-in-depth-added-full-cde-isolation-intentionally-out-of-scope)
+section above for this repo's general egress posture). When
+`SANCTIONS_LIST_SOURCE_URL` is unset, or a refresh fails, the adapter
+falls back to a bundled static snapshot — enough to exercise real
+matching logic in an environment with no internet egress at all (local
+dev, CI, an air-gapped deployment), but **not a substitute for a live
+refresh in production** — a real deployment needs `SANCTIONS_LIST_SOURCE_URL`
+configured and its egress path actually verified, not just the
+mechanism present in code.
+
+### Matching
+
+Exact, normalized (uppercase, punctuation-stripped) name matches are
+`HIT` at any confidence. Below that, a fuzzy string-similarity score
+(Jaro-Winkler) against every list entry is computed; a score at or
+above `SANCTIONS_MATCH_THRESHOLD` (default `0.92`) is `POTENTIAL_MATCH`,
+below it is `CLEAR`. This threshold, like `RISK_TIER_HIGH_THRESHOLD`
+elsewhere in this codebase, is a deliberately simple, illustrative
+starting point, not a calibrated figure — a real deployment should tune
+it against its own false-positive/false-negative tolerance, and treat
+every `POTENTIAL_MATCH` as requiring human review rather than trusting
+the threshold alone in either direction.
+
+### Honesty check, same posture as this codebase's other "real" adapters
+
+`OfacSdnSanctionsAdapter` is real in the same sense
+`PersonaKycProviderAdapter` is real: it parses an actual published data
+format (the SDN list's real CSV schema) and implements a genuine,
+runnable matching algorithm against it — but as of this writing, no
+production deployment of this codebase has ever run it against a freshly
+downloaded, current list in anger. Before relying on this for an actual
+sanctions-compliance program, verify the refresh job runs successfully
+against the live Treasury endpoint in the target deployment environment,
+and have the match threshold reviewed by whoever owns this platform's
+actual compliance obligations — this document describes a real,
+workable mechanism, not a substitute for that review.
+
+### Data retention
+
+Match records (`sanctionsMatchDetails` and the audit trail on
+`PATCH /admin/merchants/:id/sanctions-review`) are compliance evidence,
+not incidental logs — see
+[`../compliance/data-retention.md`](../compliance/data-retention.md)
+for how long AML-adjacent records are kept and how to configure that
+for a real jurisdiction; the same retention posture applies here.

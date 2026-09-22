@@ -86,6 +86,17 @@ export class PaymentEntity {
   @Column({ name: 'risk_score', type: 'int', nullable: true })
   riskScore?: number;
 
+  /**
+   * The PSP's own transaction-level fraud/risk signal (Stripe Radar's
+   * outcome, Adyen's fraudResult) — see PspRiskSignal's docblock in
+   * payment.aggregate.ts for why this is a separate column from
+   * riskScore rather than merged into it. `{riskLevel?, riskScore?}`,
+   * both optional depending on which PSP handled this charge and
+   * whether it populated the field at all.
+   */
+  @Column({ name: 'psp_risk_signal', type: 'jsonb', nullable: true })
+  pspRiskSignal?: Record<string, unknown>;
+
   @Column({ name: 'three_ds_result', type: 'jsonb', nullable: true })
   threeDSResult?: Record<string, unknown>;
 

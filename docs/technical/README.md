@@ -17,6 +17,9 @@ onboarding path through both, see [`../guide/`](../guide/).
   isn't recommended yet
 - [`api-versioning-policy.md`](./api-versioning-policy.md) — current
   URI-versioning state and the deprecation policy for when a v2 arrives
+- [`sdk/`](./sdk/) — how the first-party Node/TypeScript client
+  (`sdk/node`) is built: package layout, HMAC/idempotency/webhook-
+  verification implementation, and its two-layer testing strategy
 
 ## Data & jobs
 

@@ -55,6 +55,24 @@ const SUITE_MUTEX_KEY = 'e2e-sweep-suite-mutex';
 // as PayoutService's own SWEEP_LOCK_TTL_SECONDS.
 const SUITE_MUTEX_TTL_SECONDS = 300;
 
+/**
+ * Pass this as the `beforeAll(fn, timeout)` second argument at every
+ * `acquireExclusiveSweepTestSuite()` call site — Jest's own default hook
+ * timeout (`testTimeout` in jest-e2e.json, 60000ms) is well under
+ * `SUITE_MUTEX_TTL_SECONDS`'s own 300s "a legitimately slow run" budget
+ * above, so a file that loses the mutex race can time out its *hook*
+ * long before the actual holder's TTL would ever expire — a real,
+ * reproduced failure once seeding each of these files' many merchants
+ * started making an extra real network call (sanctions screening, see
+ * `MerchantService.createMerchant()`), pushing a normal run close enough
+ * to 60s that losing the race started failing outright instead of just
+ * waiting a bit. Exceeds the mutex's own TTL by a comfortable margin
+ * rather than merely matching it, since the *acquire* wait and the
+ * *held* duration are the same 300s budget from two different files'
+ * perspectives.
+ */
+export const SUITE_MUTEX_ACQUIRE_TIMEOUT_MS = 310_000;
+
 /** Blocks until no other of these 3 files is mid-run, then holds the mutex until released. */
 export async function acquireExclusiveSweepTestSuite(cache: CachePort): Promise<() => Promise<void>> {
   while (!(await cache.setNX(SUITE_MUTEX_KEY, new Date().toISOString(), SUITE_MUTEX_TTL_SECONDS))) {

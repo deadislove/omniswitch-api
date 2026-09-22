@@ -132,6 +132,9 @@ import { DegradedPspAwareThrottlerGuard } from '../../shared/guards/degraded-psp
 // Merchant (per-merchant HMAC secret lookup)
 import { MerchantModule } from '../merchant/merchant.module';
 import { VaultModule } from '../../shared/vault/vault.module';
+import { WebhookDeliveryLogModule } from '../../shared/webhook-delivery-log/webhook-delivery-log.module';
+import { WebhookDeliveryReplayService } from './application/services/webhook-delivery-replay.service';
+import { WebhookDeliveryAdminController } from './application/controllers/webhook-delivery-admin.controller';
 
 @Module({
   imports: [
@@ -139,6 +142,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     AuthModule,
     MerchantModule,
     VaultModule,
+    WebhookDeliveryLogModule,
     TypeOrmModule.forFeature([
       PaymentEntity,
       LedgerOutboxEntity,
@@ -196,6 +200,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     AmbiguousRiskAdminController,
     AmlReviewAdminController,
     PspCostReconciliationAdminController,
+    WebhookDeliveryAdminController,
   ],
   providers: [
     // PSP Adapters
@@ -341,6 +346,11 @@ import { VaultModule } from '../../shared/vault/vault.module';
     WebhookAmlReviewNotificationAdapter,
     AmlReviewNotificationDispatcherService,
     AmlReviewMonitoringService,
+
+    // Webhook delivery log — read/replay side (the write side is called
+    // directly from inside each Webhook*NotificationAdapter above,
+    // itself injecting WebhookDeliveryLogModule's exported service).
+    WebhookDeliveryReplayService,
 
     // Auth
     JwtAuthGuard,

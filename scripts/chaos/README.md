@@ -3,6 +3,14 @@
 See [`../../docs/technical/chaos-testing.md`](../../docs/technical/tests/chaos-testing.md)
 for what each script proves and what running them actually found.
 
+## Automated, scheduled runs
+
+`../../.github/workflows/chaos-drill.yml` runs all three scenarios
+monthly (and on-demand via `workflow_dispatch`) against a fresh
+docker-compose stack the workflow brings up itself, using `run-drill.sh`
+below — no manual seeding needed for that path. The rest of this file
+covers running them by hand instead.
+
 ## Seeding credentials
 
 None of these scripts create their own merchant — they need real,
@@ -71,3 +79,9 @@ Each script stops and restarts a real container (`mock-psp`/`redis`/
 three services keep their volumes across a stop/start), but do expect
 brief real unavailability of whatever's targeted — don't run these
 against anything other than a local dev stack.
+
+`run-drill.sh` does the seeding step above and all three of these runs
+for you — `bash scripts/chaos/run-drill.sh` against an already-up stack
+(same one `chaos-drill.yml` uses) writes each scenario's full output plus
+a `summary.md` into `./chaos-drill-output/` (override via `OUTPUT_DIR`)
+and exits non-zero if any scenario failed.

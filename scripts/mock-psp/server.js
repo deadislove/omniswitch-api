@@ -14,6 +14,11 @@ const BANK_TRANSFER_WEBHOOK_SECRET = process.env.BANK_TRANSFER_WEBHOOK_SECRET ||
 // Same "APP_BASE_URL configured -> callback fires for real" story as
 // bank-transfer, for PersonaKycProviderAdapter's async review decision.
 const KYC_WEBHOOK_SECRET = process.env.KYC_WEBHOOK_SECRET || '';
+// Same "APP_BASE_URL configured -> callback fires for real" story, for
+// PersonaKybProviderAdapter's async review decision — a distinct secret
+// from KYC_WEBHOOK_SECRET, matching KybWebhookGuard's own separate-secret
+// posture (see that guard's docblock for why).
+const KYB_WEBHOOK_SECRET = process.env.KYB_WEBHOOK_SECRET || '';
 
 // Mirrors BinInfo.isEuropean() — PSD2 requires an SCA challenge for these.
 const EU_COUNTRIES = new Set([
@@ -213,6 +218,49 @@ function scheduleKycDecision(applicationId, outcome) {
   }, 200);
 }
 
+// Same scheme KybWebhookGuard verifies.
+function signKybCallback(bodyStr) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = crypto.createHmac('sha256', KYB_WEBHOOK_SECRET).update(`${timestamp}.${bodyStr}`).digest('hex');
+  return `t=${timestamp},v1=${signature}`;
+}
+
+// Same "accept now, decide later, signed callback" shape as
+// scheduleKycDecision() above, posted to POST /webhooks/kyb instead —
+// a distinct endpoint/secret, not the KYC one (see KybWebhookGuard's
+// docblock for why).
+function scheduleKybDecision(applicationId, outcome) {
+  if (!APP_BASE_URL || !KYB_WEBHOOK_SECRET) {
+    console.warn(`mock-psp: APP_BASE_URL/KYB_WEBHOOK_SECRET not set — skipping KYB decision callback for ${applicationId}`);
+    return;
+  }
+  setTimeout(async () => {
+    const bodyStr = JSON.stringify({
+      data: {
+        type: 'event',
+        id: 'evt_mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        attributes: {
+          name: `inquiry.${outcome}`,
+          payload: { data: { type: 'inquiry', id: applicationId, attributes: { status: outcome } } },
+        },
+      },
+    });
+    try {
+      const res = await fetch(`${APP_BASE_URL}/webhooks/kyb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-KYB-Signature': signKybCallback(bodyStr) },
+        body: bodyStr,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) {
+        console.error(`mock-psp: KYB decision callback for ${applicationId} got HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.error(`mock-psp: KYB decision callback for ${applicationId} failed: ${err.message}`);
+    }
+  }, 200);
+}
+
 // Base fee schedule — kept identical to PspFeeScheduleService's own
 // defaults on purpose: the point of the /statement endpoints below is to
 // simulate a REAL PSP invoice diverging from this app's routing-time
@@ -242,6 +290,27 @@ function realFeeForTransactionMinorUnits(provider, amountMinorUnits, txId) {
   const isPremiumCard = hash % 5 === 0;
   const effectivePercentage = schedule.feePercentage + (isPremiumCard ? 1.5 : 0);
   return Math.round((amountMinorUnits * effectivePercentage) / 100) + schedule.fixedFeeMinorUnits;
+}
+
+// StripePspAdapter/AdyenPspAdapter's target for the PSP-native fraud/risk
+// signal each real PSP already computes per transaction (Stripe Radar's
+// Charge.outcome, Adyen's fraudResult) — see PSPChargeResponse.riskSignal's
+// docblock. Same "deterministic, hashed from the PSP's own transaction id"
+// posture as realFeeForTransactionMinorUnits() above, not random — a 0-99
+// score, >=75 the top decile ("highest"/most-suspicious), 40-74 a middle
+// band ("elevated"), otherwise unremarkable ("normal").
+function mockRiskScoreForTransaction(txId) {
+  let hash = 0;
+  for (let i = 0; i < txId.length; i++) {
+    hash = (hash * 31 + txId.charCodeAt(i)) >>> 0;
+  }
+  return hash % 100;
+}
+
+function stripeRiskLevelForScore(score) {
+  if (score >= 75) return 'highest';
+  if (score >= 40) return 'elevated';
+  return 'normal';
 }
 
 // Decline-code markers for a charge — a paymentMethodId/storedPaymentMethodId
@@ -449,6 +518,15 @@ const server = http.createServer((req, res) => {
       if (shouldForceSlow(params.get('payment_method'))) {
         await delay(FORCE_SLOW_DELAY_MS);
       }
+      // Real Stripe attaches `outcome` to the underlying Charge object
+      // regardless of whether it was approved or declined — Radar scores
+      // every attempt, not just successful ones. `charges.data[0]` is the
+      // real nesting path StripePspAdapter's charge()/getRiskSignal()
+      // reads (PaymentIntent.charges.data[0].outcome), not a flattened
+      // shortcut this mock invented.
+      const riskScore = mockRiskScoreForTransaction(id);
+      const outcomeCharge = { outcome: { risk_level: stripeRiskLevelForScore(riskScore), risk_score: riskScore } };
+
       const declineCode = declineCodeFor(params.get('payment_method'));
       if (declineCode) {
         return send(res, 200, {
@@ -456,6 +534,7 @@ const server = http.createServer((req, res) => {
           status: 'requires_payment_method',
           object: 'payment_intent',
           last_payment_error: { code: declineCode, message: 'The card was declined.' },
+          charges: { data: [outcomeCharge] },
         });
       }
       const forced = (params.get('description') || '').includes('FORCE_3DS');
@@ -469,10 +548,10 @@ const server = http.createServer((req, res) => {
       }
       if (params.get('capture_method') === 'manual') {
         pendingAuthorizations.set(id, { currency });
-        return send(res, 200, { id, status: 'requires_capture', object: 'payment_intent' });
+        return send(res, 200, { id, status: 'requires_capture', object: 'payment_intent', charges: { data: [outcomeCharge] } });
       }
       stripeSettlements.push({ id, amount, currency, createdAt: new Date().toISOString() });
-      return send(res, 200, { id, status: 'succeeded', object: 'payment_intent' });
+      return send(res, 200, { id, status: 'succeeded', object: 'payment_intent', charges: { data: [outcomeCharge] } });
     }
     // PSPAdapterPort.queryOutcome()'s target — a read-only lookup by
     // idempotency key, not a replay of the original charge request (this
@@ -652,6 +731,16 @@ const server = http.createServer((req, res) => {
       if (shouldForceSlow((parsedBody.paymentMethod || {}).storedPaymentMethodId)) {
         await delay(FORCE_SLOW_DELAY_MS);
       }
+      // Real Adyen's fraudResult is present on every /payments response
+      // regardless of resultCode — accountScore is Adyen's own aggregated
+      // risk score (higher = more suspicious), same real vocabulary
+      // AdyenPspAdapter's getRiskSignal() reads.
+      const riskScore = mockRiskScoreForTransaction(pspReference);
+      const fraudResult = {
+        accountScore: riskScore,
+        results: [{ accountScoreResult: riskScore, checkId: 1, name: 'CardChunkingCheck' }],
+      };
+
       const declineCode = declineCodeFor((parsedBody.paymentMethod || {}).storedPaymentMethodId);
       if (declineCode) {
         return send(res, 200, {
@@ -659,6 +748,7 @@ const server = http.createServer((req, res) => {
           resultCode: 'Refused',
           refusalReasonCode: adyenRefusalReasonCodeFor(declineCode),
           refusalReason: 'Refused',
+          fraudResult,
         });
       }
       if (EU_COUNTRIES.has(binCountry)) {
@@ -670,7 +760,7 @@ const server = http.createServer((req, res) => {
       }
       if (isManualCapture) {
         pendingAuthorizations.set(pspReference, { currency: amountCurrency });
-        return send(res, 200, { pspReference, resultCode: 'Authorised' });
+        return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult });
       }
       adyenSettlements.push({
         id: pspReference,
@@ -678,7 +768,7 @@ const server = http.createServer((req, res) => {
         currency: amountCurrency,
         createdAt: new Date().toISOString(),
       });
-      return send(res, 200, { pspReference, resultCode: 'Authorised' });
+      return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult });
     }
     // See the matching comment on the Stripe /v1/payment_intents/lookup
     // route above — PSPAdapterPort.queryOutcome()'s Adyen-shaped target.
@@ -791,6 +881,53 @@ const server = http.createServer((req, res) => {
       return send(res, 200, { approved: true, applicationId });
     }
 
+    // MockKYBProviderAdapter's target — same synchronous shape as
+    // /kyc/verify above, "reject" anywhere in legalName (case-insensitive)
+    // is this mock's decline marker.
+    if (path === '/kyb/verify' && req.method === 'POST') {
+      let parsedBody = {};
+      try {
+        parsedBody = JSON.parse(data || '{}');
+      } catch (e) {
+        // malformed body — fall through with an empty parsed body
+      }
+      const legalName = parsedBody.legalName || '';
+      const taxId = parsedBody.taxId || '';
+      const applicationId = 'kyb_mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      if (!legalName || !taxId) {
+        return send(res, 400, { error: 'legalName and taxId are required' });
+      }
+      if (/reject/i.test(legalName)) {
+        return send(res, 200, { approved: false, applicationId, reason: 'business_verification_failed' });
+      }
+      return send(res, 200, { approved: true, applicationId });
+    }
+
+    // MockSanctionsScreeningAdapter's target — deterministic by fixture
+    // marker in `name` (case-insensitive), same "marker in the identity
+    // field" convention as /kyc/verify's `reject` marker above: contains
+    // "SANCTIONED" -> HIT, contains "POTENTIAL" -> POTENTIAL_MATCH,
+    // anything else -> CLEAR.
+    if (path === '/sanctions/screen' && req.method === 'POST') {
+      let parsedBody = {};
+      try {
+        parsedBody = JSON.parse(data || '{}');
+      } catch (e) {
+        // malformed body — fall through with an empty parsed body
+      }
+      const name = parsedBody.name || '';
+      if (!name) {
+        return send(res, 400, { error: 'name is required' });
+      }
+      if (/sanctioned/i.test(name)) {
+        return send(res, 200, { status: 'HIT', matchedListEntry: name.toUpperCase(), score: 1 });
+      }
+      if (/potential/i.test(name)) {
+        return send(res, 200, { status: 'POTENTIAL_MATCH', matchedListEntry: name.toUpperCase(), score: 0.93 });
+      }
+      return send(res, 200, { status: 'CLEAR' });
+    }
+
     // Persona-shaped KYC application submission — PersonaKycProviderAdapter's
     // target. Genuinely two-phase, unlike /kyc/verify above: accepted as
     // `pending`, then the real decision (`approved`/`declined`) arrives
@@ -825,6 +962,34 @@ const server = http.createServer((req, res) => {
         scheduleKycDecision(id, 'declined');
       } else {
         scheduleKycDecision(id, 'approved');
+      }
+      return;
+    }
+
+    // Persona-shaped KYB application submission — PersonaKybProviderAdapter's
+    // target. Same two-phase shape as /persona/kyc-applications above,
+    // posted to POST /webhooks/kyb via scheduleKybDecision() instead.
+    if (path === '/persona/kyb-applications' && req.method === 'POST') {
+      let parsedBody = {};
+      try {
+        parsedBody = JSON.parse(data || '{}');
+      } catch (e) {
+        // malformed body — fall through with an empty parsed body
+      }
+      const legalName = parsedBody.legalName || '';
+      const taxId = parsedBody.taxId || '';
+      const id = 'persona_mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      if (!legalName || !taxId) {
+        return send(res, 400, { errors: [{ title: 'Bad Request', details: 'legalName and taxId are required' }] });
+      }
+      if (/invalidinput/i.test(legalName)) {
+        return send(res, 200, { data: { type: 'inquiry', id, attributes: { status: 'declined' } } });
+      }
+      send(res, 200, { data: { type: 'inquiry', id, attributes: { status: 'pending' } } });
+      if (/reject/i.test(legalName)) {
+        scheduleKybDecision(id, 'declined');
+      } else {
+        scheduleKybDecision(id, 'approved');
       }
       return;
     }

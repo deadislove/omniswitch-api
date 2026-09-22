@@ -37,6 +37,14 @@ export function signKycWebhook(webhookSecret: string, rawBody: string): string {
   return `t=${timestamp},v1=${signature}`;
 }
 
+/** Signs a KYB webhook body the same way KybWebhookGuard verifies it — identical scheme to signKycWebhook, distinct secret. */
+export function signKybWebhook(webhookSecret: string, rawBody: string): string {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signedPayload = `${timestamp}.${rawBody}`;
+  const signature = createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
+  return `t=${timestamp},v1=${signature}`;
+}
+
 interface AdyenNotificationFields {
   pspReference: string;
   originalReference?: string;

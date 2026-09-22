@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DisputeNotificationPort, DisputeNotificationPayload } from '../../ports/outbound/dispute-notification.port';
-import { postJsonNotification } from './notification-delivery.util';
+import { postJsonNotification } from '../../../../shared/utils/notification-delivery.util';
 
 /**
  * Slack Dispute Notification Adapter

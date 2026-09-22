@@ -5,6 +5,7 @@ import {
   RefundRecord,
   CaptureRecord,
   PaymentSplit,
+  PspRiskSignal,
 } from '../../../domain/aggregates/payment.aggregate';
 import { PaymentEntity } from '../entities/payment.entity';
 import { Money } from '../../../domain/value-objects/money.vo';
@@ -73,6 +74,7 @@ export class PaymentMapper {
       pspTransactionId: entity.pspTransactionId,
       pspRawResponse: entity.pspRawResponse,
       riskScore: entity.riskScore,
+      pspRiskSignal: entity.pspRiskSignal as PspRiskSignal | undefined,
       threeDSResult: entity.threeDSResult as ThreeDSResult | undefined,
       refunds,
       captures,
@@ -107,6 +109,7 @@ export class PaymentMapper {
     entity.pspTransactionId = aggregate.pspTransactionId;
     entity.pspRawResponse = aggregate.pspRawResponse;
     entity.riskScore = aggregate.riskScore;
+    entity.pspRiskSignal = aggregate.pspRiskSignal as unknown as Record<string, unknown> | undefined;
     entity.threeDSResult = aggregate.threeDSResult as any;
     entity.failureReason = aggregate.failureReason;
     entity.failureCode = aggregate.failureCode;

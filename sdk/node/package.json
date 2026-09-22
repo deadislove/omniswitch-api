@@ -1,0 +1,26 @@
+{
+  "name": "@omniswitch/node",
+  "version": "0.1.0",
+  "description": "Node/TypeScript client for the OmniSwitch payment gateway API — HMAC request signing, idempotency-key handling, and outbound webhook signature verification, so an integrator doesn't have to get any of those right by hand.",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "jest --config jest.config.js"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.11.5",
+    "jest": "^30.5.1",
+    "ts-jest": "^29.1.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

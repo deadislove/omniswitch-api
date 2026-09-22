@@ -8,6 +8,13 @@ way it does, or you're new to payments domain concepts generally. For
 instead; for a guided onboarding path through both, see
 [`../guide/`](../guide/).
 
+## Merchants
+
+- [`merchants.md`](./merchants.md) — what a `Merchant` is, PLATFORM vs.
+  CONNECTED account types, the onboarding pipeline (identity capture,
+  sanctions screening, KYC), and the four independent trust signals
+  evaluated over a merchant's lifetime
+
 ## Core payment flow
 
 - [`payment-lifecycle.md`](./payment-lifecycle.md) — the payment state
@@ -49,6 +56,11 @@ instead; for a guided onboarding path through both, see
   dispute resolution policy, cross-border settlement, and agentic
   payments all have a real mechanism built now — this covers what's
   still only partly done in each, plus the business framing throughout
+
+## Client SDKs
+
+- [`sdk/`](./sdk/) — why this platform ships a first-party Node/
+  TypeScript client rather than relying on API documentation alone
 
 ## Reference
 

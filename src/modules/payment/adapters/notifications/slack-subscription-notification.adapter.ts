@@ -3,7 +3,7 @@ import {
   SubscriptionNotificationPort,
   SubscriptionNotificationPayload,
 } from '../../ports/outbound/subscription-notification.port';
-import { postJsonNotification } from './notification-delivery.util';
+import { postJsonNotification } from '../../../../shared/utils/notification-delivery.util';
 
 /**
  * Slack Subscription Notification Adapter — same Incoming-Webhook-URL,

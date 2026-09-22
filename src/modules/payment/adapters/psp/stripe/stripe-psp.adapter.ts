@@ -16,6 +16,7 @@ import {
   PSPVerifyPaymentMethodRequest,
   PSPVerifyPaymentMethodResponse,
   PSPQueryOutcomeResult,
+  PSPRiskSignal,
 } from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
@@ -137,6 +138,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           transactionId: response.id,
           status: 'REQUIRES_CAPTURE',
           rawResponse: response,
+          riskSignal: this.extractRiskSignal(response),
         };
       }
 
@@ -146,6 +148,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           transactionId: response.id,
           status: 'SUCCEEDED',
           rawResponse: response,
+          riskSignal: this.extractRiskSignal(response),
         };
       }
 
@@ -156,6 +159,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
         rawResponse: response,
         errorCode: response.last_payment_error?.code,
         errorMessage: response.last_payment_error?.message,
+        riskSignal: this.extractRiskSignal(response),
       };
     } catch (error) {
       await this.circuitBreaker.recordFailure(this.provider);
@@ -163,6 +167,25 @@ export class StripePSPAdapter extends PSPAdapterPort {
       this.logger.error(`Stripe charge failed after ${latency}ms: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Real Stripe nests Radar's outcome under the underlying Charge, not
+   * the PaymentIntent itself: `PaymentIntent.charges.data[0].outcome`
+   * (`{risk_level, risk_score, ...}`) — see
+   * docs.stripe.com/api/charges/object#charge_object-outcome. `risk_score`
+   * is only present for accounts on Radar for Fraud Teams; absent for
+   * everyone else, which this adapter has no way to distinguish from "not
+   * populated by this mock" — both cases correctly leave it `undefined`
+   * rather than guessing a value.
+   */
+  private extractRiskSignal(response: any): PSPRiskSignal | undefined {
+    const outcome = response.charges?.data?.[0]?.outcome;
+    if (!outcome) return undefined;
+    return {
+      ...(outcome.risk_level ? { riskLevel: outcome.risk_level } : {}),
+      ...(typeof outcome.risk_score === 'number' ? { riskScore: outcome.risk_score } : {}),
+    };
   }
 
   async refund(request: PSPRefundRequest): Promise<PSPRefundResponse> {

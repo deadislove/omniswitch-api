@@ -12,6 +12,7 @@ regexes = [
   '''adyen_e2e_test_placeholder''',
   '''bts_e2e_test_placeholder''',
   '''kyc_e2e_test_placeholder''',
+  '''kyb_e2e_test_placeholder''',
   '''dlg_sign_9f2a1c\.\.\.''',
   '''00112233445566778899aabbccddeeff00112233445566778899aabbccddee''',
   '''test-idempotency-key-12345''',

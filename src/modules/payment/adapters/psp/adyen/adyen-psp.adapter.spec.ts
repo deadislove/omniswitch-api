@@ -124,3 +124,62 @@ describe('AdyenPSPAdapter — custom metadata forwarding', () => {
     expect(sentBody.metadata.binCountry).toBe('US');
   });
 });
+
+describe('AdyenPSPAdapter — fraudResult risk signal', () => {
+  let adapter: AdyenPSPAdapter;
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    const circuitBreaker = {
+      assertAvailable: jest.fn().mockResolvedValue(undefined),
+      recordSuccess: jest.fn().mockResolvedValue(undefined),
+      recordFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const configService = { get: (_key: string, def?: string) => def } as any;
+    adapter = new AdyenPSPAdapter(configService, circuitBreaker as unknown as RedisCircuitBreakerService);
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('surfaces fraudResult.accountScore as riskSignal.riskScore (no riskLevel — Adyen has no such category)', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        pspReference: 'psp_123',
+        resultCode: 'Authorised',
+        fraudResult: { accountScore: 67, results: [{ accountScoreResult: 67, checkId: 1, name: 'Test' }] },
+      }),
+    }) as any;
+
+    const result = await adapter.charge({
+      paymentId: 'pay_1',
+      idempotencyKey: 'idem_1',
+      amount: Money.of(10, 'USD'),
+      currency: 'USD',
+      merchantId: 'merchant_1',
+    });
+
+    expect(result.riskSignal).toEqual({ riskScore: 67 });
+  });
+
+  it('leaves riskSignal undefined when the response has no fraudResult at all', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ pspReference: 'psp_123', resultCode: 'Authorised' }),
+    }) as any;
+
+    const result = await adapter.charge({
+      paymentId: 'pay_1',
+      idempotencyKey: 'idem_1',
+      amount: Money.of(10, 'USD'),
+      currency: 'USD',
+      merchantId: 'merchant_1',
+    });
+
+    expect(result.riskSignal).toBeUndefined();
+  });
+});

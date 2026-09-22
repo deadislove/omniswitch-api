@@ -33,11 +33,32 @@ export class CreateMerchantDto {
   @Matches(/^[a-zA-Z0-9_-]+$/, { message: 'merchantId may only contain letters, numbers, underscores and hyphens' })
   merchantId: string;
 
-  @ApiProperty({ example: 'Acme Corp' })
+  @ApiProperty({ example: 'Acme Corp', description: 'Display name — not treated as a verified legal identity' })
   @IsString()
   @MinLength(1)
   @MaxLength(255)
   name: string;
+
+  @ApiPropertyOptional({
+    example: 'Acme Corporation Inc.',
+    description:
+      'Registered legal name, if known at onboarding time. Sanctions/watchlist screening runs against this at full confidence when supplied; falls back to `name` at degraded confidence when omitted. See docs/business-domain/merchants.md.',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  legalName?: string;
+
+  @ApiPropertyOptional({
+    example: '12-3456789',
+    description: 'Tax identification number (EIN, VAT number, etc.), if known at onboarding time.',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  taxId?: string;
 
   @ApiProperty({ example: ['MERCHANT'], enum: VALID_ROLES, isArray: true })
   @IsArray()
@@ -388,6 +409,100 @@ export class UpdateAmlReviewAutoDto {
   enabled: boolean;
 }
 
+export class UpdateSanctionsReviewDto {
+  @ApiProperty({
+    example: 'CLEARED',
+    enum: ['CLEARED', 'CONFIRMED'],
+    description:
+      'CLEARED: this match is a false positive — resets sanctionsScreeningStatus back to CLEAR. CONFIRMED: this is a real match — sanctionsScreeningStatus is left exactly as it was (stays visibly flagged).',
+  })
+  @IsIn(['CLEARED', 'CONFIRMED'])
+  resolution: 'CLEARED' | 'CONFIRMED';
+
+  @ApiProperty({
+    example: 'Common name, confirmed via secondary ID document this is not the same individual',
+    description: 'Required — same audit-trail posture as UpdateAmlReviewFlagDto.reason.',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  reason: string;
+}
+
+export class UpdateSanctionsNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel SanctionsNotificationDispatcherService uses for this merchant's sanctions-screening events. Independent of every other *-notification-channel setting.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-sanctions',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (no notification sent until one is set).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
+export class BeneficialOwnerDto {
+  @ApiProperty({ example: 'Jane Doe' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  name: string;
+
+  @ApiProperty({
+    example: 30,
+    description:
+      'Ownership percentage (0-100). Real UBO regulations generally require identifying anyone at or above 25% — not enforced here, just recorded.',
+  })
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  ownershipPercentage: number;
+}
+
+export class SubmitKybDto {
+  @ApiProperty({ example: 'Acme Marketplace Sellers LLC', description: 'Registered business/legal name' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  legalName: string;
+
+  @ApiProperty({
+    example: '12-3456789',
+    description:
+      'Tax identification / company registration number — not validated against any real registry by this mock',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  taxId: string;
+
+  @ApiProperty({ example: 'US', description: 'ISO 3166-1 alpha-2 country of registration' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(2)
+  country: string;
+
+  @ApiPropertyOptional({
+    type: [BeneficialOwnerDto],
+    description: 'Beneficial owners, if known at submission time. Omit if not yet collected.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => BeneficialOwnerDto)
+  beneficialOwners?: BeneficialOwnerDto[];
+}
+
 export class SubmitKycDto {
   @ApiProperty({ example: 'Acme Marketplace Sellers LLC', description: 'Registered business/legal name' })
   @IsString()
@@ -505,6 +620,22 @@ export class MerchantSummaryDto {
   kycApplicationId: string | null;
 
   @ApiProperty({
+    example: 'NOT_STARTED',
+    enum: ['NOT_STARTED', 'PENDING_REVIEW', 'VERIFIED', 'REJECTED'],
+    description:
+      'Business (not individual) verification status — independent of kycStatus, only meaningful for a CONNECTED merchant. Not currently wired into any payout gate; see docs/business-domain/merchants.md.',
+  })
+  kybStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      "The KYB provider's own application id — set while kybStatus is PENDING_REVIEW, used to look this merchant back up when POST /webhooks/kyb reports a decision.",
+  })
+  kybApplicationId: string | null;
+
+  @ApiProperty({
     example: ['STRIPE', 'ADYEN'],
     enum: VALID_PSP_PROVIDERS,
     isArray: true,
@@ -618,6 +749,50 @@ export class MerchantSummaryDto {
     description: 'Channel-specific destination — null means no AML-review notification is sent for this merchant.',
   })
   amlReviewNotificationTarget: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true, description: 'Registered legal name, if supplied' })
+  legalName?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true, description: 'Tax identification number, if supplied' })
+  taxId?: string | null;
+
+  @ApiProperty({
+    example: 'CLEAR',
+    enum: ['NOT_SCREENED', 'CLEAR', 'POTENTIAL_MATCH', 'HIT'],
+    description:
+      'Sanctions/watchlist screening outcome. A HIT blocks the onboarding/KYC action that would have produced it — a HIT seen here only ever comes from the periodic sweep finding a merchant clean at onboarding but since listed.',
+  })
+  sanctionsScreeningStatus: 'NOT_SCREENED' | 'CLEAR' | 'POTENTIAL_MATCH' | 'HIT';
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  sanctionsScreenedAt?: string | null;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description: 'The matched list entry and score, if any — null when CLEAR/NOT_SCREENED',
+  })
+  sanctionsMatchDetails?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  sanctionsReviewedBy?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  sanctionsReviewedAt?: string | null;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel this merchant's sanctions-screening notifications go out on.",
+  })
+  sanctionsNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no sanctions notification is sent for this merchant.',
+  })
+  sanctionsNotificationTarget?: string | null;
 
   @ApiProperty()
   createdAt: string;

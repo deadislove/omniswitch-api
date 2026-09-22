@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DisputeNotificationPort, DisputeNotificationPayload } from '../../ports/outbound/dispute-notification.port';
-import { postJsonNotification } from './notification-delivery.util';
+import { postJsonNotification } from '../../../../shared/utils/notification-delivery.util';
 
 /**
  * Email Dispute Notification Adapter

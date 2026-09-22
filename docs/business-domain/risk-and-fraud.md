@@ -1,9 +1,14 @@
 # Risk & Fraud Signals
 
-This describes the two independent risk signals this platform tracks per
-merchant — reserve-driving risk tiering (a chargeback-history signal) and
-ambiguous-payment risk monitoring (a PSP-reliability signal) — and why
-they're separate mechanisms rather than one "risk score." See
+This describes the four independent signals this platform tracks per
+merchant — reserve-driving risk tiering (a chargeback-history signal),
+ambiguous-payment risk monitoring (a PSP-reliability signal), AML review
+observation (a HIGH-industry hard-decline signal), and sanctions/
+watchlist screening (a legal-obligation signal) — and why they're kept
+as separate mechanisms rather than merged into one "risk score." The
+next section makes that argument for the original two; AML review and
+sanctions screening each answer a further, differently-shaped question
+still, covered in their own sections below. See
 [`ledger-and-settlement.md`](./ledger-and-settlement.md#merchant-risk-tiering--reserves)
 for the ledger/reserve mechanics and
 [`future-directions.md`](./future-directions.md#merchant-risk-tiering--reserves)
@@ -237,6 +242,62 @@ calibration.md` for why an MCC risk table is a categorical, not
 statistical, judgment), and it does not introduce a second industry-risk
 taxonomy alongside `industryRiskCategory`.
 
+## Sanctions/watchlist screening (onboarding + periodic re-screening)
+
+The three signals above all answer some form of "is this merchant's
+*behavior* risky." Sanctions screening answers a different kind of
+question entirely: "is this merchant, by legal identity, someone this
+platform is required to refuse to do business with at all" — see
+[`compliance-and-security.md#sanctionswatchlist-screening-who-this-platform-is-legally-required-to-refuse`](./compliance-and-security.md#sanctionswatchlist-screening-who-this-platform-is-legally-required-to-refuse)
+for why that's a legal question, not a risk-appetite one, and why it
+therefore can't be treated the way the other three signals are.
+
+**`SanctionsScreeningPort`** takes a name (plus optional tax ID/country)
+and returns one of three outcomes:
+
+- **`CLEAR`** — no meaningful match against the configured list.
+- **`POTENTIAL_MATCH`** — a fuzzy match below the confidence threshold
+  configured as "certain" (`SANCTIONS_MATCH_THRESHOLD`). Common names
+  produce these routinely; treating every one as a confirmed hit would
+  refuse real merchants over coincidence, so this is a visibility flag,
+  not a block — `MerchantEntity.sanctionsScreeningStatus` is set, a
+  real-time notification fires (same channel-configuration shape as
+  AML review, below), and `PATCH /admin/merchants/:id/sanctions-review`
+  lets an operator record a real determination (cleared as a false
+  positive, or escalated) without silently un-flagging it on the next
+  sweep.
+- **`HIT`** — a high-confidence match. Unlike every other signal in this
+  document, this **blocks the action outright** rather than just
+  flagging it: at merchant creation, the merchant is never created at
+  all; at KYC submission, the submission is rejected. See
+  [`merchants.md`](./merchants.md#step-1--identity-capture-and-sanctions-screening-at-creation)
+  for the full onboarding-pipeline placement of this check.
+
+**When it runs**: at merchant creation (using `legalName` if supplied,
+falling back to the display `name` at *degraded* confidence if not —
+see `merchants.md` for why that distinction is tracked rather than
+treated as equivalent to a real legal name), again at KYC submission
+(using the real `legalName`/`taxId` this time, which supersedes a
+degraded-confidence result from creation), and on a **weekly scheduled
+sweep** across every merchant not already `HIT` — a person or company
+clean at onboarding can appear on a list later, and this is the
+mechanism that catches that, the same "don't just check once" reasoning
+[risk tiering's](#risk-tiering-chargeback-driven-reserves) daily sweep
+already applies to chargeback history. Also runnable
+on demand (`POST /admin/sanctions/run`), same dual scheduled/on-demand
+shape as the risk-tiering and AML sweeps.
+
+**What a `HIT` does *not* do automatically**: freeze ledger balances,
+force a payout, or deactivate an already-onboarded merchant. Those are
+consequential, hard-to-reverse actions this system deliberately leaves
+to a human decision via existing tools (`PATCH .../status`,
+`PATCH .../reserve-policy`) rather than an automated sweep taking them
+unilaterally. What a `HIT` *does* do automatically going forward: block
+new agent delegations for that merchant — see
+[`merchants.md#sanctions-hit-and-agent-delegations`](./merchants.md#sanctions-hit-and-agent-delegations)
+for why that's the one automatic consequence considered safe to wire up
+without a human in the loop.
+
 ## Not modeled
 
 - **No connection between the two signals.** A merchant with a run of
@@ -251,4 +312,13 @@ taxonomy alongside `industryRiskCategory`.
   recorded for visibility, not something that gates or routes a charge
   differently — see [`payment-lifecycle.md`](./payment-lifecycle.md) for
   what it actually does. Neither risk-tiering nor ambiguous-risk
-  monitoring feeds back into it.
+  monitoring feeds back into it. **The PSP's own risk signal (Stripe
+  Radar's outcome, Adyen's fraudResult) is now captured** —
+  `PaymentEntity.pspRiskSignal` — but deliberately stored *alongside*
+  this heuristic score, not blended into it: the heuristic score is
+  computed and acted on (3DS-skip, the human-approval-hold threshold)
+  *before* the PSP is ever called, so there's no way to fold a signal
+  that doesn't exist yet into that same number without retroactively
+  changing a value several existing callers already treat as final.
+  Actually incorporating it into risk tiering or the approval threshold
+  is real future work, not something this plumbing pass silently did.

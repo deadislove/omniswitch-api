@@ -13,6 +13,7 @@ import { PayoutSweepRunEntity } from '../modules/payment/adapters/persistence/en
 import { DelegationEntity } from '../modules/payment/adapters/persistence/entities/delegation.entity';
 import { ChargeApprovalEntity } from '../modules/payment/adapters/persistence/entities/charge-approval.entity';
 import { MerchantEntity } from '../modules/merchant/merchant.entity';
+import { WebhookDeliveryLogEntity } from '../shared/webhook-delivery-log/webhook-delivery-log.entity';
 
 /**
  * TypeORM CLI data source. Deliberately separate from app.module.ts's
@@ -57,6 +58,7 @@ export const AppDataSource = new DataSource({
     PayoutSweepRunEntity,
     DelegationEntity,
     ChargeApprovalEntity,
+    WebhookDeliveryLogEntity,
   ],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   migrationsTableName: 'typeorm_migrations',

@@ -72,6 +72,21 @@ export interface TaxRecord {
   capturedAt: string;
 }
 
+/**
+ * Domain-owned mirror of `PSPRiskSignal` (ports/outbound/psp-adapter.port.ts)
+ * — structurally identical, kept as a separate type because the domain
+ * layer doesn't depend on the ports layer (the reverse already holds:
+ * `PSPProvider` is defined here and *ports* import it, not the other way
+ * around). `PaymentMapper`/`PaymentCheckoutSaga` translate between the
+ * two at the boundary. See `markSucceeded()`/`requiresCapture()`/
+ * `markFailed()`'s shared docblock on why this is stored *alongside*
+ * `riskScore`, not blended into it.
+ */
+export interface PspRiskSignal {
+  riskLevel?: 'normal' | 'elevated' | 'highest';
+  riskScore?: number;
+}
+
 export interface PaymentSplit {
   merchantId: string;
   amount: Money;
@@ -101,6 +116,7 @@ export class PaymentAggregate {
     private _pspTransactionId?: string,
     private _pspRawResponse?: Record<string, unknown>,
     private _riskScore?: number,
+    private _pspRiskSignal?: PspRiskSignal,
     private _threeDSResult?: ThreeDSResult,
     private _refunds: RefundRecord[] = [],
     private _captures: CaptureRecord[] = [],
@@ -142,6 +158,7 @@ export class PaymentAggregate {
       undefined, // pspTransactionId
       undefined, // pspRawResponse
       undefined, // riskScore
+      undefined, // pspRiskSignal
       undefined, // threeDSResult
       undefined, // refunds
       undefined, // captures
@@ -184,6 +201,7 @@ export class PaymentAggregate {
     pspTransactionId?: string;
     pspRawResponse?: Record<string, unknown>;
     riskScore?: number;
+    pspRiskSignal?: PspRiskSignal;
     threeDSResult?: ThreeDSResult;
     refunds?: RefundRecord[];
     captures?: CaptureRecord[];
@@ -212,6 +230,7 @@ export class PaymentAggregate {
       params.pspTransactionId,
       params.pspRawResponse,
       params.riskScore,
+      params.pspRiskSignal,
       params.threeDSResult,
       params.refunds ?? [],
       params.captures ?? [],
@@ -266,10 +285,15 @@ export class PaymentAggregate {
    * (`captureMethod: 'manual'`). The PSP transaction id is recorded now so
    * the capture/cancel API can reference it.
    */
-  requiresCapture(pspTransactionId: string, pspRawResponse?: Record<string, unknown>): void {
+  requiresCapture(
+    pspTransactionId: string,
+    pspRawResponse?: Record<string, unknown>,
+    pspRiskSignal?: PspRiskSignal,
+  ): void {
     assertValidTransition(this._status, PaymentStatus.REQUIRES_CAPTURE);
     this._pspTransactionId = pspTransactionId;
     this._pspRawResponse = pspRawResponse;
+    this._pspRiskSignal = pspRiskSignal;
     this.transitionTo(PaymentStatus.REQUIRES_CAPTURE);
   }
 
@@ -326,10 +350,33 @@ export class PaymentAggregate {
     return isFullyCaptured;
   }
 
-  markSucceeded(pspTransactionId: string, pspRawResponse?: Record<string, unknown>): void {
+  /**
+   * `pspRiskSignal` (Stripe Radar's outcome, Adyen's fraudResult — see
+   * `PspRiskSignal`'s own docblock) is stored *alongside* `riskScore`,
+   * deliberately not blended into it: `riskScore` is computed and acted
+   * on (3DS-skip, the human-approval-hold threshold — see
+   * `calculateRiskScore()`) *before* the PSP is ever called, so there is
+   * no "additional input" to feed it at that point — the PSP signal
+   * doesn't exist yet. Retroactively folding it into `riskScore` here,
+   * after the fact, would silently change a value several existing
+   * callers already treat as "the pre-charge decision score" (e.g.
+   * `PaymentCheckoutSaga`'s returned `riskScore`, asserted on directly
+   * in `agent-risk-scoring.e2e-spec.ts`/`charge-approval.e2e-spec.ts`)
+   * without those callers asking for that. This field is the honest
+   * "recorded for visibility, not yet a decisioning input" posture this
+   * codebase already uses for `ambiguousRiskFlagged` — a real
+   * integration into risk tiering or the approval threshold is future
+   * work, not silently smuggled into this plumbing pass.
+   */
+  markSucceeded(
+    pspTransactionId: string,
+    pspRawResponse?: Record<string, unknown>,
+    pspRiskSignal?: PspRiskSignal,
+  ): void {
     assertValidTransition(this._status, PaymentStatus.SUCCEEDED);
     this._pspTransactionId = pspTransactionId;
     this._pspRawResponse = pspRawResponse;
+    this._pspRiskSignal = pspRiskSignal;
     this.transitionTo(PaymentStatus.SUCCEEDED);
     this.addDomainEvent(
       new PaymentChargedEvent(
@@ -351,11 +398,12 @@ export class PaymentAggregate {
    * below depends on to classify it correctly (Stripe and Adyen use
    * disjoint decline-code vocabularies — see decline-code-classifier.ts).
    */
-  markFailed(reason: string, errorCode?: string, pspProvider?: PSPProvider): void {
+  markFailed(reason: string, errorCode?: string, pspProvider?: PSPProvider, pspRiskSignal?: PspRiskSignal): void {
     assertValidTransition(this._status, PaymentStatus.FAILED);
     if (pspProvider) this._pspProvider = pspProvider;
     this._failureReason = reason;
     this._failureCode = errorCode;
+    if (pspRiskSignal) this._pspRiskSignal = pspRiskSignal;
     this.transitionTo(PaymentStatus.FAILED);
     this.addDomainEvent(new PaymentFailedEvent(this._id, reason, errorCode));
   }
@@ -667,6 +715,9 @@ export class PaymentAggregate {
   }
   get riskScore(): number | undefined {
     return this._riskScore;
+  }
+  get pspRiskSignal(): PspRiskSignal | undefined {
+    return this._pspRiskSignal;
   }
   get threeDSResult(): ThreeDSResult | undefined {
     return this._threeDSResult;

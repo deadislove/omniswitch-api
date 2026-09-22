@@ -261,6 +261,48 @@ export class MerchantEntity {
   kycApplicationId?: string | null;
 
   /**
+   * KYB (Know Your Business) review status — structurally identical to
+   * `kycStatus` but answers a different question: not "is this
+   * individual who they say they are" but "is this business real,
+   * registered, and who actually owns/controls it." Only meaningful for
+   * a `CONNECTED` merchant, same scope as `kycStatus`. Deliberately does
+   * **not** gate payouts the way `kycStatus` does — see
+   * docs/business-domain/merchants.md#step-3--kyb-for-connected-merchants-only
+   * for why this is captured as an underwriting data point for now,
+   * not wired into an automated gate, matching this codebase's own
+   * "visibility first, automation later" posture for a new signal.
+   */
+  @Column({ name: 'kyb_status', type: 'varchar', default: 'NOT_STARTED' })
+  kybStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+
+  @Column({ name: 'kyb_legal_name', type: 'varchar', nullable: true })
+  kybLegalName?: string | null;
+
+  @Column({ name: 'kyb_tax_id', type: 'varchar', nullable: true })
+  kybTaxId?: string | null;
+
+  @Column({ name: 'kyb_country', type: 'varchar', nullable: true })
+  kybCountry?: string | null;
+
+  /**
+   * Beneficial owners (name + ownership percentage) submitted with this
+   * KYB application, if any — real UBO regulations (FinCEN's CDD Rule,
+   * EU AMLD) generally require identifying anyone at or above a 25%
+   * ownership threshold, not enforced here, just recorded. **Retention
+   * policy for this field is an open question, not yet answered** — see
+   * docs/business-domain/merchants.md's KYB section: this is exactly the
+   * kind of PII a real deployment needs a documented retention period
+   * for (docs/compliance/data-retention.md), which this pass captures
+   * the data to support but doesn't itself resolve.
+   */
+  @Column({ name: 'kyb_beneficial_owners', type: 'jsonb', nullable: true })
+  kybBeneficialOwners?: { name: string; ownershipPercentage: number }[] | null;
+
+  @Column({ name: 'kyb_application_id', type: 'varchar', nullable: true })
+  @Index()
+  kybApplicationId?: string | null;
+
+  /**
    * Which channel `DisputeNotificationDispatcherService` uses for this
    * merchant's `dispute.created`/`dispute.resolved` notifications.
    * Defaults to `WEBHOOK` — the only channel that requires no
@@ -426,6 +468,98 @@ export class MerchantEntity {
   /** Channel-specific destination for AML-review notifications — same posture as subscriptionNotificationTarget above. */
   @Column({ name: 'aml_review_notification_target', type: 'varchar', nullable: true })
   amlReviewNotificationTarget?: string | null;
+
+  /**
+   * Real-world legal identity, captured optionally at `POST
+   * /admin/merchants` — unlike `name` (a display name never treated as
+   * verified), this is what sanctions/watchlist screening runs against
+   * at full confidence. Distinct from `kycLegalName`/`kycTaxId` below:
+   * those are CONNECTED-only, captured at KYC submission, and gate
+   * payouts; these apply to every merchant regardless of `accountType`
+   * and exist purely to support the sanctions check, which is a legal
+   * obligation independent of marketplace role. `submitKyc()` also
+   * updates these two fields from the freshly submitted `legalName` —
+   * the more authoritative source, once it exists — and re-screens at
+   * full confidence. See
+   * docs/business-domain/merchants.md#step-1--identity-capture-and-sanctions-screening-at-creation.
+   */
+  @Column({ name: 'legal_name', type: 'varchar', nullable: true })
+  legalName?: string | null;
+
+  @Column({ name: 'tax_id', type: 'varchar', nullable: true })
+  taxId?: string | null;
+
+  /**
+   * Sanctions/watchlist screening outcome. `NOT_SCREENED` only occurs
+   * for a merchant that predates this field (a migration doesn't
+   * retroactively screen existing rows — see
+   * `SanctionsScreeningSweepService`'s docblock for why the weekly sweep
+   * *does* pick these up going forward). `HIT` blocks the action that
+   * would have produced it (`createMerchant()`/`submitKyc()` both throw
+   * before persisting anything) — a `HIT` value stored here only ever
+   * comes from the periodic sweep discovering a merchant that was
+   * `CLEAR`/`POTENTIAL_MATCH` at onboarding but has since appeared on
+   * the list. See
+   * docs/business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening.
+   */
+  @Column({ name: 'sanctions_screening_status', type: 'varchar', default: 'NOT_SCREENED' })
+  sanctionsScreeningStatus: 'NOT_SCREENED' | 'CLEAR' | 'POTENTIAL_MATCH' | 'HIT';
+
+  /**
+   * Whether the most recent screening ran against a real `legalName`
+   * (`FULL`) or fell back to the display `name` because no `legalName`
+   * was ever supplied (`DEGRADED`) — a weaker signal, good enough to
+   * catch an obvious exact-name match, not a substitute for a real
+   * legal name. `null` whenever `sanctionsScreeningStatus` is
+   * `NOT_SCREENED`.
+   */
+  @Column({ name: 'sanctions_screening_confidence', type: 'varchar', nullable: true })
+  sanctionsScreeningConfidence?: 'FULL' | 'DEGRADED' | null;
+
+  @Column({ name: 'sanctions_screened_at', type: 'timestamp', nullable: true })
+  sanctionsScreenedAt?: Date | null;
+
+  /** Human-readable evidence for a reviewer — the matched list entry's display name and match score, e.g. "USAMA BIN LADIN (score=0.941)". Null when CLEAR. */
+  @Column({ name: 'sanctions_match_details', type: 'varchar', nullable: true })
+  sanctionsMatchDetails?: string | null;
+
+  /**
+   * Set by `PATCH /admin/merchants/:id/sanctions-review` — an operator's
+   * determination on a `POTENTIAL_MATCH`/`HIT` (false positive vs.
+   * confirmed). Unlike `ambiguousRiskFlaggedBy`/`amlReviewFlaggedBy`,
+   * recording this does **not** pause automatic re-screening — see
+   * `sanctionsReviewResolution`'s docblock for why.
+   */
+  @Column({ name: 'sanctions_reviewed_by', type: 'varchar', nullable: true })
+  sanctionsReviewedBy?: string | null;
+
+  @Column({ name: 'sanctions_reviewed_at', type: 'timestamp', nullable: true })
+  sanctionsReviewedAt?: Date | null;
+
+  /**
+   * `CLEARED` (false positive) or `CONFIRMED` (a real match, escalated
+   * outside this system). Deliberately doesn't disable future
+   * screening the way `riskTierAutoManaged`/`ambiguousRiskAutoManaged`/
+   * `amlReviewAutoManaged` disable their sweeps on manual override — a
+   * cleared false positive today is a determination about *this specific
+   * match*, not a request to stop checking this merchant at all; the
+   * next scheduled sweep still runs and may find a genuinely new match.
+   */
+  @Column({ name: 'sanctions_review_resolution', type: 'varchar', nullable: true })
+  sanctionsReviewResolution?: 'CLEARED' | 'CONFIRMED' | null;
+
+  /**
+   * Notification channel for sanctions-screening events — independent
+   * of every other `*NotificationChannel` field, same "each event
+   * family picks its own channel" reasoning as
+   * `amlReviewNotificationChannel`. Fires for `POTENTIAL_MATCH`/`HIT`,
+   * never for `CLEAR`.
+   */
+  @Column({ name: 'sanctions_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  sanctionsNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @Column({ name: 'sanctions_notification_target', type: 'varchar', nullable: true })
+  sanctionsNotificationTarget?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

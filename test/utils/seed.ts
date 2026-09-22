@@ -22,6 +22,8 @@ export async function seedMerchant(
   params: {
     merchantId: string;
     name?: string;
+    legalName?: string;
+    taxId?: string;
     roles?: string[];
     platformFeeBps?: number;
     settlementCurrency?: string;
@@ -39,6 +41,8 @@ export async function seedMerchant(
   const { merchant, apiKeySecret, hmacSecret } = await merchantService.createMerchant({
     merchantId: params.merchantId,
     name: params.name ?? params.merchantId,
+    legalName: params.legalName,
+    taxId: params.taxId,
     roles: params.roles ?? ['MERCHANT'],
     platformFeeBps: params.platformFeeBps,
     settlementCurrency: params.settlementCurrency,

@@ -6,7 +6,11 @@ import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from
 import { signHmacRequest, signBankTransferWebhook } from './utils/signing';
 import { PayoutService } from '../src/modules/payment/application/services/payout.service';
 import { CachePort } from '../src/modules/payment/ports/outbound/cache.port';
-import { forceSharedRedisDbForSweepLock, acquireExclusiveSweepTestSuite } from './utils/shared-redis-db';
+import {
+  forceSharedRedisDbForSweepLock,
+  acquireExclusiveSweepTestSuite,
+  SUITE_MUTEX_ACQUIRE_TIMEOUT_MS,
+} from './utils/shared-redis-db';
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 const BANK_TRANSFER_WEBHOOK_SECRET = process.env.BANK_TRANSFER_WEBHOOK_SECRET!;
@@ -63,7 +67,7 @@ describe('Bank transfer rail: ACH/Wire (e2e)', () => {
     releaseSweepMutex = await acquireExclusiveSweepTestSuite(app.get(CachePort));
     payoutService = app.get(PayoutService);
     ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
-  });
+  }, SUITE_MUTEX_ACQUIRE_TIMEOUT_MS);
 
   afterAll(async () => {
     await releaseSweepMutex();
@@ -284,7 +288,7 @@ describe('Bank transfer rail: Wire (e2e)', () => {
     releaseSweepMutex = await acquireExclusiveSweepTestSuite(app.get(CachePort));
     payoutService = app.get(PayoutService);
     ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
-  });
+  }, SUITE_MUTEX_ACQUIRE_TIMEOUT_MS);
 
   afterAll(async () => {
     await releaseSweepMutex();

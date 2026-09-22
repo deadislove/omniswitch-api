@@ -15,9 +15,10 @@ and needs credentials for a real seeded merchant (a MERCHANT-role
 merchant for `psp-outage.sh`/`redis-outage.sh`/`postgres-primary-outage.sh`;
 an OPERATOR-role merchant additionally for `psp-outage.sh`, to read
 `GET /payments/routing/health`). See each script's own header for its
-exact required environment variables. None of these are wired into CI —
-deliberately destructive against real containers, not something to run
-unattended on every push.
+exact required environment variables. None of these run as part of
+`ci.yml` — deliberately destructive against real containers, not
+something to run unattended on every push. They do run on their own
+recurring schedule; see "Scheduled automation" below.
 
 ## `psp-outage.sh` — total PSP outage
 
@@ -102,6 +103,40 @@ Deliberately does not attempt to kill the primary *mid-transaction*
 scriptable) — this covers the coarser "primary unreachable for the whole
 request" case, which is still a real, useful signal about failure mode
 and recovery time.
+
+## Scheduled automation
+
+Running these three scripts by hand, occasionally, still depends on
+someone remembering to do it. [`.github/workflows/chaos-drill.yml`](../../../.github/workflows/chaos-drill.yml)
+runs [`scripts/chaos/run-drill.sh`](../../../scripts/chaos/run-drill.sh)
+monthly (and on-demand via `workflow_dispatch`) so the three scenarios
+above accumulate a real run history instead of only ever being exercised
+ad hoc.
+
+The workflow brings up a fresh, disposable `docker-compose` stack on the
+runner itself — including the actual `api` container over real HTTP,
+unlike `ci.yml`'s e2e job, which talks to an in-process Nest app and
+never runs the container image at all — rather than targeting a shared
+staging environment, since this project doesn't have one.
+`run-drill.sh` seeds its own throwaway MERCHANT/OPERATOR-role merchants
+(via [`scripts/chaos/seed-chaos-merchants.js`](../../../scripts/chaos/seed-chaos-merchants.js),
+run inside the `api` container itself) rather than depending on a human
+having already run `README.md`'s manual seeding snippet, runs all three
+scenarios back to back, and fails the job if any scenario's own PASS/FAIL
+logic (see each script's final `exit 0`/`exit 1`) reports a failure —
+a real regression should show up as a failed scheduled run, not just a
+line in a log nobody opens.
+
+Each scenario's full stdout/stderr and a one-line-per-scenario
+`summary.md` are uploaded as a workflow artifact (`chaos-drill-output-<run
+id>`), kept for GitHub's default artifact retention window. That's a
+narrower, lower-overhead choice than a checked-in, auto-committed running
+log: this repo's two other workflows are both `contents: read`, and a
+scheduled workflow that commits back to `main` would be a new,
+higher-privilege pattern for comparatively low payoff at this project's
+current scale — the per-run artifact is enough to see what a given run
+found, and the workflow's own run history in the GitHub Actions UI is
+already a timestamped record of pass/fail over time.
 
 ## What this doesn't cover
 

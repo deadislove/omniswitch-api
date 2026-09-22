@@ -24,6 +24,7 @@ who weren't in the room for any of these decisions.
 | [0002](./0002-transactional-outbox-for-ledger-events.md) | Transactional outbox for ledger events instead of a dual write | Accepted |
 | [0003](./0003-saga-orchestration-for-checkout.md) | Orchestrated saga with compensating actions for checkout | Accepted |
 | [0004](./0004-smart-routing-with-circuit-breaker.md) | Smart PSP routing with a shared circuit breaker, not a static primary/fallback | Accepted |
+| [0005](./0005-first-party-node-sdk.md) | A first-party Node/TypeScript client, not just a documented REST API | Accepted |
 
 ## Format
 

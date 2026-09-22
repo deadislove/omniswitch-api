@@ -16,6 +16,7 @@ import { JwtPayload } from '../../../../shared/auth/jwt.strategy';
 import { TokenRevocationService } from '../../../../shared/auth/token-revocation.service';
 import { UserRole } from '../../../../shared/decorators/roles.decorator';
 import { VaultTransitService } from '../../../../shared/vault/vault-transit.service';
+import { MerchantService } from '../../../merchant/merchant.service';
 
 const DEFAULT_AGENT_TOKEN_TTL_SECONDS = 24 * 3600;
 
@@ -47,6 +48,7 @@ export class DelegationService {
     private readonly jwtService: JwtService,
     private readonly tokenRevocation: TokenRevocationService,
     private readonly vaultTransit: VaultTransitService,
+    private readonly merchantService: MerchantService,
   ) {}
 
   /**
@@ -62,10 +64,28 @@ export class DelegationService {
    * plaintext key is returned here once, alongside `agentToken`, and never
    * stored or logged in plaintext again — identical posture to
    * `apiKeySecret`/`hmacSecret` at merchant creation.
+   *
+   * Refuses to create a new delegation for a merchant whose
+   * `sanctionsScreeningStatus` is `HIT` — `DelegationEntity.agentName` is
+   * a merchant-chosen label for a piece of software, not a legal
+   * identity screening would apply to, so the gate attaches to the
+   * capability (authorizing more spend on a known-sanctioned merchant's
+   * behalf) rather than to the agent itself. See
+   * docs/business-domain/merchants.md#sanctions-hit-and-agent-delegations.
+   * Existing delegations are unaffected — this only blocks *new* ones.
    */
   async createDelegation(
     params: CreateDelegationParams,
   ): Promise<{ delegation: Delegation; agentToken: string; expiresIn: number; agentSigningKey: string }> {
+    const merchant = await this.merchantService.findByMerchantId(params.merchantId);
+    if (merchant?.sanctionsScreeningStatus === 'HIT') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: `Merchant ${params.merchantId} has a confirmed sanctions screening match — cannot authorize new delegations`,
+        code: 'SANCTIONS_SCREENING_HIT',
+      });
+    }
+
     const spendPolicy = SpendPolicy.create({
       perTransactionLimit: params.perTransactionLimit,
       monthlyLimit: params.monthlyLimit,

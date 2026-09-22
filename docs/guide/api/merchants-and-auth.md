@@ -108,7 +108,8 @@ Onboards a new merchant — returns the API key secret **once**.
 | Field | Required | Notes |
 |---|---|---|
 | `merchantId` | yes | Business-facing id, `[a-zA-Z0-9_-]+`, 3-64 chars |
-| `name` | yes | |
+| `name` | yes | Display name — not treated as a verified legal identity |
+| `legalName` / `taxId` | no | If supplied, sanctions/watchlist screening runs against these at full confidence. If omitted, screening falls back to `name` at *degraded* confidence — see [`../../business-domain/merchants.md`](../../business-domain/merchants.md#step-1--identity-capture-and-sanctions-screening-at-creation) |
 | `roles` | yes | Subset of `ADMIN`/`MERCHANT`/`OPERATOR`/`READONLY` |
 | `platformFeeBps` | no | Default 150 (1.5%) |
 | `settlementCurrency` | no | Default: settle in whatever currency was charged |
@@ -121,7 +122,15 @@ Onboards a new merchant — returns the API key secret **once**.
 **Response `201`**: merchant summary + `apiKeySecret` + `hmacSecret`
 (both shown once).
 
-- **Errors**: `409` `merchantId` already exists.
+- **Errors**: `409` `merchantId` already exists; `422`
+  `SANCTIONS_SCREENING_HIT` — the supplied identity (`legalName`, or
+  `name` if `legalName` wasn't supplied) matched a sanctions/watchlist
+  list at high confidence. Nothing is created: no merchant row, no API
+  key, no HMAC secret. See
+  [`../../business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening`](../../business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening).
+  A lower-confidence fuzzy match does **not** error — the merchant is
+  created normally with `sanctionsScreeningStatus: 'POTENTIAL_MATCH'`
+  for a human to resolve via `PATCH .../sanctions-review` below.
 
 ### `POST /admin/merchants/:id/rotate-api-key`
 
@@ -191,7 +200,34 @@ instead, with the final decision arriving later via `POST /webhooks/kyc`.
 Only meaningful for a `CONNECTED` merchant; gates payout transfers, not
 charges.
 
+Also re-runs sanctions/watchlist screening against the submitted
+`legalName`, at full confidence — superseding any degraded-confidence
+result from onboarding. A high-confidence match rejects the submission
+(`kycStatus` is not advanced) rather than leaving the prior status
+unchanged.
+
 - **Body**: `{ legalName: string, taxId: string }`
+- **Errors**: `422` `SANCTIONS_SCREENING_HIT` — see the same error on
+  `POST /admin/merchants` above.
+
+### `POST /admin/merchants/:id/kyb/submit`
+
+Submits (or re-submits) this merchant's KYB (Know Your Business)
+application — verifies the *business* (registration, tax ID, beneficial
+owners), independently of `kycStatus` (which only verifies an
+individual). Same synchronous-mock/async-real provider shape as KYC
+(`KYB_PROVIDER=mock`/`persona`), with the final decision on a real
+provider arriving via `POST /webhooks/kyb` (a distinct signing secret
+from KYC's `POST /webhooks/kyc`). Only meaningful for a `CONNECTED`
+merchant. **Not wired into any payout gate** — see
+[`../../business-domain/merchants.md#step-3--kyb-for-connected-merchants-only`](../../business-domain/merchants.md#step-3--kyb-for-connected-merchants-only).
+
+Also re-runs sanctions/watchlist screening against the submitted
+`legalName`, same posture as KYC submission above.
+
+- **Body**: `{ legalName: string, taxId: string, country: string, beneficialOwners?: [{ name: string, ownershipPercentage: number }] }`
+- **Errors**: `422` `SANCTIONS_SCREENING_HIT` — see the same error on
+  `POST /admin/merchants` above.
 
 ### `PATCH /admin/merchants/:id/psp-entitlement`
 
@@ -302,6 +338,60 @@ until one is set).
 - **Body**: `{ channel: 'EMAIL' | 'SLACK' | 'WEBHOOK', target?: string | null }`
 - **Errors**: `422` if `channel` isn't one of the three values.
 
+### Sanctions/watchlist screening
+
+Screens a merchant's identity against a real sanctions/watchlist list —
+unlike ambiguous-risk and AML review above, a high-confidence match
+(`HIT`) is not purely observational: it blocks onboarding and KYC
+submission outright (see those sections above). A lower-confidence
+match (`POTENTIAL_MATCH`) is observational, same as the other two
+signals. See
+[`../../business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening`](../../business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening)
+for the full design.
+
+#### `POST /admin/merchants/:id/sanctions/rescreen`
+
+Re-screens this merchant on demand, against its currently-stored
+`legalName`/`taxId` (or `name`, if no `legalName` was ever supplied) —
+the same check onboarding/KYC-submit run, without waiting for the
+weekly sweep.
+
+- **Response `200`**: merchant summary, with `sanctionsScreeningStatus`
+  reflecting the fresh result.
+
+#### `PATCH /admin/merchants/:id/sanctions-review`
+
+Records a human determination on a `POTENTIAL_MATCH` or `HIT` —
+clearing a false positive, or confirming/escalating a real one. `reason`
+is required and, along with the acting admin/operator's identity, is
+recorded as a permanent audit trail. Unlike
+`PATCH .../ambiguous-risk`/`PATCH .../aml-review`, this does **not**
+disable automatic re-screening going forward — a cleared false positive
+today should still be re-screened on the next sweep, since the
+determination was about *this specific match*, not a request to stop
+checking this merchant at all.
+
+- **Body**: `{ resolution: 'CLEARED' | 'CONFIRMED', reason: string }`
+- **Errors**: `422` if `reason` is missing/empty.
+
+#### `PATCH /admin/merchants/:id/sanctions-notification-channel`
+
+Changes which channel (EMAIL/SLACK/WEBHOOK) and destination this
+merchant's sanctions-screening notifications go out on — independent of
+every other `*-notification-channel` setting. Defaults to `WEBHOOK` with
+no target configured (no notification sent until one is set).
+
+- **Body**: `{ channel: 'EMAIL' | 'SLACK' | 'WEBHOOK', target?: string | null }`
+- **Errors**: `422` if `channel` isn't one of the three values.
+
+#### `POST /admin/sanctions/run`
+
+Triggers the weekly re-screening sweep on demand — the same logic the
+scheduled job runs, without waiting for it. Screens every merchant
+whose `sanctionsScreeningStatus` isn't already `HIT`.
+
+- **Response `200`**: `{ screened: number, newHits: number, newPotentialMatches: number }`
+
 All the `PATCH`/`POST` endpoints above (except onboarding/rotation)
 return the merchant summary:
 
@@ -328,6 +418,8 @@ return the merchant summary:
   "payoutReserveHoldDays": 0,
   "kycStatus": "NOT_STARTED",
   "kycApplicationId": null,
+  "kybStatus": "NOT_STARTED",
+  "kybApplicationId": null,
   "enabledPspProviders": ["STRIPE", "ADYEN"],
   "ambiguousRiskFlagged": false,
   "ambiguousRiskFlaggedAt": null,
@@ -345,6 +437,13 @@ return the merchant summary:
   "amlReviewAutoManaged": true,
   "amlReviewNotificationChannel": "WEBHOOK",
   "amlReviewNotificationTarget": null,
+  "sanctionsScreeningStatus": "CLEAR",
+  "sanctionsScreenedAt": "2026-01-01T00:00:00.000Z",
+  "sanctionsMatchDetails": null,
+  "sanctionsReviewedBy": null,
+  "sanctionsReviewedAt": null,
+  "sanctionsNotificationChannel": "WEBHOOK",
+  "sanctionsNotificationTarget": null,
   "createdAt": "2026-01-01T00:00:00.000Z",
   "updatedAt": "2026-01-01T00:00:00.000Z"
 }

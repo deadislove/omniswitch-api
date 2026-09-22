@@ -16,6 +16,7 @@ import {
   PSPVerifyPaymentMethodRequest,
   PSPVerifyPaymentMethodResponse,
   PSPQueryOutcomeResult,
+  PSPRiskSignal,
 } from '../../../ports/outbound/psp-adapter.port';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 import { PSPHealthStatus } from '../../../domain/services/smart-routing.strategy';
@@ -112,6 +113,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
             transactionId: response.pspReference,
             status: 'REQUIRES_CAPTURE',
             rawResponse: response,
+            riskSignal: this.extractRiskSignal(response),
           };
         }
         return {
@@ -119,6 +121,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           transactionId: response.pspReference,
           status: 'SUCCEEDED',
           rawResponse: response,
+          riskSignal: this.extractRiskSignal(response),
         };
       }
 
@@ -139,6 +142,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
         rawResponse: response,
         errorCode: response.refusalReasonCode,
         errorMessage: response.refusalReason,
+        riskSignal: this.extractRiskSignal(response),
       };
     } catch (error: unknown) {
       await this.circuitBreaker.recordFailure(this.provider);
@@ -146,6 +150,20 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
       this.logger.error(`Adyen charge failed: ${msg}`);
       throw error;
     }
+  }
+
+  /**
+   * Real Adyen returns `fraudResult` at the top level of every
+   * `/payments` response (Authorised or Refused alike) —
+   * `{accountScore, results: [...]}`. `accountScore` is Adyen's own
+   * aggregated risk score, higher meaning more suspicious — unlike
+   * Stripe, Adyen has no separate categorical "risk level," so
+   * `riskLevel` is always left undefined here.
+   */
+  private extractRiskSignal(response: any): PSPRiskSignal | undefined {
+    const score = response.fraudResult?.accountScore;
+    if (typeof score !== 'number') return undefined;
+    return { riskScore: score };
   }
 
   async refund(request: PSPRefundRequest): Promise<PSPRefundResponse> {

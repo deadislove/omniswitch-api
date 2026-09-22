@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/deadislove/omniswitch-api/actions/workflows/ci.yml/badge.svg)](https://github.com/deadislove/omniswitch-api/actions/workflows/ci.yml)
 [![Security Scan](https://github.com/deadislove/omniswitch-api/actions/workflows/security-scan.yml/badge.svg)](https://github.com/deadislove/omniswitch-api/actions/workflows/security-scan.yml)
+[![Chaos Drill](https://github.com/deadislove/omniswitch-api/actions/workflows/chaos-drill.yml/badge.svg)](https://github.com/deadislove/omniswitch-api/actions/workflows/chaos-drill.yml)
 
 > Enterprise-grade, high-reliability Payment Gateway API Service built with **NestJS (TypeScript)**, following **Modular Monolith + Hexagonal Architecture (Ports & Adapters)** and **Domain-Driven Design (DDD)**.
 
@@ -122,6 +123,7 @@ omniswitch-api/
 - **Health Checks** (`/health`, `/health/live`, `/health/ready`) for K8s probes
 - **Prometheus Metrics** (`/metrics`) — process metrics plus PSP circuit breaker state/success rate/latency, ledger outbox backlog, payment volume by status/provider (`omniswitch_payments_total`), and the latest reconciliation run's mismatch count per provider, all pull-computed at scrape time from existing state rather than in-process counters that would drift across replicas or reset on restart
 - **Alerting**: `docker-compose up -d prometheus alertmanager` runs a real Prometheus evaluating [`monitoring/alert.rules.yml`](monitoring/alert.rules.yml) against the metrics above (circuit breaker OPEN, outbox dead-letters/backlog, low PSP success rate, reconciliation mismatches), with results visible in Alertmanager at `:9093` — see [`docs/technical/incident-response.md`](docs/technical/incident-response.md) for what each alert means and how to respond
+- **Scheduled Chaos Drills**: a monthly (and on-demand) GitHub Actions run stops real containers (PSP, Redis, Postgres primary) against a fresh disposable stack to prove the resilience mechanisms above still hold, not just once during development — see [`docs/technical/tests/chaos-testing.md`](docs/technical/tests/chaos-testing.md)
 - **SSE Streaming** for real-time payment status updates
 - **Bulk Upload** CSV streaming via `multipart/form-data`
 

@@ -68,10 +68,31 @@ actually leave the platform. See
 [`marketplace-and-payouts.md`](./marketplace-and-payouts.md#connected-account-kyc)
 for the mechanism.
 
-**Real gap**: sanctions/watchlist screening (OFAC and equivalent lists)
-isn't modeled at all — `KYCProviderPort.verify()` checks identity, not
-whether the identity is on a list this platform is legally required to
-refuse. A real deployment needs this as a separate, additional check.
+## Sanctions/watchlist screening: who this platform is legally required to refuse
+
+`KYCProviderPort.verify()` answers "is this business who it says it
+is" — a genuinely different question from "is this business, or the
+individual behind it, on a list this platform is legally required to
+refuse to do business with at all." Sanctions/watchlist screening
+(`SanctionsScreeningPort`) answers the second question, and it's a
+distinct check for a reason that matters beyond neatness: it runs
+**before** KYC even applies, at merchant creation itself, for both
+`PLATFORM` and `CONNECTED` merchants — this is a legal screening
+obligation, not a marketplace-onboarding nicety scoped only to connected
+sellers.
+
+A confirmed match blocks onboarding outright, not just a downstream
+capability like payouts. This is deliberately *not* KYC-shaped: "create
+the account but hold back one capability" (what KYC does — see
+[`marketplace-and-payouts.md#connected-account-kyc`](./marketplace-and-payouts.md#connected-account-kyc))
+is the right posture for a merchant that's merely unverified yet; it's
+the wrong one for a party this platform isn't legally allowed to
+transact with at all. See
+[`../guide/api/merchants-and-auth.md`](../guide/api/merchants-and-auth.md)
+for the endpoint contract and
+[`risk-and-fraud.md`](./risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening)
+for the full mechanism, including why a fuzzy/low-confidence match is
+handled very differently from a confirmed one.
 
 ## Agentic payments: delegation scope as a liability-limiting decision
 

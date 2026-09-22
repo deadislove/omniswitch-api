@@ -239,6 +239,29 @@ credentials. `POST /admin/merchants/:id/kyc/submit` is re-callable
 after a `REJECTED` decision (a merchant re-applying with corrected
 information) against either provider.
 
+**KYC submission also re-screens sanctions.** The `legalName` submitted
+here doesn't only feed `KYCProviderPort` — it also re-runs sanctions/
+watchlist screening at full confidence, superseding whatever
+degraded-confidence result (based on the display `name` alone) this
+merchant got at creation time, if it never supplied a `legalName` then.
+A `HIT` at this step rejects the KYC submission outright rather than
+just leaving `kycStatus` unchanged — see
+[`risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening`](./risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening)
+and [`merchants.md`](./merchants.md) for the full onboarding-pipeline
+picture this is one step of.
+
+**KYB is a separate, non-gating check.** `POST
+/admin/merchants/:id/kyb/submit` verifies the *business* (registration,
+tax ID, beneficial owners) rather than the individual `kycStatus`
+already covers — tracked in its own `kybStatus` field, on its own
+timeline, and **not** wired into `Payout.kycBlocked` or any other payout
+gate. A `CONNECTED` merchant can have `kycStatus: 'VERIFIED'` and
+`kybStatus: 'NOT_STARTED'` at the same time; only `kycStatus` affects
+whether a payout can transfer. See
+[`merchants.md#step-3--kyb-for-connected-merchants-only`](./merchants.md#step-3--kyb-for-connected-merchants-only)
+for why that scope limit is deliberate, not a gap to be closed later
+without a decision.
+
 ### Payout KYC gating and real transfer initiation
 
 Two more `Payout` fields close the two gaps this section used to end on:

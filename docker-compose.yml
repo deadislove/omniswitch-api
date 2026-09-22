@@ -120,6 +120,11 @@ services:
       # verify mock-psp's signed review-decision callback.
       PERSONA_PROVIDER_URL: http://mock-psp:4000/persona
       KYC_WEBHOOK_SECRET: kyc_dev_compose_placeholder_do_not_use_in_prod
+      # Same story, for KYB_PROVIDER=persona against mock-psp's
+      # /persona/kyb-applications (see PersonaKybProviderAdapter) — a
+      # distinct secret from KYC_WEBHOOK_SECRET, matching KybWebhookGuard's
+      # own separate-secret posture.
+      KYB_WEBHOOK_SECRET: kyb_dev_compose_placeholder_do_not_use_in_prod
       # CORS
       CORS_ORIGINS: "http://localhost:3000,http://localhost:4200"
       # App
@@ -432,6 +437,10 @@ services:
       # Same story for /persona/kyc-applications's signed review-decision
       # callback — see scheduleKycDecision() and KycWebhookGuard.
       KYC_WEBHOOK_SECRET: kyc_dev_compose_placeholder_do_not_use_in_prod
+      # Same story for /persona/kyb-applications — see scheduleKybDecision()
+      # and KybWebhookGuard. Must match the `api` service's own
+      # KYB_WEBHOOK_SECRET above exactly, or every callback gets rejected.
+      KYB_WEBHOOK_SECRET: kyb_dev_compose_placeholder_do_not_use_in_prod
     networks:
       - omniswitch-net
     healthcheck:

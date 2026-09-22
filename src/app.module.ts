@@ -22,6 +22,7 @@ import { PayoutSweepRunEntity } from './modules/payment/adapters/persistence/ent
 import { DelegationEntity } from './modules/payment/adapters/persistence/entities/delegation.entity';
 import { ChargeApprovalEntity } from './modules/payment/adapters/persistence/entities/charge-approval.entity';
 import { MerchantEntity } from './modules/merchant/merchant.entity';
+import { WebhookDeliveryLogEntity } from './shared/webhook-delivery-log/webhook-delivery-log.entity';
 import { HealthController } from './health/health.controller';
 import { MetricsController } from './observability/metrics.controller';
 import { RedisThrottlerModule } from './shared/throttler/redis-throttler.module';
@@ -73,6 +74,7 @@ import { DeprecationHeaderInterceptor } from './shared/interceptors/deprecation-
           PayoutSweepRunEntity,
           DelegationEntity,
           ChargeApprovalEntity,
+          WebhookDeliveryLogEntity,
         ],
         // Schema is owned by TypeORM migrations (src/database/migrations/,
         // run via `npm run migration:run` / the Docker image's startup
