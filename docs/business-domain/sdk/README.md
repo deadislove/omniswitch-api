@@ -82,3 +82,13 @@ tested code living in this repository rather than a hypothetical
 future package — gives a concrete answer the next time the question
 "do you have an SDK" comes up, instead of "not yet, but the API is well
 documented."
+
+**"Do you have an SDK" has a language attached, in practice.** A single
+Node client answers the question for one ecosystem and reopens it for
+every other — the same "not yet" gap, just narrower. Five more clients
+(`sdk/java`, `sdk/dotnet`, `sdk/python`, `sdk/rust`, `sdk/go`) close that
+same gap for the common server-side ecosystems a real payment
+integration is likely to be written in — see
+[`../../adr/0006-multi-language-sdk-parity.md`](../../adr/0006-multi-language-sdk-parity.md)
+for what stayed identical across all six (the actual contract) versus
+what was deliberately left idiomatic per language.

@@ -25,6 +25,7 @@ who weren't in the room for any of these decisions.
 | [0003](./0003-saga-orchestration-for-checkout.md) | Orchestrated saga with compensating actions for checkout | Accepted |
 | [0004](./0004-smart-routing-with-circuit-breaker.md) | Smart PSP routing with a shared circuit breaker, not a static primary/fallback | Accepted |
 | [0005](./0005-first-party-node-sdk.md) | A first-party Node/TypeScript client, not just a documented REST API | Accepted |
+| [0006](./0006-multi-language-sdk-parity.md) | Multi-language SDK parity (Java, .NET, Python, Rust, Go) | Accepted |
 
 ## Format
 

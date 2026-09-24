@@ -614,6 +614,17 @@ write-ups: [`DEV_README.md`](DEV_README.md) (technical/infra framing) and
   ([`docs/technical/disaster-recovery.md`](docs/technical/disaster-recovery.md)),
   but it has never been executed against a real second region — no
   multi-region cloud account was available to build and drill against.
+- **Compliance certification: none.** This project holds **no
+  third-party compliance certification of any kind** — not SOC 2 (Type I
+  or Type II), not PCI DSS Level 1 (a QSA-assessed report, distinct from
+  the self-assessed SAQ tier discussed above), not ISO 27001. Everything
+  under "PCI DSS" above and in
+  [`docs/compliance/`](docs/compliance/)/[`docs/technical/compliance-certification-roadmap.md`](docs/technical/compliance-certification-roadmap.md)
+  is a self-assessment and a priced, sequenced roadmap for pursuing real
+  certification — not evidence that certification exists today. Closing
+  this requires a real third-party auditor, a real observation period,
+  and a real budget; none of that is something this repository, as code,
+  can produce on its own.
 
 **Business domain — illustrative or uncalibrated, not fully open**
 - **Recurring billing**: the hard-decline code set (which failures skip

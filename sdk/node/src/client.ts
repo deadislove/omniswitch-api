@@ -26,21 +26,10 @@ interface CachedToken {
 }
 
 /**
- * OmniSwitch Node/TypeScript client.
- *
- * Handles the three things an integrator most reliably gets wrong doing
- * this by hand: HMAC request signing (`X-Signature`/`X-Timestamp`/
- * `X-Merchant-Id`, `signRequest()`), `Idempotency-Key` generation/reuse,
- * and — via the standalone `verifyWebhookSignature()` export, not this
- * class — outbound webhook signature verification. Auth
- * (`POST /auth/token`) is also managed transparently: the first call
- * obtains a JWT, later calls reuse it until shortly before its 1-hour
- * expiry, then re-authenticate automatically.
- *
  * Deliberately merchant-credential-only in this first cut — an
  * AGENT-delegation client (its own signing key, no `X-Merchant-Id`,
  * `POST /delegations`'s own token instead of `POST /auth/token`) is real
- * future scope this class doesn't cover yet, not an oversight; see
+ * future scope this class doesn't cover yet; see
  * docs/guide/api/agentic-payments.md for that shape if you need it today.
  */
 export class OmniSwitchClient {
@@ -92,11 +81,7 @@ export class OmniSwitchClient {
     });
   }
 
-  /**
-   * Obtains (or reuses) a JWT via `POST /auth/token`. Public so a caller
-   * can pre-warm it or check credentials without making a payments call
-   * — every other method calls this internally as needed.
-   */
+  /** Public so a caller can pre-warm the token or check credentials without making a payments call. */
   async authenticate(): Promise<string> {
     if (this.token && this.token.expiresAt - TOKEN_REFRESH_SKEW_MS > Date.now()) {
       return this.token.accessToken;

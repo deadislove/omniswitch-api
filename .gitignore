@@ -7,6 +7,15 @@ node_modules/
 dist/
 build/
 
+# Per-language SDK build artifacts
+sdk/java/target/
+sdk/rust/target/
+sdk/dotnet/*/bin/
+sdk/dotnet/*/obj/
+sdk/python/**/__pycache__/
+sdk/python/**/*.egg-info/
+sdk/go/*.exe
+
 # Environment files (NEVER commit secrets)
 .env.local
 .env.production

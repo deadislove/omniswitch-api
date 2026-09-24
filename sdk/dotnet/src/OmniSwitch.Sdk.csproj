@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>OmniSwitch.Sdk</RootNamespace>
+    <AssemblyName>OmniSwitch.Sdk</AssemblyName>
+    <Description>
+      .NET client for the OmniSwitch payment gateway API — HMAC request
+      signing, idempotency-key handling, and outbound webhook signature
+      verification. Mirrors sdk/node's contract.
+    </Description>
+  </PropertyGroup>
+
+</Project>

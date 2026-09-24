@@ -1,0 +1,21 @@
+[package]
+name = "omniswitch-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Rust client for the OmniSwitch payment gateway API — HMAC request signing, idempotency-key handling, and outbound webhook signature verification. Mirrors sdk/node's contract."
+publish = false
+
+[dependencies]
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+ureq = { version = "2", features = ["json"] }
+subtle = "2"
+urlencoding = "2"
+
+[lib]
+name = "omniswitch_sdk"
+path = "src/lib.rs"

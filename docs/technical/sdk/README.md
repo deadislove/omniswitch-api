@@ -8,6 +8,14 @@ document is the third leg: how the package itself is put together, so
 someone extending it (a new wrapped endpoint, a second language) knows
 where things live and why.
 
+**Five more languages exist**: `sdk/java`, `sdk/dotnet`, `sdk/python`,
+`sdk/rust`, `sdk/go` — same contract (signing, idempotency, webhook
+verification, wrapped endpoints), each in its own ecosystem's idioms.
+See [`../../adr/0006-multi-language-sdk-parity.md`](../../adr/0006-multi-language-sdk-parity.md)
+for why, and each package's own `README.md` for its specifics — this
+document's Node-specific detail below still applies to that package
+only.
+
 ## Package layout
 
 ```

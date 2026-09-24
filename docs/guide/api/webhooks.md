@@ -88,6 +88,50 @@ event (still under review, or one this system doesn't recognize) is
 logged and ignored, not an error, matching every other webhook
 receiver's redelivery-tolerant posture.
 
+## `POST /webhooks/kyb`
+
+- **Guard**: `KybWebhookGuard` — verifies an
+  `X-KYB-Signature: t=<unix seconds>,v1=<hex digest>` header, same
+  scheme as the bank-transfer guard, keyed by its own distinct
+  `KYB_WEBHOOK_SECRET` — deliberately never shared with `KYC_WEBHOOK_SECRET`,
+  so a KYC decision can never resolve a KYB application or vice versa,
+  even under a misconfiguration.
+- **Errors**: `401` missing/invalid signature.
+- **Body**: same nested provider event envelope shape as `/webhooks/kyc`
+  — `{ "data": { "attributes": { "name": string, "payload": { "data": { "id": string, "attributes": { "status": string } } } } } }`.
+
+Only a decisive event (an `id` present and a status that isn't
+`PENDING`) actually updates anything — resolves the merchant's
+`kybApplicationId` to `kybStatus: 'VERIFIED'` or `'REJECTED'` via
+`MerchantService.confirmKyb()`. A confirmation for an application that
+isn't currently `PENDING_REVIEW` (e.g. PSP redelivery after it's already
+resolved) is logged and ignored, not reapplied — same redelivery-tolerant
+posture as every other webhook receiver here.
+
+## Admin: inspecting and replaying outbound webhook deliveries
+
+Source: `webhook-delivery-admin.controller.ts`. These are **outbound**
+deliveries — every `Webhook*NotificationAdapter` (dispute, subscription,
+AML review, sanctions screening) records one row per delivery attempt,
+success or failure, via `WebhookDeliveryLogService`. This is a distinct
+concern from every endpoint above, which all receive **inbound** PSP/
+provider callbacks.
+
+- **Guard**: `JwtAuthGuard` + `RolesGuard`, `ADMIN`/`OPERATOR` only —
+  same visibility scope this codebase already uses for `GET
+  /admin/disputes`, not a new merchant-self-service pattern.
+
+| Endpoint | Effect |
+|---|---|
+| `GET /admin/webhook-deliveries?merchantId=...` | Lists delivery attempts for a merchant, newest first. Optional `eventType`/`success` filters, `afterId` keyset cursor, `limit` (default 50, max 200) |
+| `GET /admin/webhook-deliveries/:id` | One delivery's full record, including the exact JSON payload sent — `404` if the id doesn't exist |
+| `POST /admin/webhook-deliveries/:id/replay` | Re-sends the *exact* stored payload to its exact target URL, re-signed with the merchant's current HMAC secret. Records a **new** row (`replayOfDeliveryId` pointing at the true original, never a chain, even when replaying a replay) rather than mutating the original. `404` if the id doesn't exist; `422 HMAC_SECRET_MISSING` if the merchant has no HMAC secret on file |
+
+Each record includes `success`, `statusCode` (`null` for a network
+error/timeout — there was never a response to read a status from),
+`errorMessage`, and `latencyMs`, regardless of outcome — a failed
+delivery is logged the same as a successful one, not silently dropped.
+
 ## Testing webhooks locally
 
 The mock PSP server (`scripts/mock-psp/server.js`) doesn't send

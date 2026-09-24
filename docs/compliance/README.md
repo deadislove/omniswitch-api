@@ -22,6 +22,18 @@ decisions rather than documenting the mechanisms themselves.
   section is the concrete starting point for that review — what to
   confirm, not an answer key.
 
+## No third-party certification exists
+
+Stated plainly, since it's easy to miss buried in caveats elsewhere:
+**this project holds no third-party compliance certification of any
+kind** — no SOC 2 (Type I or Type II), no PCI DSS Level 1 (a QSA-assessed
+report), no ISO 27001. [`../technical/compliance-certification-roadmap.md`](../technical/compliance-certification-roadmap.md)
+maps what real technical evidence already exists and prices/sequences a
+real path toward SOC 2 and PCI DSS — but a roadmap and a self-assessment
+are not a certification. Getting an actual one requires a real
+third-party auditor, a real observation period, and a real budget, none
+of which this repository can produce as code.
+
 ## The honest scope of this folder
 
 This project is a reference implementation, not a certified compliance

@@ -9,8 +9,12 @@ for why this exists, and
 [`../../technical/sdk/`](../../technical/sdk/) for how it's actually
 implemented. This page is the practical "how do I use it" reference.
 
-Only Node is covered so far — there's no client for another language
-yet.
+Five more languages are also covered, each with the same contract in
+its own idioms: `sdk/java`, `sdk/dotnet`, `sdk/python`, `sdk/rust`,
+`sdk/go` — see [`../../adr/0006-multi-language-sdk-parity.md`](../../adr/0006-multi-language-sdk-parity.md)
+and each package's own `README.md` for usage in that language. The rest
+of this page uses Node in its examples; the same operations and
+behavior apply across all six.
 
 ## When to use it vs. the raw REST API
 
