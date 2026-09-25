@@ -1,6 +1,6 @@
 # SDK: Implementation
 
-How `sdk/node` (`@omniswitch/node`) is actually built — for *why* it
+How `sdk/node` (`@deadislove/omniswitch-node`) is actually built — for *why* it
 exists and what trade-off it accepts, see
 [`../../adr/0005-first-party-node-sdk.md`](../../adr/0005-first-party-node-sdk.md).
 For *how to use it*, see [`../../guide/sdk/`](../../guide/sdk/). This
@@ -164,11 +164,13 @@ npm run build   # emits dist/ (gitignored, matching the main app's own dist/)
 npm test        # unit tests only — see above for the e2e layer
 ```
 
-Not published to any package registry — see ADR-0005 for why that's a
-distinct, not-yet-made decision. Consuming it today means importing
-from `sdk/node/src` or `sdk/node/dist` directly within this repository,
-or copying the package out, not `npm install @omniswitch/node` from a
-public registry.
+Published to this repository's own GitHub Packages npm registry
+(`npm install @deadislove/omniswitch-node`, with a `.npmrc` pointing
+`@deadislove` at `https://npm.pkg.github.com`) — see
+[ADR-0007](../../adr/0007-github-packages-publishing.md) for why that's
+GitHub Packages specifically, not the public npm registry. Building
+from source as above is still how `sdk-package.yml`/`sdk-publish.yml`
+themselves produce it, and how to work on the SDK itself.
 
 ## Extending it
 

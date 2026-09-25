@@ -16,8 +16,24 @@ Auth (`POST /auth/token`) is handled transparently — the first call
 obtains a JWT; later calls reuse it until shortly before its expiry,
 then re-authenticate automatically.
 
-Not published to any artifact repository — lives in this repo only, same
-posture as `sdk/node` (see that package's own README/ADR for why).
+Published to this repository's own GitHub Packages Maven registry
+(`https://maven.pkg.github.com/deadislove/omniswitch-api`), not Maven
+Central — see
+[ADR-0007](../../docs/adr/0007-github-packages-publishing.md) for why.
+
+```xml
+<dependency>
+  <groupId>io.omniswitch</groupId>
+  <artifactId>omniswitch-sdk</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+Requires a `<repositories>` entry in your own `pom.xml` pointing at the
+URL above, plus a `<server>` entry in `~/.m2/settings.xml` for id
+`github` authenticated with a GitHub token that has `read:packages` —
+see GitHub's own Packages documentation for the exact `settings.xml`
+shape for the Maven registry.
 
 ## Build (within this repo)
 

@@ -86,6 +86,11 @@ commits to public versioning and a support lifecycle independent of this
 repository's release cadence, and remains a distinct decision this ADR
 doesn't make either.
 
+*(Update — see [ADR-0007](./0007-github-packages-publishing.md):
+`sdk/node`, `sdk/java`, and `sdk/dotnet` are now published to this
+repository's own GitHub Packages registries. Python, Rust, and Go are
+still exactly as described above.)*
+
 ## Alternatives considered
 
 - **Auto-generate the other five from the Node SDK's TypeScript source

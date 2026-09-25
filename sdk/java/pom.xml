@@ -24,6 +24,19 @@
     <junit.version>5.10.2</junit.version>
   </properties>
 
+  <!-- GitHub Packages only — never a public Maven repository. The
+       server id "github" here must match the <server> entry
+       actions/setup-java generates in settings.xml at publish time
+       (server-id: github), authenticated with a token that has
+       packages:write, not a Maven Central/Sonatype credential. -->
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/deadislove/omniswitch-api</url>
+    </repository>
+  </distributionManagement>
+
   <dependencies>
     <!-- JSON (de)serialization only — HTTP itself uses java.net.http.HttpClient
          (built into Java 11+), no external HTTP library dependency. -->

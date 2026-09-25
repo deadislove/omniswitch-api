@@ -16,8 +16,16 @@ Auth (`POST /auth/token`) is handled transparently — the first call
 obtains a JWT; later calls reuse it until shortly before its expiry,
 then re-authenticate automatically.
 
-Not published to NuGet — lives in this repo only, same posture as
-`sdk/node`.
+Published to this repository's own GitHub Packages NuGet registry
+(`https://nuget.pkg.github.com/deadislove/index.json`), not NuGet.org —
+see [ADR-0007](../../docs/adr/0007-github-packages-publishing.md) for
+why.
+
+```bash
+dotnet nuget add source --username <your-github-username> --password <a token with read:packages> \
+  --store-password-in-clear-text --name github "https://nuget.pkg.github.com/deadislove/index.json"
+dotnet add package OmniSwitch.Sdk --source github
+```
 
 ## Build (within this repo)
 

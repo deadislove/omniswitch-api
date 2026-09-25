@@ -1,6 +1,6 @@
 # Client SDKs
 
-A Node/TypeScript client, `sdk/node` (`@omniswitch/node`), wraps the
+A Node/TypeScript client, `sdk/node` (`@deadislove/omniswitch-node`), wraps the
 raw REST API described in [`../api/README.md`](../api/README.md) so an
 integrator doesn't have to hand-compute HMAC signatures, manage
 `Idempotency-Key` values, or implement webhook signature verification
@@ -31,20 +31,25 @@ replacement for the API itself.
 ## Install
 
 ```bash
+npm install @deadislove/omniswitch-node
+```
+
+Published to this repository's own GitHub Packages npm registry, not
+the public npm registry — see the package's own
+[`README.md`](../../../sdk/node/README.md) and
+[ADR-0007](../../adr/0007-github-packages-publishing.md) for why only
+here. Or, within this repository, straight from source:
+
+```bash
 cd sdk/node
 npm install
 npm run build
 ```
 
-Not published to a package registry yet — see the package's own
-[`README.md`](../../../sdk/node/README.md) and ADR-0005 for why. Import
-from `sdk/node/src` (or `sdk/node/dist` after building) within this
-repository, or copy the package out, for now.
-
 ## Quick start
 
 ```ts
-import { OmniSwitchClient } from '@omniswitch/node';
+import { OmniSwitchClient } from '@deadislove/omniswitch-node';
 
 const client = new OmniSwitchClient({
   baseUrl: 'https://api.example.com/api/v1',
@@ -116,7 +121,7 @@ subscriptions, AML review, sanctions screening) with
 outbound request signing. Verify it before trusting the payload:
 
 ```ts
-import { verifyWebhookSignature } from '@omniswitch/node';
+import { verifyWebhookSignature } from '@deadislove/omniswitch-node';
 
 app.post('/webhooks/omniswitch', express.raw({ type: 'application/json' }), (req, res) => {
   const rawBody = req.body.toString('utf8'); // the exact bytes received — never re-serialize before verifying
@@ -144,7 +149,7 @@ stable, machine-readable `code` field the raw API returns (see
 safe to branch on, unlike the human-readable `error`/`message` text:
 
 ```ts
-import { OmniSwitchApiError } from '@omniswitch/node';
+import { OmniSwitchApiError } from '@deadislove/omniswitch-node';
 
 try {
   await client.charge(params);

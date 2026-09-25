@@ -28,7 +28,7 @@ reference you'll come back to once you're working on a specific area.
 
 ## Client SDKs
 
-[`sdk/`](./sdk/) covers `sdk/node` (`@omniswitch/node`), a real Node/
+[`sdk/`](./sdk/) covers `sdk/node` (`@deadislove/omniswitch-node`), a real Node/
 TypeScript client wrapping charge/refund/capture/cancel, HMAC request
 signing, idempotency-key handling, and outbound webhook signature
 verification — the three things an integrator most reliably gets wrong

@@ -1,4 +1,4 @@
-# @omniswitch/node
+# @deadislove/omniswitch-node
 
 A Node/TypeScript client for the OmniSwitch payment gateway API. Handles
 the three things an integrator most reliably gets wrong doing this by
@@ -18,17 +18,30 @@ Auth (`POST /auth/token`) is also handled transparently — the first
 call obtains a JWT; later calls reuse it until shortly before its
 1-hour expiry, then re-authenticate automatically.
 
-This package lives in this repo (not published to npm) — see
+Published to this repository's own GitHub Packages npm registry (not
+the public npm registry) — see
+[`docs/adr/0007-github-packages-publishing.md`](../../docs/adr/0007-github-packages-publishing.md)
+for why only here and not npmjs.com. See also
 [`docs/guide/api/README.md`](../../docs/guide/api/README.md) for the
-full API this wraps. See also
+full API this wraps,
 [`docs/guide/sdk/`](../../docs/guide/sdk/) (usage guide),
 [`docs/technical/sdk/`](../../docs/technical/sdk/) (how this package is
 built), [`docs/business-domain/sdk/`](../../docs/business-domain/sdk/)
 (why it exists), and
 [`docs/adr/0005-first-party-node-sdk.md`](../../docs/adr/0005-first-party-node-sdk.md)
-(the decision record).
+(the original decision record).
 
-## Install (within this repo)
+## Install
+
+From GitHub Packages (requires a `.npmrc` pointing `@deadislove` at
+`https://npm.pkg.github.com` with a GitHub token that has at least
+`read:packages`):
+
+```bash
+npm install @deadislove/omniswitch-node
+```
+
+Or, within this repository, straight from source:
 
 ```bash
 cd sdk/node
@@ -39,7 +52,7 @@ npm run build
 ## Usage
 
 ```ts
-import { OmniSwitchClient } from '@omniswitch/node';
+import { OmniSwitchClient } from '@deadislove/omniswitch-node';
 
 const client = new OmniSwitchClient({
   baseUrl: 'https://api.example.com/api/v1',
@@ -80,7 +93,7 @@ try {
 ### Verifying an outbound webhook
 
 ```ts
-import { verifyWebhookSignature } from '@omniswitch/node';
+import { verifyWebhookSignature } from '@deadislove/omniswitch-node';
 
 app.post('/webhooks/omniswitch', express.raw({ type: 'application/json' }), (req, res) => {
   const rawBody = req.body.toString('utf8'); // the exact bytes received — do not re-serialize
@@ -103,7 +116,7 @@ stable `code` field the raw API returns (safe to branch on — `error`/
 `message` are for logging, not string-matching):
 
 ```ts
-import { OmniSwitchApiError } from '@omniswitch/node';
+import { OmniSwitchApiError } from '@deadislove/omniswitch-node';
 
 try {
   await client.charge(params);

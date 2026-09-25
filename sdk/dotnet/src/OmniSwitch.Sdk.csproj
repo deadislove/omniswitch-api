@@ -13,6 +13,12 @@
       verification. Mirrors sdk/node's contract.
     </Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/deadislove/omniswitch-api</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <!-- Not the push destination itself — that's configured at publish
+         time via `dotnet nuget add source` pointing at GitHub Packages
+         (see .github/workflows/sdk-publish.yml). This is just package
+         metadata NuGet.org/GitHub Packages both display. -->
   </PropertyGroup>
 
   <ItemGroup>
