@@ -5,8 +5,13 @@ export type ReconciliationStatus = 'CLEAN' | 'MISMATCHES_FOUND';
 
 export type MismatchType =
   | 'MISSING_AT_PSP' // we booked a charge; the PSP has no matching settlement record
-  | 'AMOUNT_MISMATCH' // both sides have the transaction, but the amount differs
-  | 'UNKNOWN_AT_PSP'; // the PSP settled a transaction we have no record of
+  | 'AMOUNT_MISMATCH' // both sides have the transaction, in the same currency, but the amount differs
+  | 'CURRENCY_MISMATCH' // the settled currency differs from what we charged — could be a real bug, or
+  // legitimate PSP-side conversion (DCC, cross-border settlement) — needs human judgment either way,
+  // deliberately not folded into AMOUNT_MISMATCH since the two warrant different urgency
+  | 'UNKNOWN_AT_PSP' // the PSP settled a transaction we have no record of
+  | 'COMPARISON_ERROR'; // this one payment's comparison threw unexpectedly — the run continued for
+// everything else, but this payment's actual match status is unknown, not confirmed either way
 
 export interface ReconciliationMismatch {
   type: MismatchType;

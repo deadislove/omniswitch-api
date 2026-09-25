@@ -197,6 +197,62 @@ describe('ReconciliationService', () => {
     expect(run.mismatches[0].actualAmount?.equals(Money.of(90, 'USD'))).toBe(true);
   });
 
+  it('flags CURRENCY_MISMATCH, not AMOUNT_MISMATCH, when the PSP settles in a different currency than we charged', async () => {
+    // A legitimate PSP-side currency conversion (DCC, cross-border
+    // settlement) shouldn't be indistinguishable from a same-currency
+    // amount bug — the two need different urgency.
+    const payment = makePayment({ pspTransactionId: 'pi_fx', amount: Money.of(100, 'USD') });
+    paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_fx', amount: Money.of(92, 'EUR') }),
+    ]);
+
+    const run = await service.reconcile('STRIPE', since, until);
+
+    expect(run.status).toBe('MISMATCHES_FOUND');
+    expect(run.mismatches).toEqual([
+      expect.objectContaining({
+        type: 'CURRENCY_MISMATCH',
+        paymentId: payment.id,
+        pspTransactionId: 'pi_fx',
+      }),
+    ]);
+    const mismatch = run.mismatches[0];
+    expect(mismatch.expectedAmount?.equals(Money.of(100, 'USD'))).toBe(true);
+    expect(mismatch.actualAmount?.equals(Money.of(92, 'EUR'))).toBe(true);
+  });
+
+  it('flags CURRENCY_MISMATCH, not a crashed run, when partial-capture settlement records for one pspTransactionId disagree on currency', async () => {
+    // A single pspTransactionId's settlement records reporting two
+    // different currencies can't be summed with Money.add() (it throws on
+    // a currency mismatch) — this must not abort the whole provider's run
+    // the way it would if Money.add() were called directly on both records.
+    const payment = makePayment({ pspTransactionId: 'pi_fx_partial', amount: Money.of(100, 'USD') });
+    const otherPayment = makePayment({ pspTransactionId: 'pi_clean_other', amount: Money.of(10, 'USD') });
+    paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment, otherPayment]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_fx_partial', amount: Money.of(40, 'USD') }),
+      makeSettlement({ pspTransactionId: 'pi_fx_partial', amount: Money.of(55, 'EUR') }),
+      makeSettlement({ pspTransactionId: 'pi_clean_other', amount: Money.of(10, 'USD') }),
+    ]);
+
+    const run = await service.reconcile('STRIPE', since, until);
+
+    // The whole run completes — the other, unrelated payment still gets
+    // judged and comes back clean, proving one bad record didn't take down
+    // the rest of this run.
+    expect(reconciliationRepo.save).toHaveBeenCalledTimes(1);
+    expect(run.status).toBe('MISMATCHES_FOUND');
+    expect(run.mismatches).toEqual([
+      expect.objectContaining({
+        type: 'CURRENCY_MISMATCH',
+        paymentId: payment.id,
+        pspTransactionId: 'pi_fx_partial',
+      }),
+    ]);
+    expect(run.mismatches[0].actualAmount).toBeUndefined();
+  });
+
   it('skips a payment with no pspTransactionId rather than crashing the run', async () => {
     // Shouldn't happen for the charged statuses findByProviderAndDateRange
     // returns, but ReconciliationService defends against it rather than

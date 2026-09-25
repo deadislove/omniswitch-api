@@ -28,17 +28,37 @@ against it.
      — Stripe's balance transactions API, Adyen's settlement report API (in
      this reference project, `scripts/mock-psp/server.js`'s
      `GET /v1/balance_transactions` and `GET /adyen/settlement-report`).
-2. Matches by `pspTransactionId` and produces three mismatch shapes, not
+2. Matches by `pspTransactionId` and produces five mismatch shapes, not
    just a single "doesn't match" bucket — each implies a different root
    cause and a different response:
    - **`MISSING_AT_PSP`** — we have a charge on the books; the PSP has no
      matching settlement record in this window. The dangerous direction:
      money we believe we collected but may not have.
-   - **`AMOUNT_MISMATCH`** — both sides agree a transaction happened, but
-     not on how much.
+   - **`AMOUNT_MISMATCH`** — both sides agree a transaction happened, in
+     the same currency, but not on how much.
+   - **`CURRENCY_MISMATCH`** — both sides agree a transaction happened,
+     but the settled currency differs from what we charged, either
+     because the settlement records for one `pspTransactionId` disagree
+     with each other (can't be summed), or because the summed total
+     settled in a different currency than the payment was charged in.
+     Kept distinct from `AMOUNT_MISMATCH` on purpose: a currency
+     difference could be a real bug, or legitimate PSP-side conversion
+     (DCC, cross-border settlement) — it needs a human to look, but not
+     with the same unambiguous urgency as a same-currency amount
+     discrepancy.
    - **`UNKNOWN_AT_PSP`** — the PSP settled something we have no record of
      at all. Could mean a missed webhook, or a charge that bypassed this
      system entirely.
+   - **`COMPARISON_ERROR`** — this one payment's comparison threw an
+     unexpected error; its actual match status is unknown, not confirmed
+     either way. Each payment's comparison is wrapped in its own
+     try/catch specifically so one payment hitting this doesn't abort
+     every other payment's comparison in the same run — a single bad
+     record used to be able to fail an entire provider's hourly run
+     (caught while summing multi-currency partial-capture settlement
+     records with `Money.add()`, which throws on a currency mismatch);
+     now it's isolated to a single `CURRENCY_MISMATCH`/`COMPARISON_ERROR`
+     entry instead.
 3. Persists every run (`ReconciliationRun` / `reconciliation_runs` table),
    clean or not — a clean run is itself evidence, not just a non-event.
 4. Logs an error per mismatch (same posture as
@@ -134,10 +154,43 @@ rather than a broader schema migration).
   capture, listing) before wiring the real adapters to it.
 - `ReconciliationService` has permanent automated coverage at both
   levels: `reconciliation.service.spec.ts` (unit, mocked ports — all
-  three mismatch shapes, the partial-capture settlement-summing behavior,
+  five mismatch shapes, the partial-capture settlement-summing behavior,
   `runScheduled()`'s per-provider error isolation) and
   `test/reconciliation.e2e-spec.ts` (e2e, against real seeded data with
-  all three mismatch shapes deliberately introduced in one run).
+  the three original mismatch shapes deliberately introduced in one run).
+
+## Per-payment isolation and `CURRENCY_MISMATCH` (later fix)
+
+Two related gaps, found and closed together: `runScheduled()`'s
+try/catch only ever isolated failures *between* providers, not between
+payments within one provider's run — the per-payment comparison loop had
+no isolation at all. Summing multiple partial-capture settlement records
+for one `pspTransactionId` used `Money.add()`, which throws on a
+currency mismatch between two of those records; an uncaught throw there
+propagated out of the whole `reconcile()` call and failed that
+provider's entire hourly run, leaving one log line instead of a normal
+run for every other payment plus one recorded mismatch for the bad
+record. Separately, `Money.equals()` doesn't distinguish "different
+currency" from "same currency, wrong amount" — both returned `false` and
+were classified identically as `AMOUNT_MISMATCH`, even though a
+different settled currency can be legitimate (PSP-side dynamic currency
+conversion, cross-border settlement) rather than a bug.
+
+Fixed by checking currency explicitly, ahead of ever calling
+`Money.add()`/`Money.equals()`: settlement records sharing one
+`pspTransactionId` that disagree on currency are pulled out of the
+summed-totals map before summing (so `Money.add()`'s throw path is never
+reached), and a payment whose charge currency differs from its settled
+total's currency is classified `CURRENCY_MISMATCH`, not
+`AMOUNT_MISMATCH`. Each payment's comparison also now runs inside its
+own try/catch as a second layer of defense — an unexpected error
+(`COMPARISON_ERROR`) is recorded for that one payment instead of failing
+the run. See `ReconciliationService`'s class docblock for the full list
+of mismatch types and reconciliation.service.spec.ts's `CURRENCY_MISMATCH`
+tests, which cover both the single-record cross-currency case and the
+multi-record currency-inconsistent case, confirming a full run of 13/13
+unit tests passes and an unrelated payment in the same run still
+resolves clean rather than the run aborting.
 
 ## What this doesn't cover
 
