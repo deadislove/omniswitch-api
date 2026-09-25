@@ -4,5 +4,11 @@
     "comment": "backupPath only ever comes from DELETION_BACKUP_PATH, a deployment-time env var (k8s ConfigMap or local .env), never from request/webhook input; filename is a job-generated ISO timestamp with no external input. Same trust-chain reasoning already applied to this file's eslint-plugin-security detect-non-literal-fs-filename suppressions.",
     "false_positive": true,
     "ignored_at": "2026-08-22T05:44:05Z"
+  },
+  "5bdd74560026ba3f5abbe8bc49e31708_0": {
+    "author": "OmniSwitch Engineering",
+    "comment": "The client SDK's own designed purpose is to send HTTP requests to a caller-configured baseUrl (ClientOptions.BaseURL) plus a fixed, hardcoded endpoint path -- there is no code path where this URL is built from untrusted request/webhook input reaching this SDK itself. This is definitionally what any HTTP client library does (equivalent to net/http.Client.Get itself); the same reasoning applies to the identically-shaped baseUrl-derived request construction in the other five language SDKs (sdk/node, sdk/java, sdk/dotnet, sdk/python, sdk/rust), none of which triggered this specific gosec-based rule. A defense-in-depth https-only scheme check was added to NewClient() regardless and verified not to change Bearer's verdict (taint-tracking is scoped to this function, not the caller). Full writeup: docs/technical/security-and-compliance.md#sast-findings-documented-reviewed-exceptions",
+    "false_positive": true,
+    "ignored_at": "2026-09-25T03:22:49Z"
   }
 }

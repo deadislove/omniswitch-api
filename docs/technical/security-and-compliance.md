@@ -400,3 +400,55 @@ not incidental logs — see
 [`../compliance/data-retention.md`](../compliance/data-retention.md)
 for how long AML-adjacent records are kept and how to configure that
 for a real jurisdiction; the same retention posture applies here.
+
+## SAST Findings: Documented, Reviewed Exceptions
+
+`security-scan.yml`'s Bearer job scans this entire repository, including
+the six client SDKs under `sdk/`. `bearer.ignore` (repo root) records
+every finding that's been reviewed and judged a false positive for this
+codebase specifically — never used to silence a real, unaddressed
+issue. Each entry there carries its own `comment` field explaining the
+reasoning; this section covers the current one in more depth than that
+one-line comment does.
+
+### `go_gosec_injection_ssrf_injection` on `sdk/go/http_sender.go`
+
+**The finding**: Bearer flags `http.NewRequest(method, url, reader)`
+(`sdk/go/http_sender.go`) as CWE-918 (Server-Side Request Forgery) —
+its rule fires whenever a URL passed to an HTTP call isn't a compile-time
+string constant.
+
+**Why this doesn't apply here**: `url` is built from `baseUrl` (an
+`OmniSwitchClient`/`Client` constructor argument — deployment-time
+configuration the integrator supplies, the same trust level as an env
+var) plus a fixed, hardcoded endpoint path (`/payments/charge`, etc.).
+There is no code path in this SDK where an inbound request, webhook, or
+any other attacker-influenced input reaches this URL. SSRF as a
+vulnerability class describes a *server* that builds an outbound request
+from untrusted *inbound* data; this is a client library whose entire
+purpose is to send a request to a host its own caller configured — the
+identical shape to what `net/http.Client.Get()` itself does, and to the
+equivalent `baseUrl`-derived request construction in the other five
+language SDKs (`sdk/node`, `sdk/java`, `sdk/dotnet`, `sdk/python`,
+`sdk/rust`), none of which happened to trip an equivalent rule in
+Bearer's language-specific rule sets.
+
+**What was still worth doing, independent of the finding**: `NewClient()`
+in `sdk/go/client.go` parses `BaseURL` with `net/url` and rejects
+anything that isn't `https://` — this doesn't change the taint-tracking
+verdict above (the validation runs in a different function than the one
+Bearer's dataflow analysis is looking at, so it can't observe it), but it
+is real, independently-justified defense-in-depth: it catches an
+accidentally-misconfigured `http://` endpoint (credentials and payment
+data leaving in plaintext) and rejects non-http(s) schemes
+(`file://`, `gopher://`, ...) outright. This was verified empirically,
+not assumed: the same Bearer scan was re-run after adding the check, and
+the finding persisted unchanged, confirming the taint-tracking limitation
+described above rather than a gap in the validation logic.
+
+**Disposition**: recorded in `bearer.ignore` as a reviewed false
+positive. If a seventh SDK or a change to `sdk/go/http_sender.go` ever
+introduces a real path from untrusted input to this URL, that would be a
+genuine regression this suppression would then be hiding — the
+"deployment-time configuration only" reasoning above is what to
+re-verify first if this code changes.

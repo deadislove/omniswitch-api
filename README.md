@@ -625,6 +625,14 @@ write-ups: [`DEV_README.md`](DEV_README.md) (technical/infra framing) and
   this requires a real third-party auditor, a real observation period,
   and a real budget; none of that is something this repository, as code,
   can produce on its own.
+- **One reviewed, documented SAST exception.** `bearer.ignore` (repo
+  root) records a Bearer SAST finding on `sdk/go/http_sender.go`
+  (flagged as CWE-918/SSRF) judged a false positive for this codebase —
+  the flagged URL is caller-supplied client configuration, never
+  attacker-reachable input, the same shape as any HTTP client library.
+  See
+  [`docs/technical/security-and-compliance.md#sast-findings-documented-reviewed-exceptions`](docs/technical/security-and-compliance.md#sast-findings-documented-reviewed-exceptions)
+  for the full reasoning and the defense-in-depth check added anyway.
 
 **Business domain — illustrative or uncalibrated, not fully open**
 - **Recurring billing**: the hard-decline code set (which failures skip

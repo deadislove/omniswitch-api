@@ -52,7 +52,24 @@ type Client struct {
 	token   *cachedToken
 }
 
-func NewClient(options ClientOptions) *Client {
+// BaseURL is caller-supplied configuration (a deployment-time value, the
+// same trust level as an env var), never data from an inbound
+// request/webhook this SDK receives — there is no request-forgery path
+// through it. Requiring an https:// scheme here is still worth doing:
+// it catches an accidentally-misconfigured http:// endpoint (credentials
+// and payment data going out in plaintext) and rejects non-http(s)
+// schemes (file://, gopher://, ...) outright, the same defense-in-depth
+// posture a URL allowlist gives a real request-forgery-prone code path,
+// even though this one was never reachable by an attacker to begin with.
+func NewClient(options ClientOptions) (*Client, error) {
+	parsedBaseURL, err := url.Parse(options.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid BaseURL %q: %w", options.BaseURL, err)
+	}
+	if parsedBaseURL.Scheme != "https" {
+		return nil, fmt.Errorf("BaseURL must use https://, got %q", options.BaseURL)
+	}
+
 	timeoutMs := options.TimeoutMs
 	if timeoutMs == 0 {
 		timeoutMs = defaultTimeoutMs
@@ -69,7 +86,7 @@ func NewClient(options ClientOptions) *Client {
 		merchantID:   options.MerchantID,
 		httpSender:   sender,
 		timeoutMs:    timeoutMs,
-	}
+	}, nil
 }
 
 func nowUnixMs() int64 {

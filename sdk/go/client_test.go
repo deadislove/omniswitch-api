@@ -44,8 +44,9 @@ func (s *recordingHttpSender) Send(method, url string, headers map[string]string
 	return next, nil
 }
 
-func makeTestClient(sender *recordingHttpSender) *Client {
-	return NewClient(ClientOptions{
+func makeTestClient(t *testing.T, sender *recordingHttpSender) *Client {
+	t.Helper()
+	client, err := NewClient(ClientOptions{
 		BaseURL:      "https://api.example.com/api/v1",
 		APIKeyID:     "ak_test",
 		APIKeySecret: "sk_test",
@@ -53,6 +54,10 @@ func makeTestClient(sender *recordingHttpSender) *Client {
 		MerchantID:   "merchant_acme",
 		HttpSender:   sender,
 	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return client
 }
 
 func TestAuthenticatesOnceThenReusesTheCachedTokenForASecondCall(t *testing.T) {
@@ -60,7 +65,7 @@ func TestAuthenticatesOnceThenReusesTheCachedTokenForASecondCall(t *testing.T) {
 	sender.enqueue(200, `{"accessToken":"jwt_1","tokenType":"Bearer","expiresIn":3600}`)
 	sender.enqueue(200, `{"paymentId":"pay_1","status":"SUCCEEDED"}`)
 	sender.enqueue(200, `{"paymentId":"pay_1","status":"SUCCEEDED"}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	if _, err := client.GetPayment("pay_1"); err != nil {
 		t.Fatal(err)
@@ -81,7 +86,7 @@ func TestSendsSignatureHeadersOnASignedCallCharge(t *testing.T) {
 	sender := &recordingHttpSender{}
 	sender.enqueue(200, `{"accessToken":"jwt_1","tokenType":"Bearer","expiresIn":3600}`)
 	sender.enqueue(201, `{"paymentId":"pay_1","status":"SUCCEEDED","requiresAction":false,"usedFallback":false}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	if _, err := client.Charge(NewChargeParams(10, "USD"), ""); err != nil {
 		t.Fatal(err)
@@ -112,7 +117,7 @@ func TestDoesNotSignAGetRequestGetPayment(t *testing.T) {
 	sender := &recordingHttpSender{}
 	sender.enqueue(200, `{"accessToken":"jwt_1","tokenType":"Bearer","expiresIn":3600}`)
 	sender.enqueue(200, `{"paymentId":"pay_1"}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	if _, err := client.GetPayment("pay_1"); err != nil {
 		t.Fatal(err)
@@ -131,7 +136,7 @@ func TestReusesACallerSuppliedIdempotencyKeyAcrossAnExplicitRetry(t *testing.T) 
 	sender := &recordingHttpSender{}
 	sender.enqueue(200, `{"accessToken":"jwt_1","tokenType":"Bearer","expiresIn":3600}`)
 	sender.enqueue(201, `{"paymentId":"pay_1"}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	if _, err := client.Charge(NewChargeParams(10, "USD"), "my-fixed-key"); err != nil {
 		t.Fatal(err)
@@ -148,7 +153,7 @@ func TestRetriesExactlyOnceWithAFreshTokenOnA401ThenSucceeds(t *testing.T) {
 	sender.enqueue(401, `{"statusCode":401,"error":"Invalid or expired token","code":"INVALID_TOKEN"}`)
 	sender.enqueue(200, `{"accessToken":"jwt_2","tokenType":"Bearer","expiresIn":3600}`)
 	sender.enqueue(200, `{"paymentId":"pay_1"}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	result, err := client.GetPayment("pay_1")
 	if err != nil {
@@ -170,7 +175,7 @@ func TestThrowsOmniSwitchApiErrorWithStatusCodeCodeErrorFromTheResponseBody(t *t
 	sender := &recordingHttpSender{}
 	sender.enqueue(200, `{"accessToken":"jwt_1","tokenType":"Bearer","expiresIn":3600}`)
 	sender.enqueue(422, `{"statusCode":422,"error":"Charge of $50.00 USD exceeds this delegation's per-transaction limit","code":"DELEGATION_PER_TRANSACTION_LIMIT_EXCEEDED"}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	_, err := client.Charge(NewChargeParams(50, "USD"), "")
 	if err == nil {
@@ -191,7 +196,7 @@ func TestThrowsOmniSwitchApiErrorWithStatusCodeCodeErrorFromTheResponseBody(t *t
 func TestThrowsAClearMfaNotSupportedErrorInsteadOfSilentlyReturningARestrictedToken(t *testing.T) {
 	sender := &recordingHttpSender{}
 	sender.enqueue(200, `{"accessToken":"jwt_pending","tokenType":"Bearer","expiresIn":300,"mfaRequired":true}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	_, err := client.GetPayment("pay_1")
 	if err == nil {
@@ -212,7 +217,7 @@ func TestRefundCaptureCancelAllSignAndHitTheExpectedPaths(t *testing.T) {
 	sender.enqueue(200, `{"paymentId":"pay_1","status":"REFUNDED"}`)
 	sender.enqueue(200, `{"paymentId":"pay_1","status":"SUCCEEDED"}`)
 	sender.enqueue(200, `{"paymentId":"pay_1","status":"CANCELLED"}`)
-	client := makeTestClient(sender)
+	client := makeTestClient(t, sender)
 
 	amount := 5.0
 	if _, err := client.Refund("pay_1", RefundParams{Amount: &amount}, ""); err != nil {

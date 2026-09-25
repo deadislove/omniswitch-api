@@ -38,13 +38,16 @@ function) — no external dependency at all.
 ```go
 import "github.com/omniswitch/omniswitch-sdk-go"
 
-client := omniswitch.NewClient(omniswitch.ClientOptions{
-    BaseURL:      "https://api.example.com/api/v1",
+client, err := omniswitch.NewClient(omniswitch.ClientOptions{
+    BaseURL:      "https://api.example.com/api/v1", // must be https://
     APIKeyID:     os.Getenv("OMNISWITCH_API_KEY_ID"),
     APIKeySecret: os.Getenv("OMNISWITCH_API_KEY_SECRET"),
     HmacSecret:   os.Getenv("OMNISWITCH_HMAC_SECRET"),
     MerchantID:   "merchant_acme_corp",
 })
+if err != nil {
+    log.Fatal(err)
+}
 
 params := omniswitch.NewChargeParams(49.99, "USD")
 params.PaymentMethodID = "pm_..." // opaque, client-side-tokenized reference — never a raw card number
