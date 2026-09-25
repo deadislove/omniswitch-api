@@ -40,6 +40,11 @@ onboarding path through both, see [`../guide/`](../guide/).
   the SOC 2 / PCI DSS certification path, not a certification itself
 - [`secret-management.md`](./secret-management.md) — Vault-backed
   envelope encryption for the one secret this app mints itself
+- [`external-review-checklist.md`](./external-review-checklist.md) —
+  since every compliance/security document here is self-assessed by the
+  same person who wrote the code, this names the specific claims an
+  independent reviewer should verify first, and where the evidence for
+  each one lives
 - For the business/regulatory reasoning behind these, see
   [`../business-domain/compliance-and-security.md`](../business-domain/compliance-and-security.md)
 

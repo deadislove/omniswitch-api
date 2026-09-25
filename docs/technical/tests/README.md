@@ -19,6 +19,11 @@ day-to-day use (`test/*.e2e-spec.ts`, covered in
 - [`contract-testing.md`](./contract-testing.md) — verifies the
   Stripe/Adyen adapters against the real sandbox APIs, not
   `mock-psp`, to catch drift a hand-maintained mock can't
+- [`real-provider-credential-test-plan.md`](./real-provider-credential-test-plan.md) —
+  what's left beyond contract testing: KYC/KYB (Persona) and ACH/wire
+  transfer, plus real webhook delivery and reconciliation against a real
+  settlement report; includes a real code gap found while writing it
+  (Persona/ACH/wire adapters have no auth mechanism implemented yet)
 - [`threshold-calibration.md`](./threshold-calibration.md) — the
   methodology (and a real run against seeded synthetic data) behind
   `RiskTieringService`'s and `DisputeService`'s threshold values,
