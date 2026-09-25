@@ -3,6 +3,8 @@ name = "omniswitch-sdk"
 version = "0.1.0"
 edition = "2021"
 description = "Rust client for the OmniSwitch payment gateway API — HMAC request signing, idempotency-key handling, and outbound webhook signature verification. Mirrors sdk/node's contract."
+license = "UNLICENSED"
+repository = "https://github.com/deadislove/omniswitch-api"
 publish = false
 
 [dependencies]
