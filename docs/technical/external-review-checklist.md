@@ -51,16 +51,21 @@ the actual reason this document exists, not a disclaimer to get past.
   `cardToken`. The entire PCI-scope argument rests on this one check;
   it's worth running inputs through it rather than reading the docblock.
 
-### Vault authentication: does `VaultTransitService` actually support a real, renewable token?
+### Vault authentication: does `VaultTransitService`'s AppRole renewal actually work?
 
-- **Claim to check**: does `VaultTransitService` still read a token once
-  at construction and hold it for the process's lifetime, with no
-  renewal path? If so, moving to AppRole (as
+- **Status: fixed 2026-09-26** — `VaultTransitService` now supports
+  `VAULT_AUTH_METHOD=approle` with a background renewal loop at 2/3 of
+  the token's lease; the static-token default is unchanged. See
   [`secret-management.md`'s migration section](./secret-management.md#migration-path-for-k8s-level-secrets-and-production-vault)
-  describes) with realistic short-lived tokens would silently stop
-  working after the first TTL expiry — contradicting that section's
-  current claim that no code change is needed. Confirm this against the
-  current source directly rather than trusting the doc.
+  for the full writeup.
+- **Verify independently**: run `scripts/vault/bootstrap-approle.sh`
+  against a real dev-mode Vault, confirm login/encrypt/decrypt/renew-self
+  all succeed with the resulting scoped token, and confirm the policy
+  actually denies `/v1/sys/mounts`, reading `hmac-secrets` key metadata,
+  and `encrypt`/`decrypt` against any other Transit key (all should
+  403). This was verified once already while building the fix — an
+  independent re-verification is still worth doing rather than trusting
+  that pass.
 
 ---
 

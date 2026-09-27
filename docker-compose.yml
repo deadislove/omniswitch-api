@@ -99,6 +99,16 @@ services:
       # Same pattern again — mock-psp also serves /kyc/verify and
       # /bank/transfers (see docs/business-domain/marketplace-and-payouts.md).
       KYC_PROVIDER_URL: http://mock-psp:4000/kyc
+      # Same pattern again — mock-psp also serves /sanctions/screen (see
+      # MockSanctionsScreeningAdapter). Missing here until this fix meant
+      # MockSanctionsScreeningAdapter fell back to its own default
+      # (http://localhost:4000/sanctions) — "localhost" inside this
+      # container is the api container itself, not mock-psp, so every
+      # merchant-creation call (which screens on creation) failed with a
+      # generic "fetch failed" the moment nothing was listening on
+      # localhost:4000 here. Found running a real load test against a
+      # freshly rebuilt stack — see docs/technical/tests/load-testing.md.
+      SANCTIONS_PROVIDER_URL: http://mock-psp:4000/sanctions
       BANK_TRANSFER_PROVIDER_URL: http://mock-psp:4000/bank
       # BANK_TRANSFER_PROVIDER stays at its default (mock, synchronous
       # /bank/transfers) here — set to "ach" or "wire" to exercise the two

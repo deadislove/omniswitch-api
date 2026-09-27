@@ -138,12 +138,32 @@ root token with AppRole or Kubernetes auth, and a policy scoped to
 exactly `encrypt`/`decrypt` on the `hmac-secrets` Transit key — there's
 only one Transit key today (`VaultTransitService`'s hardcoded
 `TRANSIT_KEY_NAME`), reused for both HMAC secrets and TOTP secrets, not
-a separate `totp-secrets` key. `VaultTransitService` itself wouldn't
-need to change, since it
-already just holds a token and calls the Transit API, not caring how
-that token was obtained. Neither of these is a code change in this
-application; both are Vault/cluster configuration this repo's
-docker-compose-based dev environment was never meant to model.
+a separate `totp-secrets` key.
+
+**Correction — this *is* a code change, done.** This section previously
+claimed `VaultTransitService` "wouldn't need to change" to move to
+AppRole. That was wrong: a real AppRole token is short-lived and must be
+renewed before it expires, and the service originally read `VAULT_TOKEN`
+once at construction and held it for the process's lifetime — adopting
+AppRole with a realistic TTL would have silently broken every
+encrypt/decrypt call once the token expired. `VaultTransitService` now
+supports both modes via `VAULT_AUTH_METHOD` (`static-token`, the
+unchanged default, or `approle`), with a background renewal loop at 2/3
+of the token's lease and a second, generic-error safety net
+(`COMPARISON_ERROR`-style isolation doesn't apply here, but the same
+"one failure doesn't take down the service" posture does — see
+`renewSelf()`'s own comment). `scripts/vault/bootstrap-approle.sh`
+provisions the AppRole and a policy scoped to exactly
+`encrypt`/`decrypt` on `hmac-secrets` against this repo's own dev-mode
+Vault — genuinely runnable and verified here, not just documented:
+confirmed end to end against the real running container (login,
+encrypt, decrypt, and a real `renew-self` call all succeed with the
+scoped token), and confirmed the policy actually denies what it should
+(`/v1/sys/mounts`, reading `hmac-secrets` key metadata, and
+`encrypt`/`decrypt` on any other key all return 403). What's still
+unverified is the storage-backend swap (in-memory → Raft) and a real
+HA/leader-failover scenario — those still need a real multi-node cluster
+this repo's Docker Compose setup was never meant to model.
 
 ## A real infra bug this surfaced: no `.dockerignore`
 
