@@ -12,8 +12,8 @@ import { MerchantService } from '../../../merchant/merchant.service';
 
 const SWEEP_LOCK_KEY = 'payout-sweep-lock';
 // Generous relative to how long a sweep actually takes (one DB write per
-// eligible merchant) — this only needs to survive a legitimately slow run,
-// not be tight. Same SETNX-lock primitive IdempotencyInterceptor already
+// eligible merchant) — this only needs to survive a legitimately slow run;
+// it doesn't need to be tight. Same SETNX-lock primitive IdempotencyInterceptor already
 // uses, just a longer TTL for a batch job instead of a single HTTP request.
 const SWEEP_LOCK_TTL_SECONDS = 300;
 
@@ -53,7 +53,8 @@ export class PayoutService {
    * same `now` (two pods' `@Cron` handlers firing at the same instant)
    * can both read `findLatestSweepRun()` before either writes its own
    * `PayoutSweepRun`, and both create a `Payout` for the same underlying
-   * ledger credit — a real double payout, not a hypothetical one.
+   * ledger credit — a real double payout, the actual risk this lock
+   * guards against.
    */
   @Cron(CronExpression.EVERY_DAY_AT_NOON, { name: 'marketplace-payout-sweep' })
   async runSweep(now: Date = new Date()): Promise<PayoutSweepRun | null> {
@@ -79,7 +80,7 @@ export class PayoutService {
 
     // Net MERCHANT-entry balance per (accountId, currency) in this window —
     // credits positive, debits (refund/dispute-loss reversals) negative.
-    // Keyed by currency too, not just accountId: a CONNECTED merchant's
+    // Keyed by currency too, beyond just accountId: a CONNECTED merchant's
     // platform could charge different customers in different currencies
     // (splits don't require a single currency per platform, only per
     // charge), so one merchant can accumulate balances in more than one
@@ -177,7 +178,8 @@ export class PayoutService {
   /**
    * `force: true` is the manual-override path (bypasses
    * releaseEligibleAt) — the scheduled sweep below never passes it.
-   * Reads via `findByIdOnMaster()`, not the ambient replica-routed
+   * Reads via `findByIdOnMaster()` instead of the ambient
+   * replica-routed
    * `findById()` — this validates-then-transitions current state, and a
    * caller invoking this right after another write to the same Payout
    * (an admin action moments earlier, or this same sweep's own prior
@@ -310,7 +312,7 @@ export class PayoutService {
    *
    * A real rail (`AchBankTransferAdapter`/`WireBankTransferAdapter`)
    * returns `PENDING` here — this method returns with the Payout in
-   * `PENDING_CONFIRMATION`, not `INITIATED`; final settlement arrives
+   * `PENDING_CONFIRMATION` rather than `INITIATED`; final settlement arrives
    * later via `confirmTransfer()`, called from the
    * `POST /webhooks/bank-transfer` receiver. Only `MockBankTransferAdapter`
    * (`SENT`) reaches `INITIATED` synchronously, inside this same call.
@@ -411,7 +413,8 @@ export class PayoutService {
    * processed).
    *
    * Both lookups below are forced onto master (`findByTransferIdOnMaster`/
-   * `findByReserveTransferIdOnMaster`), not the ambient replica-routed
+   * `findByReserveTransferIdOnMaster`), instead of the ambient
+   * replica-routed
    * ones — the `transferId`/`reserveTransferId` this webhook refers to
    * was itself written moments earlier by `initiateTransfer()`/
    * `initiateReserveTransfer()` in the very same real-world flow (an
@@ -501,7 +504,7 @@ export class PayoutService {
 
   /**
    * Daily sweep — initiates a transfer for every Payout that's eligible
-   * (not KYC-blocked, has a net amount, not already initiated or pending
+   * (not KYC-blocked, has a net amount, and isn't already initiated or pending
    * confirmation). Also exposed on demand via
    * POST /admin/marketplace/initiate-eligible-transfers.
    */
@@ -625,8 +628,8 @@ export class PayoutService {
 
   /**
    * Daily sweep — initiates a reserve transfer for every Payout that's
-   * eligible (reserve released, has a reserve amount, not KYC-blocked,
-   * not already initiated or pending confirmation). Also exposed on
+   * eligible (reserve released, has a reserve amount, isn't KYC-blocked,
+   * and isn't already initiated or pending confirmation). Also exposed on
    * demand via POST /admin/marketplace/initiate-eligible-reserve-transfers.
    */
   @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'marketplace-payout-reserve-transfer-sweep' })

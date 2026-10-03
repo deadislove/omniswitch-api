@@ -45,12 +45,12 @@ the state change it represents actually committed.
 tick (not a separate process — it runs inside the same API pod, once
 per replica), polls for `PENDING` rows and publishes them, marking
 each `PUBLISHED` only after the publish call succeeds. A publish
-failure marks the event `FAILED` — terminal, not auto-retried. A
+failure marks the event `FAILED` — a terminal state nothing retries automatically. A
 separate 5-minute sweep (`detectStaleEvents`) alerts on anything that's
 been `PENDING` too long without ever being attempted (relay crash or
 falling behind), but doesn't resubmit `FAILED` events itself — that's a
 deliberate operator action (`POST /admin/outbox/:id/retry`,
-ADMIN/OPERATOR only), not an automatic retry loop or a hand-run SQL
+ADMIN/OPERATOR only) — never an automatic retry loop or a hand-run SQL
 update against production.
 
 Full design and the reliability contract (poll → publish →
@@ -83,24 +83,24 @@ ledger entry (right shape, wrong amount) would sail straight through
 outbox validation. `ReconciliationService` closes that separate gap by
 diffing against each PSP's actual settlement report — see
 [`../technical/reconciliation.md`](../technical/reconciliation.md). The
-two mechanisms are complementary, not redundant: outbox guarantees
-internal consistency, reconciliation guarantees external agreement.
+two mechanisms are complementary: outbox guarantees internal
+consistency, reconciliation guarantees external agreement.
 
-**Running once per pod, not once per deployment, is a deliberate
-tolerance, not an oversight**: at `k8s/hpa.yaml`'s `maxReplicas: 20`, up
+**Running once per pod (rather than once per deployment) is a
+deliberate tolerance**: at `k8s/hpa.yaml`'s `maxReplicas: 20`, up
 to 20 copies of this tick can run concurrently, each independently
 polling for the same `PENDING` rows — the same per-pod-`@Cron()` race
 [`../compliance/data-retention.md`](../compliance/data-retention.md#how-it-runs)
 gives as the reason the data-retention jobs use a k8s `CronJob` instead.
 The difference here is what a duplicate pick-up actually costs: two
 replicas racing to publish the same event both call
-`markPublished()`— an idempotent `UPDATE`, not a side-effecting action
-on its own — so the worst case is redundant `EventEmitter2` emits for
-one event, not a double-charge or a double-delete. That's an acceptable
-trade against the operational cost of a dedicated k8s `CronJob` for a
-10-second-cadence job, not an oversight this ADR failed to consider.
+`markPublished()`— an idempotent `UPDATE` with no side effects of its
+own — so the worst case is redundant `EventEmitter2` emits for
+one event — never a double-charge or a double-delete. That's a
+deliberate trade against the operational cost of a dedicated k8s
+`CronJob` for a 10-second-cadence job.
 
-**The transport is explicitly a stand-in, not the load-bearing part**:
+**The transport is explicitly just a stand-in**:
 `EventEmitter2` has no persistence or delivery guarantee of its own —
 if the process crashes between `PUBLISHED` being marked and any
 in-process subscriber finishing its work, that subscriber's work is

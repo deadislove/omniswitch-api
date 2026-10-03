@@ -19,7 +19,7 @@ import { MerchantService } from '../../../merchant/merchant.service';
  *
  * 1. Volume: more than AMBIGUOUS_RISK_DAILY_THRESHOLD "ever AMBIGUOUS"
  *    incidents (see PaymentRepositoryPort.countAmbiguousIncidentsSince()'s
- *    docblock for why "ever", not "currently") in a rolling 24h window.
+ *    docblock for why "ever" is used instead of "currently") in a rolling 24h window.
  * 2. Streak: the merchant's last AMBIGUOUS_RISK_CONSECUTIVE_THRESHOLD
  *    payments were *all* ambiguous — a stronger, more specific signal
  *    than raw volume (a high-volume merchant could rack up several
@@ -36,7 +36,7 @@ import { MerchantService } from '../../../merchant/merchant.service';
 @Injectable()
 export class AmbiguousRiskMonitoringService {
   private readonly logger = new Logger(AmbiguousRiskMonitoringService.name);
-  // Read in the constructor, not as module-level constants — a
+  // Read in the constructor rather than as module-level constants — a
   // module-level `Number(process.env.X) || default` is evaluated once at
   // first import, before a test's beforeAll ever gets to set
   // process.env, so a test wanting a low threshold to trigger quickly

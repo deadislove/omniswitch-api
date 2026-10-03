@@ -17,14 +17,14 @@ export interface PspFeeSchedule {
  * (STRIPE_FEE_PERCENTAGE/STRIPE_FIXED_FEE_MINOR_UNITS/
  * ADYEN_FEE_PERCENTAGE/ADYEN_FIXED_FEE_MINOR_UNITS) rather than hardcoded
  * — that makes the *routing estimate* accurate to whatever this
- * deployment's real negotiated rate is, not "calibrated" in the sense of
+ * deployment's real negotiated rate is, as opposed to "calibrated" in the sense of
  * being reconciled against real invoices; see
  * PspCostReconciliationService's own docblock for the piece that
  * actually closes that gap.
  */
 @Injectable()
 export class PspFeeScheduleService {
-  // Partial, not Record<PSPProvider, ...> — 'PAYPAL'/'CHASE' are valid
+  // Partial rather than a full Record<PSPProvider, ...> — 'PAYPAL'/'CHASE' are valid
   // PSPProvider values (the type exists for future routing options) but
   // have no adapter implementation yet, so there's nothing real to
   // configure a fee schedule for.

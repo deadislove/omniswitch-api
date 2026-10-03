@@ -12,7 +12,7 @@ import { getBackupStorage } from './backup-storage/get-backup-storage';
  * a `@Cron()` method.
  *
  * Deletes records past `DELETION_THRESHOLD_YEARS` (default 8, counted
- * from the record's original `created_at`, not from when it was
+ * from the record's original `created_at`, rather than from when it was
  * archived): exports them to a backup file, then removes them from the
  * database. **The backup is not optional**: `DELETION_BACKUP_REQUIRED`
  * defaults to `true`, and this job refuses to delete anything for a
@@ -30,7 +30,7 @@ import { getBackupStorage } from './backup-storage/get-backup-storage';
  * how long it's been archived.
  *
  * Also excludes any payment with `legal_hold` set (see
- * LegalHoldService). Belt-and-suspenders here, not the primary defense:
+ * LegalHoldService). Belt-and-suspenders here, rather than the primary defense:
  * `LegalHoldService.placeHold()` pulls a held payment out of
  * `archive.payments` entirely (back into the live `payments` table), so
  * under normal operation this WHERE clause should never actually
@@ -49,7 +49,7 @@ import { getBackupStorage } from './backup-storage/get-backup-storage';
  * per-provider config each option needs.
  */
 
-// Read per-call, not captured as module-level constants at import time —
+// Read per-call instead of captured as module-level constants at import time —
 // a real CronJob run only ever calls this once per process anyway, but
 // per-call reads mean a test can exercise a different DELETION_BACKUP_PATH
 // per case just by setting process.env before calling, no module-reload

@@ -45,7 +45,7 @@ Note refunds don't reverse the platform fee — a refunded charge still cost
 the platform whatever fee it paid the PSP (and, in most real fee schedules,
 platform fees aren't refunded to the merchant either). If your fee model
 should refund the fee proportionally, that's a deliberate change to make in
-`createRefundEntries`, not something this code currently does.
+`createRefundEntries` — not something this code currently does.
 
 ### When entries are written — this matters more than it looks
 
@@ -54,13 +54,14 @@ confirmed**, atomically (same DB transaction) with the payment status
 transition that confirms them:
 
 - Immediate capture: in `PaymentCheckoutSaga`, inside the `SUCCEEDED` branch
-  — after the PSP has actually returned success, not when the payment
-  intent is first created.
+  — after the PSP has actually returned success, rather than when the
+  payment intent is first created.
 - Manual capture: in `PaymentLifecycleService.capture()`, when the capture
   call to the PSP succeeds — once per capture call, for that call's own
   amount, whether or not it's the one that completes the authorization
-  (partial captures are real money moving, not a placeholder to correct
-  later; see `payment-lifecycle.md`'s Capture accounting section).
+  (partial captures are real money moving rather than a placeholder
+  awaiting correction later; see `payment-lifecycle.md`'s Capture
+  accounting section).
 - Async/3DS-confirmed: in `WebhookProcessingService`, when a
   `payment_intent.succeeded`/`AUTHORISATION` webhook confirms a payment that
   was `PROCESSING` or `REQUIRES_ACTION`.
@@ -69,7 +70,8 @@ transition that confirms them:
   payment whose PSP outcome couldn't be determined automatically (see
   [`risk-and-fraud.md`](./risk-and-fraud.md)) to `SUCCEEDED`.
 
-This is intentional and was a bug fix, not the original design: entries used
+This is intentional, and the result of a bug fix rather than the
+original design: entries used
 to be written speculatively at payment-intent creation (`PENDING`), before
 any PSP was ever contacted. That double-booked money that was never actually
 charged whenever routing or the PSP call failed, and — once manual capture
@@ -97,11 +99,12 @@ reliability contract (poll → publish → mark-published-only-on-success →
 retry/alert on failure) is what's real here; the transport is a stand-in.
 
 A publish failure marks the event `FAILED` (terminal — see
-`LedgerOutboxPort.markFailed`), not retried automatically. A separate
+`LedgerOutboxPort.markFailed`); nothing retries it automatically. A
+separate
 5-minute sweep (`detectStaleEvents`) logs an alert for anything that's been
 `PENDING` for more than 5 minutes without ever being attempted (which only
 happens if the relay crashed mid-batch or genuinely fell behind) — it
 doesn't resubmit `FAILED` events on its own. Resetting a `FAILED` event back
-to `PENDING` is a deliberate operator action, not automatic — done via
-`POST /admin/outbox/:id/retry` (ADMIN/OPERATOR only), not a manual SQL
-update against production.
+to `PENDING` is a deliberate operator action rather than an automatic
+one — done via `POST /admin/outbox/:id/retry` (ADMIN/OPERATOR only),
+never a manual SQL update against production.

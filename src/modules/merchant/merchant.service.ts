@@ -40,7 +40,7 @@ export class MerchantService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  // Forced onto master, not the ambient replica-routed connection (see
+  // Forced onto master, rather than the ambient replica-routed connection (see
   // app.module.ts's `replication` config) — this app's DataSource routes
   // plain repository reads to the Postgres replica, which has ~1s
   // streaming lag behind master (same issue documented in
@@ -134,8 +134,8 @@ export class MerchantService {
    * Keyset-paginated (not offset-based — a large sweep spanning many
    * batches shouldn't re-scan skipped rows, and offset pagination's cost
    * grows with the offset itself) page of active, auto-managed merchants,
-   * ordered by `id` ascending. `id` (the UUID primary key), not
-   * `merchantId` or `createdAt` — it's guaranteed unique and already
+   * ordered by `id` ascending. `id` (the UUID primary key) is used as the
+   * cursor instead of `merchantId` or `createdAt` — it's guaranteed unique and already
    * indexed as the primary key, so `id > afterId` is a stable cursor even
    * if two merchants share a `createdAt` timestamp. Built for
    * `RiskTieringService.runTieringSweep()`'s own batching (see that
@@ -166,7 +166,7 @@ export class MerchantService {
    * for SanctionsScreeningSweepService's weekly re-screening sweep —
    * filters out merchants already `HIT` in SQL (a confirmed match
    * doesn't need re-screening; the action it would have blocked already
-   * was), not merely `!riskTierAutoManaged`-style opt-out, since
+   * was) rather than a `!riskTierAutoManaged`-style opt-out, since
    * sanctions screening has no per-merchant opt-out at all.
    */
   async findActiveNotHitBatch(afterId: string | undefined, limit: number): Promise<MerchantEntity[]> {
@@ -191,7 +191,7 @@ export class MerchantService {
    * returned here, at creation time — the API key secret is hashed
    * (bcrypt) before persisting; the HMAC key is envelope-encrypted via
    * Vault Transit (it can't be hashed like the API key secret, since
-   * HmacSignatureGuard needs the plaintext back to compute HMACs, not just
+   * HmacSignatureGuard needs the plaintext back to compute HMACs, rather than just
    * a yes/no comparison).
    *
    * Sanctions-screens the supplied `legalName` (or, if omitted, `name` at
@@ -344,7 +344,7 @@ export class MerchantService {
     merchant.apiKeySecretHash = await bcrypt.hash(apiKeySecret, BCRYPT_ROUNDS);
     await this.merchantRepo.save(merchant);
     // Rotating credentials usually means "I think this leaked" — kill
-    // existing sessions too, not just future logins with the old secret.
+    // existing sessions too, instead of only blocking future logins with the old secret.
     await this.tokenRevocation.revokeAllForMerchant(merchantId);
     this.logger.log(
       `Rotated API key secret for merchant ${merchantId} — old secret and existing sessions are now invalid`,
@@ -417,7 +417,7 @@ export class MerchantService {
   async updateSettlementCurrency(merchantId: string, settlementCurrency: string | null): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
     const previous = merchant.settlementCurrency;
-    // null, not undefined — TypeORM's save() silently skips an undefined
+    // Explicitly null rather than undefined — TypeORM's save() silently skips an undefined
     // property instead of writing SQL NULL, which would leave the old
     // currency in the database despite this "clearing" call appearing to
     // succeed: an undefined assignment here would leave the prior value in
@@ -438,7 +438,7 @@ export class MerchantService {
     const merchant = await this.getOrThrow(merchantId);
     const previous = `${merchant.disputeNotificationChannel}:${merchant.disputeNotificationTarget ?? '(none)'}`;
     merchant.disputeNotificationChannel = channel;
-    // null, not undefined — same "TypeORM save() silently skips undefined"
+    // Explicitly null instead of undefined — same "TypeORM save() silently skips undefined"
     // reasoning as updateSettlementCurrency() above.
     merchant.disputeNotificationTarget = target;
     await this.merchantRepo.save(merchant);
@@ -456,7 +456,7 @@ export class MerchantService {
     const merchant = await this.getOrThrow(merchantId);
     const previous = `${merchant.subscriptionNotificationChannel}:${merchant.subscriptionNotificationTarget ?? '(none)'}`;
     merchant.subscriptionNotificationChannel = channel;
-    // null, not undefined — same "TypeORM save() silently skips undefined"
+    // Deliberately null, as opposed to undefined — same "TypeORM save() silently skips undefined"
     // reasoning as updateDisputeNotificationChannel() above.
     merchant.subscriptionNotificationTarget = target;
     await this.merchantRepo.save(merchant);
@@ -775,7 +775,7 @@ export class MerchantService {
    * see MerchantEntity.enabledPspProviders's docblock. Rejects an empty
    * array: unlike feeTiers/settlementCurrency (where "clear it" is a
    * meaningful state), a merchant with zero entitled PSPs can never
-   * successfully charge again — that's very likely a mistake, not an
+   * successfully charge again — that's very likely a mistake rather than an
    * intended "pause this merchant" action (setActive() already exists for
    * that, and is reversible/obvious in a way an empty PSP list isn't).
    */
@@ -922,8 +922,8 @@ export class MerchantService {
    * merchant already exists; there's no "creation" left to block. It's
    * persisted and notified exactly like the sweep finding one, via
    * `SanctionsScreeningSweepService`'s shared `applySanctionsScreeningResult()`
-   * path — this method is a thin, single-merchant wrapper over the same
-   * logic, not a separate code path.
+   * path — this method is a thin, single-merchant wrapper over that same
+   * logic rather than a separate code path.
    */
   async rescreenSanctions(merchantId: string): Promise<{ merchant: MerchantEntity; previousStatus: string }> {
     const merchant = await this.getOrThrow(merchantId);
@@ -975,7 +975,7 @@ export class MerchantService {
    * `CLEARED` resolution resets `sanctionsScreeningStatus` back to
    * `CLEAR` (the operator's determination that the current flag is a
    * false positive); `CONFIRMED` leaves the status exactly as it was —
-   * a confirmed hit should stay visibly flagged, not appear to clear
+   * a confirmed hit should stay visibly flagged instead of appearing to clear
    * itself just because a human looked at it.
    */
   async applySanctionsReview(
@@ -1019,7 +1019,7 @@ export class MerchantService {
     if (!isActive) {
       // JWTs are stateless — without this, a deactivated merchant's
       // already-issued tokens would keep working for up to another hour
-      // (their remaining lifetime), not stop immediately.
+      // (their remaining lifetime) instead of stopping immediately.
       await this.tokenRevocation.revokeAllForMerchant(merchantId);
     }
     this.logger.warn(`Merchant ${merchantId} ${isActive ? 'reactivated' : 'deactivated'}`);
@@ -1038,7 +1038,7 @@ export class MerchantService {
     // the shared lookup behind 10+ admin mutation endpoints
     // (updateFeeRate, updateSettlementCurrency, setActive, ...), any of
     // which could plausibly be called immediately after createMerchant()
-    // in a real onboarding flow, not just in tests.
+    // in a real onboarding flow as well as in tests.
     const merchant = await this.findMerchantOnMaster({ merchantId });
     if (!merchant) {
       throw new NotFoundException({

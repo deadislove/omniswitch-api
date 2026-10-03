@@ -11,7 +11,7 @@ provider-specific detail below.
 | Variable | Required | Notes |
 |---|---|---|
 | `DELETION_BACKUP_STORAGE` | Yes | Must be exactly `azure` |
-| `DELETION_BACKUP_AZURE_CONNECTION_STRING` | Yes | Carries the storage account name **and** an access credential — this belongs in `omniswitch-secrets`, not `k8s/configmap.yaml`, unlike every other provider's config |
+| `DELETION_BACKUP_AZURE_CONNECTION_STRING` | Yes | Carries the storage account name **and** an access credential — this belongs in `omniswitch-secrets` rather than `k8s/configmap.yaml`, unlike every other provider's config |
 | `DELETION_BACKUP_AZURE_CONTAINER` | Yes | Blob container name |
 
 ## Credentials: a connection string, by deliberate choice
@@ -30,7 +30,7 @@ for a `DefaultAzureCredential`-based constructor — not currently
 built, since it wasn't the path this project's minimal-viable-provider
 scope chose to implement.
 
-**Because a connection string is a credential, not just config**, it
+**Because a connection string is a credential and not just config**, it
 must go in `omniswitch-secrets` (`secretKeyRef`), the same way
 `DB_PASSWORD`/`JWT_SECRET` do — never in `k8s/configmap.yaml` alongside
 `DELETION_BACKUP_AZURE_CONTAINER`, which is plain config. This is the
@@ -44,7 +44,7 @@ own external resolution — see [`README.md`](./README.md#credentials-always-the
 ```
 blockBlobClient.upload(body, length)  → uploads deletion-backup-<timestamp>.json
 blockBlobClient.exists()              → confirms the blob exists (throws if not)
-returns                                 the blob's own .url (an HTTPS URL, not a azure:// URI)
+returns                                 the blob's own .url (an HTTPS URL rather than an azure:// URI)
 ```
 
 The returned identifier is the blob client's own `.url` property (a

@@ -21,7 +21,7 @@ import { AppDataSource } from '../database/data-source';
  * docblock for why this isn't a `@Cron()` method. This one specifically
  * must not run from inside a pod belonging to the main `omniswitch-api`
  * Deployment (`kubectl exec`-ing into one and running `npm run` there):
- * that pod's job is serving traffic, not hosting ad hoc maintenance
+ * that pod's job is serving traffic rather than hosting ad hoc maintenance
  * scripts, and it can be rescaled/recycled by the HPA or a rolling
  * update mid-operation. `k8s/partition-maintenance-cronjob.yaml` gives
  * this its own dedicated, disposable pod per scheduled run instead.
@@ -29,7 +29,7 @@ import { AppDataSource } from '../database/data-source';
  * Idempotent: `CREATE TABLE IF NOT EXISTS ... PARTITION OF` (valid
  * PostgreSQL syntax — `IF NOT EXISTS` applies to the table itself,
  * partition-of-ness included) means re-running this against
- * already-existing partitions is a safe no-op, not an error.
+ * already-existing partitions is a safe no-op rather than an error.
  *
  * Child partition naming: `payments_partitioned_YYYY_MM` /
  * `ledger_outbox_partitioned_YYYY_MM` — keeping the `_partitioned_`

@@ -52,7 +52,7 @@ already-booked ledger entries.
 routing/display purposes (`estimatedFee` in API responses) using each
 adapter's `feePercentage`/`fixedFeeMinorUnits` — a different number from
 `platformFeeBps`/`feeTiers` above, computed for a different purpose (choosing a
-PSP, not booking a ledger entry). Whether the platform fee is meant to
+PSP rather than booking a ledger entry). Whether the platform fee is meant to
 cover "PSP cost plus margin" is a pricing decision this codebase doesn't
 make on its own — the two numbers are still independently set — but the
 gap this section used to describe (no way to check the *estimate* against
@@ -66,8 +66,8 @@ PSP statement instead). In this environment, `fetchFeeStatement()` calls
 `mock-psp`'s `/statement` endpoints, which compute a genuine,
 deterministic *simulated* real fee — including a "premium card" surcharge
 on a fifth of transactions — so the reconciliation report exercises real
-drift between estimate and actual, not an unrealistic exact match every
-time. Against a real production Stripe/Adyen deployment,
+drift between estimate and actual, instead of an unrealistic exact
+match every time. Against a real production Stripe/Adyen deployment,
 `fetchFeeStatement()`'s real implementation would call that PSP's own fee
 reporting API instead of `mock-psp` — the same
 mock-now/real-later posture as this codebase's other PSP integrations.

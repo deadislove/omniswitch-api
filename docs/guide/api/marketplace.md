@@ -154,7 +154,7 @@ initiated (a previously `FAILED` transfer is retried).
 The follow-up transfer for a *released* reserve — a completely separate
 transfer from `.../initiate-transfer` above, tracked by its own
 `reserveTransferStatus`/`reserveTransferId` fields. Eligibility is just
-"reserve released, not KYC-blocked, not already initiated" — independent
+"reserve released, KYC clear, and not already initiated" — independent
 of whatever already happened to `netAmount`'s own transfer, so this
 works whether the reserve was released before, during, or long after
 the netAmount transfer. Same rail, same real-vs-mock behavior as

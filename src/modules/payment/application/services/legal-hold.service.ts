@@ -12,10 +12,10 @@ export interface LegalHoldResult {
  * docs/compliance/data-retention.md, "No legal-hold mechanism").
  *
  * Operates on `payments`/`archive.payments` directly via raw SQL
- * through the injected `DataSource`, not through `PaymentRepositoryPort`/
+ * through the injected `DataSource` instead of through `PaymentRepositoryPort`/
  * `PaymentAggregate` — same reasoning as the archiving/deletion jobs:
  * this is a data-retention/ops concern layered on top of the payment
- * schema, not a payment-lifecycle business rule the domain aggregate
+ * schema rather than a payment-lifecycle business rule the domain aggregate
  * needs to know about. Keeping it out of `PaymentAggregate` avoids
  * touching every construction site of that aggregate for a field with
  * no bearing on payment processing itself.
@@ -33,8 +33,8 @@ export class LegalHoldService {
    * already archived is pulled back into the live `payments` table as
    * part of placing the hold — a record under active legal/regulatory
    * scrutiny needs to be reachable through the normal payment query
-   * path (GET /payments/:id, admin lookups, etc.), not left in cold
-   * storage. This also means a held payment simply becomes
+   * path (GET /payments/:id, admin lookups, etc.) instead of being left in
+   * cold storage. This also means a held payment simply becomes
    * archive-eligible again, through the normal archiving job, the next
    * time it runs after the hold is released — no separate "re-archive"
    * step needed.

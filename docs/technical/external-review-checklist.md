@@ -15,7 +15,7 @@ claim, where its evidence lives, and what to check independently rather
 than take on the original author's word.
 
 A self-review can't catch its own blind spots by definition — that's
-the actual reason this document exists, not a disclaimer to get past.
+the actual reason this document exists, rather than a disclaimer to get past.
 
 ---
 
@@ -26,7 +26,7 @@ the actual reason this document exists, not a disclaimer to get past.
 - **Claim**: [`security-and-compliance.md#sanctionswatchlist-screening`](./security-and-compliance.md#sanctionswatchlist-screening)
   and `src/modules/merchant/ofac-sdn-sanctions.adapter.ts` — a real,
   self-hosted fuzzy match (Jaro-Winkler, default threshold 0.92) against
-  the real OFAC SDN list, not a stub.
+  the real OFAC SDN list rather than a stub.
 - **Verify independently**: pull real, publicly known SDN entries and
   clearly-unsanctioned names with similar spelling (the exact
   false-positive/false-negative tradeoff a 0.92 threshold is making),
@@ -95,14 +95,14 @@ the actual reason this document exists, not a disclaimer to get past.
 ### Load-testing numbers: real methodology, or an easy-to-fake claim?
 
 - **Claim**: [`tests/load-testing.md`](./tests/load-testing.md) — real
-  numbers against a resource-capped production Docker image, not
+  numbers against a resource-capped production Docker image rather than
   synthetic.
 - **Verify independently**: rerun `npm run load-test:charge` /
   `load-test:read` locally, confirm the numbers reproduce within a
   reasonable margin, and confirm the resource caps described are
   actually what the container runs under.
 
-### Calibration methodology: are the synthetic-data assumptions reasonable, not just the arithmetic?
+### Calibration methodology: are the synthetic-data assumptions reasonable, beyond just the arithmetic?
 
 - **Claim**: [`tests/threshold-calibration.md`](./tests/threshold-calibration.md)
   — a real precision/recall/break-even calibration methodology, run

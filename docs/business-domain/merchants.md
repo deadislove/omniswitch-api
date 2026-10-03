@@ -24,8 +24,8 @@ matters for reasoning about the system correctly:
    these defaults to "no behavior change," so a merchant created before
    a given feature existed is never silently affected by it.
 3. **A trust subject** — the thing this platform's risk, compliance, and
-   sanctions posture is actually evaluated *against*, continuously, not
-   just once at creation. Most of this document is about that third
+   sanctions posture is actually evaluated *against*, continuously —
+   beyond just once at creation. Most of this document is about that third
    role, since it's the least visible from reading the entity's column
    list alone.
 
@@ -41,8 +41,8 @@ onboarded *under* a platform merchant, able to receive a portion of that
 platform's charges directly (a "split") and get its own scheduled
 payouts. This is deliberately **one level deep only** — a `CONNECTED`
 merchant can't itself have connected accounts — the same platform/seller
-shape Stripe Connect and Adyen for Platforms use, not an arbitrary org
-tree. See
+shape Stripe Connect and Adyen for Platforms use, rather than an
+arbitrary org tree. See
 [`marketplace-and-payouts.md`](./marketplace-and-payouts.md) for the
 full splits/payout mechanism.
 
@@ -84,11 +84,11 @@ creation itself — not a later, separate step:
   creation — common names produce false positives, and refusing every
   ambiguous match would refuse real merchants over coincidence. The
   merchant is created normally, flagged for a human to clear or confirm.
-- If `legalName` is omitted (still allowed — it's optional, not required,
+- If `legalName` is omitted (still allowed — it's optional rather than required,
   since not every integration is ready to supply it at signup), screening
   falls back to the display `name` and the result is recorded at
   *degraded* confidence — good enough to catch an obvious, exact-name
-  match, not a substitute for a real legal name once one is available.
+  match, never a substitute for a real legal name once one is available.
   Submitting a `legalName` later (KYC submission, or a dedicated update)
   re-screens at full confidence and supersedes the degraded result.
 
@@ -107,7 +107,8 @@ KYC data exists.
 
 ### Step 3 — KYB, for CONNECTED merchants only
 
-KYC confirms an *individual's* identity, not the *business* itself —
+KYC confirms an *individual's* identity, a different thing entirely
+from the *business* itself —
 company registration, tax ID validity, or who actually owns/controls it
 (UBO). `POST /admin/merchants/:id/kyb/submit` (`{ legalName, taxId,
 country, beneficialOwners? }`) answers that separate question, via the
@@ -121,7 +122,8 @@ itself was never separately verified), because those genuinely are two
 different questions with two different answers.
 
 **KYB does not gate payouts the way KYC does** — a deliberate scope
-limit, not an oversight. Wiring a *second* verification into the same
+limit rather than an oversight. Wiring a *second* verification into
+the same
 payout gate KYC already uses would conflate "should this specific
 transfer be held" (KYC's job) with "is this a business we've fully
 underwritten" (a broader question this pass doesn't try to answer yet).
@@ -146,8 +148,8 @@ this codebase's own data-retention policy doesn't yet have a documented
 answer for (see
 [`../compliance/data-retention.md`](../compliance/data-retention.md)).
 This pass captures the data a real KYB flow needs; deciding how long to
-keep it is a compliance decision, not an engineering one this document
-can settle unilaterally.
+keep it is a compliance decision this document can't settle
+unilaterally as an engineering one.
 
 ## Trust isn't decided once — four independent signals, evaluated continuously
 
@@ -157,7 +159,7 @@ score — a fraud signal, a PSP-reliability signal, an AML signal, and a
 legal sanctions signal answer different questions, and conflating them
 would make each individually less legible to whoever has to act on it.
 See [`risk-and-fraud.md#why-two-separate-signals-not-one-risk-score`](./risk-and-fraud.md#why-two-separate-signals-not-one-risk-score)
-for the fuller argument, which extends to all four, not just the
+for the fuller argument, which extends to all four, beyond just the
 original two.
 
 | Signal | Question it answers | Automated action | Re-evaluated |
@@ -173,7 +175,8 @@ manual override (`PATCH .../reserve-policy`, `.../ambiguous-risk`,
 `.../aml-review`) flips that signal's own `*AutoManaged` flag to `false`
 and it sticks until the operator explicitly re-enables it. Sanctions
 screening doesn't have this override concept in the same shape — a
-`HIT` is a factual claim about a real external list, not a judgment call
+`HIT` is a factual claim about a real external list, never a judgment
+call
 an operator's local override should silently paper over; instead it's
 resolved via `PATCH .../sanctions-review`, which records who reviewed it
 and why (false positive vs. confirmed) without touching whether the next
@@ -182,15 +185,16 @@ scheduled re-screen still runs.
 ## Sanctions HIT and agent delegations
 
 `DelegationEntity.agentName` (e.g. `"inventory-restock-bot"`) is a
-merchant-chosen label for a piece of software, not a legal identity —
+merchant-chosen label for a piece of software, a different thing
+entirely from a legal identity —
 screening it against a sanctions list the way a person's or a
 company's name is screened would be meaningless. Instead, a merchant
 whose `sanctionsScreeningStatus` is `HIT` cannot have *new* delegations
 created at all — `DelegationService.createDelegation()` checks the
 parent merchant's status before issuing an agent token. This is the same
 shape as KYC gating payouts rather than charges: the restriction attaches
-to the *capability a known-bad state shouldn't extend*, not to an
-identity that was never the actual subject of the check. See
+to the *capability a known-bad state shouldn't extend*, rather than
+to an identity that was never the actual subject of the check. See
 [`compliance-and-security.md#agentic-payments-delegation-scope-as-a-liability-limiting-decision`](./compliance-and-security.md#agentic-payments-delegation-scope-as-a-liability-limiting-decision)
 for the broader delegation liability framing.
 
@@ -224,14 +228,14 @@ merchant organization, and forcing one shared channel would mean
 someone's actionable alert gets buried in someone else's noisy channel.
 Ambiguous-risk monitoring is the deliberate exception — it's silent by
 design (see [`risk-and-fraud.md`](./risk-and-fraud.md#ambiguous-risk-monitoring-psp-reliability-signal)),
-not an oversight.
+a choice rather than an oversight.
 
 ## Credentials and sessions (cross-reference only)
 
 API key rotation, HMAC key rotation, MFA enforcement for `ADMIN`-role
 callers, and merchant-wide session revocation are all part of the
-`Merchant` lifecycle but are security mechanisms, not business-domain
-decisions — see
+`Merchant` lifecycle but are security mechanisms rather than
+business-domain decisions — see
 [`../technical/security-and-compliance.md`](../technical/security-and-compliance.md)
 for JWT revocation and MFA, and
 [`../technical/secret-management.md`](../technical/secret-management.md)

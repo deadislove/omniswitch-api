@@ -14,7 +14,7 @@ import { BillingInterval } from './subscription.aggregate';
  * effectively frozen for the same reason a payment's amount can't be
  * edited after the fact: a subscriber who signed up at $29/mo shouldn't
  * silently start paying $39/mo because an operator edited the Plan row.
- * A price change is a new Plan, not a mutation of an old one — the
+ * A price change is a new Plan rather than a mutation of an old one — the
  * (separately built) plan-change/proration flow is how an existing
  * subscriber ever moves to it.
  *

@@ -23,10 +23,10 @@ dependencies).
 `test/setup-env.ts` already assumes — see
 [`architecture.md`'s Testing section](./architecture.md#testing)), then
 runs `npm run test:e2e -- --shard=${{ matrix.shard }}/2` — Jest's own
-built-in sharding splits the spec files roughly in half, not a
-hand-maintained file list. `api` itself is deliberately not started —
+built-in sharding splits the spec files roughly in half automatically;
+there's no hand-maintained file list behind it. `api` itself is deliberately not started —
 the e2e suite talks to a Nest app booted in-process by Jest/Supertest
-(`test/utils/test-app.ts`), not to the containerized `api` service. See
+(`test/utils/test-app.ts`), rather than to the containerized `api` service. See
 ["The e2e heap-threshold health check failure"](#the-e2e-heap-threshold-health-check-failure)
 for why the job runs sharded at all.
 
@@ -44,7 +44,7 @@ single-quote convention, and `tsconfig.json`'s `exclude: ["test"]` meant
 `parserOptions.project` couldn't type-check anything under `test/` at
 all — together producing ~10k findings, mostly formatting diffs plus a
 parsing error on every test file, none of them a real signal. Closed by
-two additions, not a reformat imposing a new style: `.prettierrc` (matches
+two additions rather than a reformat imposing a new style: `.prettierrc` (matches
 the codebase's existing single-quote/trailing-comma convention, so
 `eslint --fix` only touches the actual mismatches) and
 `tsconfig.eslint.json` (extends `tsconfig.json` with `test/**/*.ts`
@@ -53,8 +53,8 @@ included, used only by `eslint.config.cjs`'s `parserOptions.project` —
 load-bearing for `nest build`: `rootDir: "./src"` means test files would
 otherwise get compiled into `dist/` too). A handful of files also carry
 `eslint-disable-next-line security/detect-non-literal-fs-filename`
-comments meant for `eslint.security.config.cjs`'s separate run, not this
-one — `eslint.config.cjs` registers the `security` plugin (no rules
+comments meant for `eslint.security.config.cjs`'s separate run rather
+than this one — `eslint.config.cjs` registers the `security` plugin (no rules
 enabled) and turns off `reportUnusedDisableDirectives` so those
 cross-referenced comments resolve as inert directives instead of erroring
 on an unknown rule or warning about suppressing nothing.
@@ -64,7 +64,7 @@ on an unknown rule or warning about suppressing nothing.
 Five independent jobs: **Trivy** (dependency CVEs, Dockerfile/
 docker-compose/k8s misconfig, secret scanning), **Bearer** (application-
 level SAST — sensitive data flows, OWASP-style rules), **Gitleaks**
-(secret scanning across full git history, not just the current tree),
+(secret scanning across full git history, beyond just the current tree),
 **ESLint security rules** (`eslint-plugin-security`, Node.js-specific
 unsafe patterns — `eval`, non-literal `fs`/`child_process` calls, timing
 attacks, etc.), and **npm audit**.
@@ -78,16 +78,16 @@ pipeline's own scope to fix, but zero CRITICAL findings — so the gate
 actually catches new regressions instead of failing on day one and
 training everyone to ignore it.
 
-**Suppressions are scoped by exact value, not by rule or path.**
+**Suppressions are scoped by exact value rather than by rule or path.**
 `trivy-secret.yaml` and `.gitleaks.toml` both allowlist the *specific
 regex* of this codebase's known test placeholder values (e.g.
-`sk_test_placeholder`), not the underlying detection rule — feeding
+`sk_test_placeholder`), rather than the underlying detection rule — feeding
 either scanner a differently-shaped fake key still gets it flagged, which
 is what the narrow, value-scoped allowlist is for. `eslint.security.config.cjs`
 disables `security/detect-object-injection` entirely, but only after
 checking every one of its hits in this codebase and confirming all were
 false positives (e.g. `VALID_TRANSITIONS[from]` where `from` is a closed
-TypeScript enum, not attacker-controlled input) — the plugin's own docs
+TypeScript enum, never attacker-controlled input) — the plugin's own docs
 acknowledge that rule "100% will have false positives."
 
 ## `.github/dependabot.yml`
@@ -131,7 +131,7 @@ the write and the follow-up read, flaky exactly when it doesn't.
 **Where this recurs**: e2e spec files that read their own write back
 immediately (`dataSource.getRepository(...).findOne()` right after a
 `POST`/`PATCH` that just committed to master) hit this reliably enough
-to be a known pattern, not a one-off — a full-repo sweep for the
+to be a known pattern rather than a one-off — a full-repo sweep for the
 `dataSource.getRepository(...).find/findOne/count` pattern against
 recently-written rows found it latent across 11 files:
 `agentic-payments`, `cross-border-settlement`, `fx-conversion`,
@@ -158,7 +158,7 @@ identical reason:
   applied to the shared `getOrThrow()` private helper, used by 10+ admin
   mutation endpoints (`updateFeeRate`, `updateSettlementCurrency`,
   `setActive`, ...) that could plausibly run immediately after
-  `createMerchant()` in a real flow, not just a test.
+  `createMerchant()` in a real flow, beyond just a test.
 
 **Fix, applied consistently everywhere this shows up**: read through
 `dataSource.createQueryRunner('master')` instead of the ambient
@@ -223,7 +223,7 @@ climbs at essentially the same rate with the GC hook active as without
 it (471MB → 670MB across the 19 files, ~10MB/file, same trajectory that
 trips the threshold either way) — the explicit `global.gc()` calls do
 run (confirmed via `typeof global.gc === 'function'`), they just don't
-help, because the growth is live, still-referenced state, not garbage:
+help, because the growth is live, still-referenced state rather than garbage:
 most likely `reflect-metadata`'s global metadata registry and ts-jest's
 compiled-module cache, both of which grow with every fresh
 `Test.createTestingModule({ imports: [AppModule] }).compile()` call and
@@ -283,13 +283,13 @@ asking whether that number's calibration context still applies to the
 environment actually running the test — not just whether the code under
 test can be made to fit under it.
 
-### Sharding, reintroduced — a genuine leak, not the earlier per-process-baseline theory
+### Sharding, reintroduced — a genuine leak, disproving the earlier per-process-baseline theory
 
 The 1.5GB threshold held on a development machine, but the same suite
 still tripped `HEALTH_CHECK_HEAP_THRESHOLD_BYTES` on GitHub Actions'
 smaller `ubuntu-latest` runners (2 vCPU, 7GB total, shared with
 Postgres/Redis/Vault/mock-psp's own containers). The gap turned out to
-be a real, independently-diagnosable defect, not just a tighter
+be a real, independently-diagnosable defect, beyond just a tighter
 resource envelope: `@nestjs/schedule`'s `SchedulerOrchestrator`
 implements `onApplicationBootstrap()` (registers every `@Cron()` job)
 but has no `onApplicationShutdown()`/`onModuleDestroy()` counterpart —
@@ -307,7 +307,7 @@ connection pool that file's own shutdown had already torn down. This is
 a genuine, unbounded leak (more test files run, more zombie jobs
 accumulate, forever) — a different failure mode than the "per-process
 baseline is already high" theory the shard experiment above ruled
-out, which was about a single fresh process's *starting* cost, not
+out, which was about a single fresh process's *starting* cost rather than
 runaway growth within one.
 
 **Fix**: `test/utils/test-app.ts`'s `createTestApp()` wraps the returned
@@ -324,12 +324,12 @@ sequentially as the full suite would in one process.
 ## Parallelizing e2e workers
 
 **Status: root cause found and measured; fix applied; residual risk is
-environment-dependent, not a code defect.** `test/jest-e2e.json` now runs
+environment-dependent rather than a code defect.** `test/jest-e2e.json` now runs
 `maxWorkers: "50%"` (Jest's own adaptive sizing — half the host's
-detected cores, not a hardcoded number) and `testTimeout: 60000`. This
+detected cores, instead of a hardcoded number) and `testTimeout: 60000`. This
 section documents the real infrastructure built, the actual measured
 root cause of the flakiness an earlier pass into this only got as far as
-"unexplained," and why the fix is a worker-count *strategy*, not a fixed
+"unexplained," and why the fix is a worker-count *strategy* rather than a fixed
 number.
 
 **The goal**: `maxWorkers: 1` means all e2e spec files (43 as of this
@@ -372,8 +372,8 @@ run produced hard numbers:
   was already 6–10 *before* any e2e run started.
 - Docker container CPU (`postgres-master`, `redis`, `mock-psp`) stayed
   low throughout (peak ~20% on `postgres-master`) — **the bottleneck is
-  host CPU scheduling for the Node/ts-jest processes themselves, not the
-  application's own infrastructure containers.** This rules out the
+  host CPU scheduling for the Node/ts-jest processes themselves; the
+  application's own infrastructure containers aren't the constraint.** This rules out the
   containers as the constraint.
 - With that scheduling pressure confirmed, the concrete failure modes
   it produces became explicable rather than mysterious: a
@@ -390,15 +390,16 @@ run produced hard numbers:
   latency and only surfaced under measured 20+ load average. The earlier
   investigation's `401`-with-no-guard-log pattern is almost certainly
   the same class of race in a different guard/strategy's own
-  initialization path, not a logic bug in this codebase's revocation
-  checks (which the diagnostic logging separately, directly ruled out).
+  initialization path, rather than a logic bug in this codebase's
+  revocation checks (which the diagnostic logging separately, directly
+  ruled out).
 
 **The fix**: `maxWorkers: "50%"` instead of a fixed `4` — Jest's own
 adaptive sizing scales to whatever the *actual* runtime environment
 provides, rather than assuming a core count that may already be
 oversubscribed by unrelated load. `testTimeout: 60000` gives real
 per-test headroom under genuine (not pathological) contention. The
-`risk-tiering.e2e-spec.ts` fix (concurrent, not sequential, charges) is
+`risk-tiering.e2e-spec.ts` fix (concurrent rather than sequential charges) is
 independently correct regardless of worker count. `DB_POOL_MAX` raised
 from `5` to `15` — `5` was sized for connection-*count* budget
 correctness (never wrong) but was too tight for this specific
@@ -416,6 +417,6 @@ measure one from here. `maxWorkers: "50%"` is the professionally correct
 choice *for that difference* — it won't oversubscribe a clean 2-vCPU
 runner the way a hardcoded `4` would, and it won't artificially
 underutilize a bigger one — but the actual acceptance test for this
-change is a real CI run, not a further local repro on a machine this
+change is a real CI run rather than a further local repro on a machine this
 session has already shown to be noisy independent of anything under
 this repository's control.

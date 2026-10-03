@@ -6,8 +6,8 @@ import { normalizeName } from './jaro-winkler';
 
 // The real Treasury SDN.CSV format has no header row; column 1 (0-indexed)
 // is SDN_Name. See https://www.treasury.gov/ofac/downloads/sdn.csv —
-// referenced here as documentation of the shape this parser targets, not
-// fetched by any test (this repo has never called it with real network
+// referenced here as documentation of the shape this parser targets; it is
+// not fetched by any test (this repo has never called it with real network
 // egress — see this class's own docblock).
 const SDN_NAME_COLUMN_INDEX = 1;
 
@@ -51,7 +51,7 @@ function parseSdnCsv(csv: string): SanctionsListEntry[] {
  * `SANCTIONS_LIST_SOURCE_URL` (the official Treasury CSV endpoint, when
  * configured) weekly (`CronExpression.EVERY_WEEK` — same fixed-schedule
  * idiom every other sweep in this codebase uses, e.g. `RiskTieringService`,
- * not a bespoke configurable cron string) and on demand (`refresh()`,
+ * rather than a bespoke configurable cron string) and on demand (`refresh()`,
  * callable from a startup hook or an admin endpoint).
  *
  * Requires outbound network egress from wherever this service runs — not

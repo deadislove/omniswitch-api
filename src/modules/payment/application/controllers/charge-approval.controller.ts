@@ -125,7 +125,7 @@ function toChargeResponseDto(result: CheckoutSagaResult): ChargePaymentResponseD
  * docblock and `docs/business-domain/future-directions.md#agentic-payments`.
  * Same MERCHANT-self-scoped / ADMIN-OPERATOR-cross-merchant access model
  * as `DelegationController` — approving/denying an agent's spend is the
- * merchant's own operator decision, not a platform-operator one, but
+ * merchant's own operator decision rather than a platform-operator one, but
  * ADMIN/OPERATOR can act on any merchant's approvals same as everywhere
  * else in this codebase's admin surface.
  */

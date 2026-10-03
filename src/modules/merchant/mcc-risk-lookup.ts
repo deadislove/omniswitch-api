@@ -8,13 +8,13 @@ export type IndustryRiskCategory = 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
  * This isn't a workaround for missing external credentials the way the
  * mock PSP/KYC/bank-transfer adapters are — MCC risk classification is
  * public industry knowledge, so this table is real, just not exhaustive:
- * it covers the common categories at each risk level, not all ~600
+ * it covers the common categories at each risk level instead of all ~600
  * assigned MCCs. An MCC not in this table returns 'UNKNOWN', which
  * RiskTieringService treats as a no-op (same as before this table
- * existed), not as a risk signal either way.
+ * existed) rather than as a risk signal either way.
  *
  * **Verified, 2026** — every code below was checked against real MCC
- * reference sources (WebSearch/WebFetch, not trained-data recall) for
+ * reference sources (WebSearch/WebFetch, instead of trained-data recall) for
  * two separate things: does the code number actually mean what the
  * inline comment says, and is the risk tier consistent with how card
  * networks/acquirers actually classify that category. All 19 entries

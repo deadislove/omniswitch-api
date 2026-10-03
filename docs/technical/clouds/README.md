@@ -55,7 +55,7 @@ at factory-call time — a missing bucket name or connection string
 throws immediately, before the job attempts any backup, rather than
 surfacing later as an unexplained upload failure.
 
-## Why `local` is the default, not one of these three
+## Why `local` is the default instead of one of these three
 
 This project's GitHub Actions CI never has real cloud credentials
 available for any provider — provisioning them for a public reference
@@ -67,7 +67,7 @@ deployment's own deliberate, opt-in decision at deploy time — see
 [`../../compliance/data-retention.md#where-the-backup-goes`](../../compliance/data-retention.md#where-the-backup-goes)
 for the fuller reasoning, including why a self-hosted stand-in (e.g.
 MinIO in CI) was considered and not pursued — that's a new
-architectural commitment for this project, not a small config change.
+architectural commitment for this project rather than a small config change.
 
 ## Credentials: always the platform's own default mechanism, never a bespoke one
 

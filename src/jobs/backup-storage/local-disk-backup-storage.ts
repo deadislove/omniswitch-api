@@ -26,7 +26,7 @@ export class LocalDiskBackupStorage implements BackupStorage {
   // processes. The filename is generated entirely from
   // `Date.now()`/`toISOString()`, with no external input and no `/`/`..`
   // characters possible after the regex replace. Suppressed per-site
-  // with this justification, not by disabling the rule — see
+  // with this justification instead of disabling the rule — see
   // .eslintrc.security.cjs's own comment on why this rule (unlike
   // detect-object-injection) has a low false-positive rate and stays
   // enabled for everything else in this codebase.

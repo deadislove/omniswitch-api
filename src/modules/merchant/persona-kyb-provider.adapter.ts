@@ -13,7 +13,7 @@ import { mapPersonaInquiryStatus } from './persona-inquiry-status';
  * called against a real Persona account with real credentials. Persona's
  * real product distinguishes individual vs. business verification by
  * which Inquiry template a given `PERSONA_API_KEY` is configured to use
- * server-side, not by anything this request body encodes — so this
+ * server-side, rather than by anything this request body encodes — so this
  * adapter's request/response shape is identical to the KYC one, and the
  * business/individual distinction lives entirely in which of the two
  * adapters `merchant.module.ts`'s `useFactory` bindings route a call to.
@@ -21,7 +21,7 @@ import { mapPersonaInquiryStatus } from './persona-inquiry-status';
  * `KYB_PROVIDER=persona` selects this adapter; `POST /webhooks/kyb`
  * (verified by `KybWebhookGuard`, a distinct signature scheme/secret
  * from `KycWebhookGuard`) receives the eventual decision — a separate
- * webhook path, not a shared one, so a KYC decision can never be
+ * webhook path rather than a shared one, so a KYC decision can never be
  * misrouted into `MerchantEntity.kybStatus` or vice versa.
  */
 @Injectable()

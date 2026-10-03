@@ -10,7 +10,7 @@ const { combine, timestamp, json, errors, colorize, printf } = winston.format;
  * The Console transport's production JSON output is what actually gets
  * centralized: a node-level log agent (see
  * k8s/log-shipping-example.yaml's Fluent Bit DaemonSet) tails container
- * stdout, not this process's own filesystem — it never reads
+ * stdout instead of this process's own filesystem — it never reads
  * logs/error.log or logs/combined.log below. Those two File transports are
  * a local-disk convenience only (e.g. `docker compose logs` alternatives,
  * or a bare-metal deploy with no log agent at all); in k8s they land on

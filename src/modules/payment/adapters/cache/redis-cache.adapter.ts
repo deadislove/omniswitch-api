@@ -102,7 +102,7 @@ export class RedisCacheAdapter extends CachePort implements OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     // Tolerate an already-closed connection — see RedisThrottlerStorage for
-    // why this is a "goal already met" case, not a real failure.
+    // why this counts as a "goal already met" case rather than a real failure.
     try {
       await this.client.quit();
       this.logger.log('Redis connection closed');

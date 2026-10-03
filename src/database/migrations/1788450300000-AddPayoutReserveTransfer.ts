@@ -7,7 +7,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * transfer-status quad from the existing netAmount one (transfer_status/
  * transfer_id/transfer_initiated_at/transfer_error) — a reserve released
  * before, during, or long after the netAmount transfer needs its own
- * transfer, not a merge into whatever already happened to netAmount (see
+ * transfer — never a merge into whatever already happened to netAmount (see
  * docs/business-domain/marketplace-and-payouts.md).
  */
 export class AddPayoutReserveTransfer1788450300000 implements MigrationInterface {

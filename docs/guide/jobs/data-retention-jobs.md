@@ -92,8 +92,8 @@ failure modes are worth knowing apart:
   and is valid — check `backupFile` in the failed run's log (if it got
   that far) or check the destination directly. Re-running is still
   safe; it'll just produce a second backup file for the same
-  now-still-eligible rows, which is a harmless duplicate, not a data
-  problem.
+  now-still-eligible rows, which is a harmless duplicate rather than a
+  data problem.
 
 ### Where the backup goes
 
@@ -108,8 +108,8 @@ for the full config reference and why `local` is the default.
 
 Both jobs read their thresholds from `k8s/configmap.yaml` — see
 [`../../compliance/data-retention.md`](../../compliance/data-retention.md#configuration-reference)
-for the full table. Changing a threshold is a config change, not a
-code change:
+for the full table. Changing a threshold is a config change — no
+code change needed:
 
 ```bash
 kubectl edit configmap omniswitch-config -n payments   # or: apply an edited k8s/configmap.yaml

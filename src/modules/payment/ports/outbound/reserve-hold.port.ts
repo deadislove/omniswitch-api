@@ -17,16 +17,16 @@ export abstract class ReserveHoldPort {
   /**
    * All HELD holds whose releaseEligibleAt has passed — what the release
    * sweep iterates over. Deliberately separate from findMany() (which is
-   * capped/paginated for admin listing) since the sweep needs the true set,
-   * not a page of it.
+   * capped/paginated for admin listing) since the sweep needs the true set
+   * rather than a page of it.
    */
   abstract findReleaseEligible(now: Date): Promise<ReserveHold[]>;
 
   /**
    * All HELD holds for one merchant — what RiskTieringService's
    * tier-escalation top-up sweep iterates over
-   * (ReserveService.topUpHeldReservesForMerchant()). Same "true set, not
-   * a page of it" reasoning as findReleaseEligible().
+   * (ReserveService.topUpHeldReservesForMerchant()). Same "true set rather
+   * than a page of it" reasoning as findReleaseEligible().
    */
   abstract findHeldByMerchant(merchantId: string): Promise<ReserveHold[]>;
 

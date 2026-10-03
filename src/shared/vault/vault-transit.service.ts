@@ -41,7 +41,7 @@ interface VaultRenewResponse {
  * This app never sees or manages the actual encryption key — it only ever
  * sends plaintext to `/encrypt` and gets a ciphertext back (and vice versa
  * for `/decrypt`). Vault owns key storage, rotation, and access policy; a
- * database compromise alone yields ciphertext, not usable secrets.
+ * database compromise alone yields ciphertext — never usable secrets.
  *
  * Fails closed: if Vault is unreachable or returns an error, encrypt/decrypt
  * throw rather than falling back to storing/using plaintext. HMAC
@@ -85,7 +85,7 @@ export class VaultTransitService implements OnModuleInit, OnModuleDestroy {
     this.secretId = this.configService.get<string>('VAULT_APPROLE_SECRET_ID', '');
 
     if (this.authMethod === 'approle' && (!this.roleId || !this.secretId)) {
-      // A genuine misconfiguration (forgot to set role_id/secret_id), not a
+      // A genuine misconfiguration (forgot to set role_id/secret_id), rather than a
       // "Vault isn't up yet" timing issue — those two are handled
       // differently on purpose (see onModuleInit()'s own comment): this one
       // fails loud and immediately at boot instead of producing a confusing
@@ -101,7 +101,7 @@ export class VaultTransitService implements OnModuleInit, OnModuleDestroy {
    * Idempotent bootstrap for static-token mode: ensures the transit engine
    * is mounted and the key this service uses exists. Safe to run on every
    * boot — mounting an already-mounted engine or creating an
-   * already-existing key are both no-ops here (checked first, not just
+   * already-existing key are both no-ops here (checked first, beyond just
    * "POST and ignore the error"), so multiple replicas starting
    * concurrently don't race destructively.
    *

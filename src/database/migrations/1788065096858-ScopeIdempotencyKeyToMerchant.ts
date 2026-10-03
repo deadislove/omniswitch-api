@@ -3,7 +3,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 /**
  * `idempotency_key` was only ever unique globally (`(idempotency_key,
  * created_at)` — the `created_at` half is a Postgres requirement for a
- * unique constraint on a table partitioned by that column, not a
+ * unique constraint on a table partitioned by that column, rather than a
  * deliberate scoping choice, see CreatePartitionedPaymentsAndLedgerOutbox's
  * docblock). No merchant scoping at all: a caller who submits another
  * merchant's *known* idempotency key (leaked via a logging bug, a shared

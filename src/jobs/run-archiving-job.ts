@@ -4,14 +4,14 @@ import { AppDataSource } from '../database/data-source';
 /**
  * Archiving job.
  *
- * Standalone script, not a `@Cron()` method on a running service —
+ * Standalone script rather than a `@Cron()` method on a running service —
  * deliberately: `@Cron()` runs once per pod, which at `k8s/hpa.yaml`'s
  * `maxReplicas: 20` would mean up to 20 concurrent archiving runs racing
  * each other. This script is instead the target of a k8s `CronJob`
  * (`k8s/archiving-cronjob.yaml`), which only ever spins up one pod per
  * scheduled run — the duplication problem doesn't exist by construction.
  * Bootstraps a plain `DataSource` the same way `seed-admin.ts` does
- * (outside the Nest DI container — this job needs raw SQL access, not
+ * (outside the Nest DI container — this job needs raw SQL access instead of
  * the app's HTTP-serving dependency graph).
  *
  * Eligibility — a payment is archived when ALL of:
@@ -35,7 +35,7 @@ import { AppDataSource } from '../database/data-source';
  * `FAILED` entries stay live since they're still actionable via the
  * outbox dead-letter admin recovery flow.
  *
- * This is a POC-scoped eligibility check, not a certified compliance
+ * This is a POC-scoped eligibility check rather than a certified compliance
  * implementation — see docs/compliance/data-retention.md for what a
  * real deployment still needs to review before relying on this.
  */

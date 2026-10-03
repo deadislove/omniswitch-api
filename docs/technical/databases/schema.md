@@ -68,7 +68,7 @@ Every other "status"-shaped column in this schema (`disputes.status`,
 `charge_approvals.status`, `payouts.transfer_status`,
 `reserve_holds.status`) is a plain `varchar`
 with the valid set enforced in application code (the aggregate's own
-state-machine methods), not a Postgres `enum` type or `CHECK`
+state-machine methods) rather than a Postgres `enum` type or `CHECK`
 constraint — `payments.status` is the one exception, inherited from
 this project's original schema before the wider pattern was
 established, kept as-is rather than migrated for consistency's own

@@ -60,7 +60,7 @@ export class PlanResponseDto {
   @ApiProperty({
     example: true,
     description:
-      'Deactivated plans cannot be used for new subscriptions or plan changes — existing subscriptions already using one are unaffected (the amount/interval was snapshotted, not a live reference)',
+      'Deactivated plans cannot be used for new subscriptions or plan changes — existing subscriptions already using one are unaffected (the amount/interval was snapshotted rather than kept as a live reference)',
   })
   isActive: boolean;
 

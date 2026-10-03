@@ -28,8 +28,8 @@ against it.
      — Stripe's balance transactions API, Adyen's settlement report API (in
      this reference project, `scripts/mock-psp/server.js`'s
      `GET /v1/balance_transactions` and `GET /adyen/settlement-report`).
-2. Matches by `pspTransactionId` and produces five mismatch shapes, not
-   just a single "doesn't match" bucket — each implies a different root
+2. Matches by `pspTransactionId` and produces five mismatch shapes,
+   beyond just a single "doesn't match" bucket — each implies a different root
    cause and a different response:
    - **`MISSING_AT_PSP`** — we have a charge on the books; the PSP has no
      matching settlement record in this window. The dangerous direction:
@@ -50,8 +50,8 @@ against it.
      at all. Could mean a missed webhook, or a charge that bypassed this
      system entirely.
    - **`COMPARISON_ERROR`** — this one payment's comparison threw an
-     unexpected error; its actual match status is unknown, not confirmed
-     either way. Each payment's comparison is wrapped in its own
+     unexpected error; its actual match status stays unresolved, rather
+     than confirmed either way. Each payment's comparison is wrapped in its own
      try/catch specifically so one payment hitting this doesn't abort
      every other payment's comparison in the same run — a single bad
      record used to be able to fail an entire provider's hourly run
@@ -60,7 +60,7 @@ against it.
      now it's isolated to a single `CURRENCY_MISMATCH`/`COMPARISON_ERROR`
      entry instead.
 3. Persists every run (`ReconciliationRun` / `reconciliation_runs` table),
-   clean or not — a clean run is itself evidence, not just a non-event.
+   clean or not — a clean run is itself evidence, beyond just a non-event.
 4. Logs an error per mismatch (same posture as
    `LedgerOutboxRelayService.detectStaleEvents()` — see
    [`ledger-accounting.md`](../business-domain/ledger-accounting.md));
@@ -87,7 +87,7 @@ are `timestamp without time zone` columns — TypeORM's `@CreateDateColumn()`
 default. When a TypeORM `QueryBuilder` binds a raw JS `Date` object as a
 parameter (`.andWhere('p.createdAt >= :fromDate', { fromDate })`), the
 `pg` (node-postgres) driver serializes that `Date` using **the Node
-process's local machine timezone offset**, not UTC, whenever the target
+process's local machine timezone offset**, rather than UTC, whenever the target
 column is untyped/naive. On a UTC+8 development machine, that silently
 shifted every date-range comparison by 8 hours — a payment charged a moment
 ago fell outside a query for "the last hour," because the bound parameter
@@ -110,7 +110,7 @@ path entirely rather than fighting it. Applied in
 at three call sites:
 
 - `PaymentTypeOrmRepository.findByMerchantId()` — the `fromDate`/`toDate`
-  filter on `GET /payments` (pre-existing code, not introduced by this
+  filter on `GET /payments` (pre-existing code that predates this
   round).
 - `PaymentTypeOrmRepository.findByProviderAndDateRange()` — the new query
   this reconciliation feature added; this is what surfaced the bug.
@@ -146,7 +146,7 @@ rather than a broader schema migration).
   side still returned the transaction, so it looked orphaned).
 - Full regression after the fix: `npm test` (18/18) and `npm run test:e2e`
   (36/36) both pass — the fix touched shared query code
-  (`findByMerchantId`, `findStale`), not just the new reconciliation path.
+  (`findByMerchantId`, `findStale`), beyond just the new reconciliation path.
 - `scripts/mock-psp/server.js` was extended with in-memory settlement
   tracking and two new read endpoints
   (`GET /v1/balance_transactions`, `GET /adyen/settlement-report`),
@@ -162,7 +162,7 @@ rather than a broader schema migration).
 ## Per-payment isolation and `CURRENCY_MISMATCH` (later fix)
 
 Two related gaps, found and closed together: `runScheduled()`'s
-try/catch only ever isolated failures *between* providers, not between
+try/catch only ever isolated failures *between* providers, never between
 payments within one provider's run — the per-payment comparison loop had
 no isolation at all. Summing multiple partial-capture settlement records
 for one `pspTransactionId` used `Money.add()`, which throws on a
@@ -181,7 +181,7 @@ Fixed by checking currency explicitly, ahead of ever calling
 `pspTransactionId` that disagree on currency are pulled out of the
 summed-totals map before summing (so `Money.add()`'s throw path is never
 reached), and a payment whose charge currency differs from its settled
-total's currency is classified `CURRENCY_MISMATCH`, not
+total's currency is classified `CURRENCY_MISMATCH` instead of
 `AMOUNT_MISMATCH`. Each payment's comparison also now runs inside its
 own try/catch as a second layer of defense — an unexpected error
 (`COMPARISON_ERROR`) is recorded for that one payment instead of failing

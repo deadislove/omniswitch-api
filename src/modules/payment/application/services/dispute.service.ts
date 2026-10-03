@@ -25,12 +25,12 @@ import {
 /**
  * Dispute Service
  * Owns the Dispute record's lifecycle (see Dispute aggregate's docblock for
- * why this exists as its own thing, not just a PaymentAggregate status
+ * why this exists as its own thing, beyond just a PaymentAggregate status
  * flip) and the payment-status/ledger side effects of a dispute resolving.
  *
  * Dispute *creation* is driven by WebhookProcessingService (a PSP telling us
  * a chargeback happened); *resolution* also arrives by webhook (the PSP/card
- * network's decision, not something this system or the merchant decides).
+ * network's decision rather than something this system or the merchant decides).
  * The only thing genuinely operator-initiated here is submitEvidence —
  * everything else is this service reacting to what a PSP reported.
  */
@@ -38,8 +38,8 @@ import {
 export class DisputeService {
   private readonly logger = new Logger(DisputeService.name);
   // See dispute-policy.ts's own comment: not FX-normalized, illustrative,
-  // not calibrated against real chargeback win-rate data — this makes it
-  // tunable per-deployment without a code change, not "calibrated" on its
+  // uncalibrated against real chargeback win-rate data — this makes it
+  // tunable per-deployment without a code change, as opposed to "calibrated" on its
   // own. `ConfigService.get<number>()` doesn't actually cast (see
   // health.controller.ts's own comment on the same gap) — wrap explicitly.
   private readonly autoAcceptThresholdMajorUnits: number;
@@ -107,7 +107,7 @@ export class DisputeService {
       this.lowRiskThresholdMultiplier,
       this.highRiskThresholdMultiplier,
     );
-    // Forced onto master, not the ambient replica-routed connection — a
+    // Forced onto master rather than the ambient replica-routed connection — a
     // dispute can arrive (in tests, and in principle in production too)
     // moments after the charge that created this exact payment record,
     // which can lose the race against the replica's ~1s streaming lag and
@@ -152,7 +152,7 @@ export class DisputeService {
 
     await this.disputePort.save(dispute);
 
-    // Structured event, not just a log line — DisputeNotificationListener
+    // Structured event, beyond just a log line — DisputeNotificationListener
     // subscribes this to a real per-merchant email/Slack/webhook delivery
     // (see dispute-notification.listener.ts).
     this.eventEmitter.emit('dispute.created', {
@@ -187,7 +187,7 @@ export class DisputeService {
     if (dispute.status !== 'NEEDS_RESPONSE') {
       throw new ConflictException({
         statusCode: 409,
-        error: `Dispute is in status ${dispute.status}, not NEEDS_RESPONSE`,
+        error: `Dispute is in status ${dispute.status}, expected NEEDS_RESPONSE`,
         code: 'DISPUTE_NOT_RESPONDABLE',
       });
     }
@@ -232,7 +232,7 @@ export class DisputeService {
       return;
     }
 
-    // Forced onto master (findByIdOnMaster(), not findById()) — this gates
+    // Forced onto master via findByIdOnMaster() instead of findById() — this gates
     // whether the payment/ledger side of a dispute resolution actually
     // runs. A stale (pre-DISPUTED) read here doesn't just show wrong data,
     // it makes this method silently skip the update below: a lost

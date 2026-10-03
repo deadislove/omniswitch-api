@@ -15,7 +15,7 @@ import { MerchantPspExposureService } from '../../modules/payment/adapters/circu
 // MerchantPspExposureService.isExposedToDegradedPsp()). Default is well
 // under CHARGE_RATE_LIMIT_MAX's own 100/min default — deliberately, since
 // the point is to slow this specific merchant's hammering of a struggling
-// PSP, not to match their normal-conditions throughput.
+// PSP, rather than match their normal-conditions throughput.
 const DEGRADED_MERCHANT_CHARGE_RATE_LIMIT_MAX = Number(process.env.DEGRADED_MERCHANT_CHARGE_RATE_LIMIT_MAX) || 20;
 
 const REGISTERED_PROVIDERS = ['STRIPE', 'ADYEN'];
@@ -26,8 +26,8 @@ const REGISTERED_PROVIDERS = ['STRIPE', 'ADYEN'];
  * concentrated on a currently-degraded PSP, apply a stricter limit to
  * their next charge attempt too.
  *
- * Deliberately protects the merchant's own throughput, not the platform's
- * overall load — a merchant whose traffic is landing on a healthy PSP
+ * Deliberately protects the merchant's own throughput rather than the
+ * platform's overall load — a merchant whose traffic is landing on a healthy PSP
  * (including via automatic fallback) is never throttled by this, even
  * while some *other* PSP is degraded. Chosen over a platform-wide
  * slowdown: this targets exactly the merchants actually exposed to the

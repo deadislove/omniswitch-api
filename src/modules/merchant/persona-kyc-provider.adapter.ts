@@ -13,7 +13,7 @@ import { mapPersonaInquiryStatus } from './persona-inquiry-status';
  *
  * Response shape confirmed against Persona's own published API docs
  * (docs.withpersona.com/integration-guide-understanding-a-persona-api-payload,
- * docs.withpersona.com/errors), not guessed — earlier revisions of this
+ * docs.withpersona.com/errors) rather than guessed — earlier revisions of this
  * adapter assumed a flat `{id, status}` body, which is **not** what
  * Persona's real API actually returns. A real Inquiry response is
  * JSON:API-shaped: `{data: {type: 'inquiry', id, attributes: {status}}}`;
@@ -23,7 +23,7 @@ import { mapPersonaInquiryStatus } from './persona-inquiry-status';
  * for the full list and why `completed` specifically is *not* a decision.
  * `scripts/mock-psp/server.js`'s `/persona/kyc-applications` endpoint now
  * speaks this same real shape, so this adapter exercises its actual
- * parsing logic end to end, not a shape that happens to be convenient —
+ * parsing logic end to end, instead of a shape that merely happens to be convenient —
  * but nothing in this repo has ever called a real Persona account with
  * real credentials, so field names beyond what's cited above (e.g. the
  * exact attribute a real decline reason lives under) are not verified.

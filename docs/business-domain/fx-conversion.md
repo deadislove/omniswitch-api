@@ -16,14 +16,14 @@ nothing in the application layer ever called with a real rate —
 `FXRateSnapshot` existed, but no payment was ever actually converted.
 Fixed with `FXRateProviderPort` (implemented by `FXRateProviderAdapter`,
 which calls `scripts/mock-psp/server.js`'s `/fx/rates` endpoint — a
-plausible mock, not a real market-data feed) and
+plausible mock rather than a real market-data feed) and
 `MerchantEntity.settlementCurrency`: a merchant can now be paid out in a
 currency different from whatever currency a given charge was made in.
 Null (the default) means "settle in whatever currency was charged" —
 every merchant's behavior before this existed, and still the default for
 every merchant that doesn't set one explicitly.
 
-**Why this needs two ledger legs, not one extra entry.** A merchant
+**Why this needs two ledger legs instead of one extra entry.** A merchant
 payout in a different currency than the charge can't just be a third
 entry alongside the existing `PSP_SETTLEMENT`/`FEE` entries —
 `validateDoubleEntry()` balances debits against credits *per currency*,
@@ -51,7 +51,7 @@ itself didn't need to change at all.
 [fee model](./fee-model.md) is wired into, via
 `ChargeLedgerParamsResolverService`. This used to be an identical private
 method copy-pasted into each site (each one's own comment explicitly
-flagged it as "kept local for a small helper, not worth a shared
+flagged it as "kept local for a small helper — not yet worth a shared
 service" — first for two callers, then noted again as a judgment call
 once it became three, and again once a fourth was added); it was
 finally extracted when the reserve mechanism (see
@@ -68,7 +68,7 @@ Manage a merchant's settlement currency via `POST /admin/merchants`
 `PATCH /admin/merchants/:id/settlement-currency` (send `null` to clear it
 back to "settle in whatever currency was charged").
 
-**The "clear it back to null" path needs `null`, not `undefined`**:
+**The "clear it back to null" path needs `null` rather than `undefined`**:
 setting `merchant.settlementCurrency = undefined` and calling
 `repository.save()` does **not** write SQL `NULL` — TypeORM's `save()`
 silently omits `undefined` properties from the generated `UPDATE`, so
@@ -107,14 +107,16 @@ Fixed by having `PaymentAggregate` remember the rate a charge/capture
 actually used (`recordSettlementConversion()`, called once — a
 partial-capture payment's settlement currency doesn't change between
 captures, and even if it did, a refund needs one consistent rate to
-replay, not whatever the merchant's settlement currency happens to be
+replay, independent of whatever the merchant's settlement currency
+happens to be
 *right now*) and having both `PaymentLifecycleService.refund()` and
 `DisputeService`'s `LOST` resolution path (see
 [`disputes.md`](./disputes.md)) convert their clawback amount using that
 *same* stored rate before booking.
 `LedgerOutboxEvent.createRefundEntries()` gained the identical
 two-leg-via-`FX_CLEARING` shape `createChargeEntries()` already had, just
-with every entry type flipped (reversing a payout, not creating one):
+with every entry type flipped (reversing a payout instead of creating
+one):
 
 | Account | Type | Entry | Amount | Currency |
 |---|---|---|---|---|
@@ -123,7 +125,8 @@ with every entry type flipped (reversing a payout, not creating one):
 | `FX_CLEARING_ACCOUNT` | FX_CLEARING | CREDIT | converted refund amount | settlement currency |
 | `{merchantId}` | MERCHANT | DEBIT | converted refund amount | settlement currency |
 
-Deliberately the *original* rate, not a fresh lookup — refunding at a
+Deliberately the *original* rate rather than a fresh lookup —
+refunding at a
 different rate than the money was paid out at would just create a new
 mismatch instead of fixing the old one. This is also, functionally, this
 system's answer to "who bears FX risk between charge and settlement
@@ -145,7 +148,7 @@ the charge, capture, or ledger changes — confirmed by asserting every
 ledger entry for a presentment-converted charge stays in the real charge
 currency. A failed/unsupported presentment lookup never fails the
 charge — the response just omits `presentmentAmount`, logged as a
-warning, not an error propagated to the caller.
+warning rather than an error propagated to the caller.
 
 **Deliberately not persisted** — there's no `payments` column recording
 what presentment amount/currency was shown for a given charge, so there's
@@ -157,7 +160,8 @@ merchant-payout side.
 
 ## Cross-border tax record (Phase 1)
 
-An **audit record, not a tax calculation** — this platform doesn't
+An **audit record, stopping short of a tax calculation** — this
+platform doesn't
 compute owed tax, file returns, or determine real nexus.
 `PaymentAggregate.recordTaxRecord()` records, at the same 4
 ledger-booking call sites and under the same condition as
@@ -174,11 +178,11 @@ jurisdiction-relevant signal already captured at charge time. A real tax
 engine would also weigh the merchant's own nexus, the customer's billing
 address, and product-category rules, none of which this platform
 tracks — `jurisdictionBasis` is pinned to `'card-issuing-country'`
-specifically so this simplification is explicit in the data itself, not
-just in a comment. `collectedAmountMinorUnits`/`currencyCode` record what
+specifically so this simplification is explicit in the data itself,
+beyond just a comment. `collectedAmountMinorUnits`/`currencyCode` record what
 the customer actually paid (the charge amount, in its original
 currency) — cross-border tax exposure is a function of what the customer
-paid, not what the merchant received after FX conversion.
+paid, independent of what the merchant received after FX conversion.
 
 Recorded once, like `settlementConversion` (a later capture of an
 already-cross-border payment doesn't produce a second, possibly

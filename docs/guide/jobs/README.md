@@ -30,7 +30,7 @@ recycled by a rolling update at any moment, mid-operation, with no
 warning to whatever you were running inside it. Every job in this list
 instead gets its own dedicated, disposable pod — a `CronJob` for
 anything recurring, a one-time `Job` for anything that runs once. This
-is a hard requirement in this codebase, not a style preference; see
+is a hard requirement in this codebase rather than a style preference; see
 [`../../technical/jobs.md`](../../technical/jobs.md) for the full
 reasoning.
 
@@ -45,7 +45,7 @@ kubectl get pods -n payments -l workload-type=batch-job
 ```
 
 **Every job is a short-lived CLI process that logs one structured JSON
-line on completion**, not a long-running server `prom-client` can
+line on completion**, unlike a long-running server `prom-client` can
 scrape mid-run. Grep the pod's logs for the summary rather than looking
 for a metrics endpoint:
 

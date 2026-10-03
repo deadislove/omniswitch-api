@@ -37,7 +37,7 @@ export class PaymentLifecycleService {
   ) {}
 
   async getOwnedPayment(paymentId: string): Promise<PaymentAggregate> {
-    // Forced onto master (findByIdOnMaster(), not findById()) — this backs
+    // Forced onto master via findByIdOnMaster() instead of findById() — this backs
     // refund/capture/cancel, which a caller can (and this project's own
     // e2e suite does) call immediately after the charge that created this
     // payment. See PaymentRepositoryPort.findByIdOnMaster()'s docblock.
@@ -68,7 +68,7 @@ export class PaymentLifecycleService {
       });
     }
 
-    // Check status *before* calling the PSP, not just the amount below —
+    // Check status *before* calling the PSP, beyond just the amount below —
     // PaymentAggregate.refund()'s own status guard (SUCCEEDED/
     // PARTIALLY_REFUNDED only) previously only ran *after* the live PSP
     // refund call, so a DISPUTED payment with no prior refunds passed the
@@ -78,7 +78,7 @@ export class PaymentLifecycleService {
     if (payment.status !== PaymentStatus.SUCCEEDED && payment.status !== PaymentStatus.PARTIALLY_REFUNDED) {
       throw new ConflictException({
         statusCode: 409,
-        error: `Payment is in status ${payment.status}, not refundable`,
+        error: `Payment is in status ${payment.status}, which is not refundable`,
         code: 'NOT_REFUNDABLE',
       });
     }
@@ -124,7 +124,7 @@ export class PaymentLifecycleService {
       pspRefundId: pspResult.pspRefundId,
     });
 
-    // Reuses the *original* charge-time rate, not a fresh one — see
+    // Reuses the *original* charge-time rate instead of a fresh one — see
     // LedgerOutboxEvent.createRefundEntries()'s settlementConversion
     // param and PaymentAggregate.recordSettlementConversion()'s docblock
     // for why. Only set at all if this payment's charge/capture was
@@ -168,7 +168,7 @@ export class PaymentLifecycleService {
     if (payment.status !== PaymentStatus.REQUIRES_CAPTURE && payment.status !== PaymentStatus.PARTIALLY_CAPTURED) {
       throw new ConflictException({
         statusCode: 409,
-        error: `Payment is in status ${payment.status}, not REQUIRES_CAPTURE or PARTIALLY_CAPTURED`,
+        error: `Payment is in status ${payment.status}, expected REQUIRES_CAPTURE or PARTIALLY_CAPTURED`,
         code: 'NOT_CAPTURABLE',
       });
     }
@@ -219,11 +219,11 @@ export class PaymentLifecycleService {
     });
 
     // The charge is only *confirmed* now — book settlement entries at
-    // capture time, not at authorization time (see PaymentCheckoutSaga for
+    // capture time instead of at authorization time (see PaymentCheckoutSaga for
     // the equivalent fix on the immediate-capture path). Each capture call
     // books only its own increment, whether or not it's the one that
     // completes the authorization — a partial capture is real money moving,
-    // not a placeholder to be corrected later.
+    // never a placeholder to be corrected later.
     const { platformFee, settlementConversion, reserveHold } = await this.chargeLedgerParams.resolve(
       payment.metadata.merchantId,
       captureAmount,

@@ -8,7 +8,7 @@ export enum UserRole {
   /**
    * An autonomous agent acting under a Delegation (see delegation.aggregate.ts)
    * — a narrow, revocable, spend-policy-limited credential issued by a
-   * MERCHANT, not the merchant's own full-access role. Deliberately not
+   * MERCHANT rather than the merchant's own full-access role. Deliberately not
    * granted on any route except POST /payments/charge (see that
    * controller's @Roles()) — an agent token has no business calling
    * refund/capture/admin endpoints, which is the point of delegation being

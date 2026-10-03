@@ -20,7 +20,7 @@ const WINDOW_MS = 60 * 60 * 1000; // 1 hour — matches the @Cron schedule below
  * e2e tests structurally can't catch (both this system's tests and its
  * ledger logic would have to be wrong the same way to miss one).
  *
- * Five mismatch shapes are checked, not just "does the amount match":
+ * Five mismatch shapes are checked, beyond just "does the amount match":
  * - MISSING_AT_PSP: we booked a charge; the PSP has no matching record.
  *   The more dangerous direction — money we think we collected but didn't.
  * - AMOUNT_MISMATCH: both sides agree a transaction happened, in the same
@@ -35,7 +35,7 @@ const WINDOW_MS = 60 * 60 * 1000; // 1 hour — matches the @Cron schedule below
  *   — could mean a missed webhook, or something that bypassed this system
  *   entirely.
  * - COMPARISON_ERROR: this one payment's comparison threw unexpectedly —
- *   its actual match status is unknown, not confirmed either way.
+ *   its actual match status is left unconfirmed either way.
  *
  * Every payment is judged independently — one payment producing an
  * unexpected error doesn't abort the rest of the run (see the try/catch
@@ -74,7 +74,7 @@ export class ReconciliationService {
       this.processorFactory.getAdapter(pspProvider).fetchSettlementTransactions(since, until),
     ]);
 
-    // Grouped, not a 1:1 Map — a single authorization captured in multiple
+    // Grouped rather than a 1:1 Map — a single authorization captured in multiple
     // partial captures (PaymentAggregate.recordCapture) produces multiple
     // PSP settlement transactions that all share the original
     // pspTransactionId. Naively keying a Map by id would silently keep only
@@ -155,7 +155,7 @@ export class ReconciliationService {
             pspTransactionId: payment.pspTransactionId,
             expectedAmount: payment.amount,
             actualAmount: pspTotal,
-            description: `Payment ${payment.id}: our ledger charged ${payment.amount.toString()}, but ${pspProvider} settled ${pspTotal.toString()} — different currency, not a same-currency amount discrepancy. Review whether this is expected PSP-side currency conversion.`,
+            description: `Payment ${payment.id}: our ledger charged ${payment.amount.toString()}, but ${pspProvider} settled ${pspTotal.toString()} — a currency mismatch rather than a same-currency amount discrepancy. Review whether this is expected PSP-side currency conversion.`,
           });
           continue;
         }

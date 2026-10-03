@@ -32,8 +32,8 @@ export abstract class DelegationPort {
    * rollover happened in the brief window between reserve and release
    * (practically never, given a charge completes in milliseconds), this
    * decrements whatever the current bucket is rather than blocking on an
-   * exact month match — a documented simplification, not silently wrong
-   * money movement (nothing here settles real funds).
+   * exact month match — a documented simplification; nothing here
+   * settles real funds, so it can't silently move money wrong.
    */
   abstract releaseSpend(delegationId: string, amount: Money): Promise<void>;
 }

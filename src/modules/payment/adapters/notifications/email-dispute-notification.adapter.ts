@@ -15,8 +15,8 @@ import { postJsonNotification } from '../../../../shared/utils/notification-deli
  * `MockBankTransferAdapter`. Unlike Slack/webhook (a plain HTTP POST
  * that already *is* a real, working notification mechanism), sending a
  * real email genuinely requires a real provider integration — this
- * adapter's shape is what that integration slots into, not a
- * placeholder for something structurally different later.
+ * adapter's shape is already what a real provider integration will
+ * plug into later, with nothing structural left to redesign.
  */
 @Injectable()
 export class EmailDisputeNotificationAdapter extends DisputeNotificationPort {

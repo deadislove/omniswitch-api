@@ -32,7 +32,7 @@ because getting any of them wrong fails in a way that isn't obvious from
   correct by coincidence) but `DB_REPLICA_PORT` to `5433` (almost never
   correct, since `5432` is the standard port everyone actually uses).
   Omitting `DB_REPLICA_PORT` means every replica connection attempt
-  hits a port nothing is listening on — an immediate refusal, not a slow
+  hits a port nothing is listening on — an immediate refusal rather than a slow
   timeout — which fails `DataSource.initialize()` as a whole (TypeORM's
   `replication` mode treats master+replica startup as one unit) and
   prevents the application from booting at all. Confirmed as the root
@@ -52,14 +52,14 @@ because getting any of them wrong fails in a way that isn't obvious from
   falls back to `http://localhost:8200` with an empty token.
   `HmacSignatureGuard` calls it on every HMAC-signed request (charge,
   refund, capture, cancel, dispute-evidence) — this is on the
-  money-moving hot path, not just a boot-time nicety.
+  money-moving hot path, beyond just a boot-time nicety.
 
 ## `service.yaml`
 
 `ClusterIP`, `port: 80` → `targetPort: 3000`. The distinction between
 the Service's exposed port and the pod's container port matters more
 than it looks: anything connecting via the Service's DNS name
-(`omniswitch-api.payments.svc.cluster.local`) must use port `80`, not
+(`omniswitch-api.payments.svc.cluster.local`) must use port `80` rather than
 `3000` — connecting to the Service's ClusterIP on `3000` finds no
 matching `kube-proxy` DNAT rule and simply times out, silently, with no
 error pointing at the actual mismatch.
@@ -81,7 +81,7 @@ flapping capacity down right before the next spike.
 Non-secret configuration, organized by concern:
 
 - **Database** — `DB_MASTER_HOST`/`DB_REPLICA_HOST` point at the
-  PgBouncer poolers (`pgbouncer-master`/`pgbouncer-replica`), not
+  PgBouncer poolers (`pgbouncer-master`/`pgbouncer-replica`), rather than
   directly at Postgres; `PGBOUNCER_MASTER_BACKEND_HOST`/
   `PGBOUNCER_REPLICA_BACKEND_HOST` are what the poolers themselves
   connect to. See [`data-layer.md`](./data-layer.md) for why the
@@ -91,7 +91,7 @@ Non-secret configuration, organized by concern:
 - **Rate limiting** — `RATE_LIMIT_MAX`/`RATE_LIMIT_TTL`, the global
   per-merchant limiter; route-specific overrides
   (`CHARGE_RATE_LIMIT_MAX`, `AUTH_LOGIN_RATE_LIMIT`) are set at the
-  controller level in code, not here.
+  controller level in code rather than here.
 - **Data retention** — `ARCHIVE_THRESHOLD_DAYS`,
   `DELETION_THRESHOLD_YEARS`, `DELETION_BACKUP_*`,
   `CUTOVER_OLD_TABLE_RETENTION_DAYS`, `PARTITION_MAINTENANCE_MONTHS_AHEAD`
@@ -145,5 +145,5 @@ that materializes the same `omniswitch-secrets` object `deployment.yaml`
 already references, from a real backend instead of a checked-in,
 base64'd file. Requires the External Secrets Operator controller
 installed in-cluster first; this repo has no real AWS account or
-equivalent to verify it against, so this file is a reference shape, not
+equivalent to verify it against, so this file is a reference shape rather than
 a verified deliverable the way everything else in `k8s/` is.

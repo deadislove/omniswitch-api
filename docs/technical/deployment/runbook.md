@@ -65,7 +65,7 @@ Before this step on a real deployment: replace every `CHANGE_ME_*`
 placeholder in `k8s/secret.yaml` with a real value (or point it at a
 real secrets backend — see [`../k8s/application.md`](../k8s/application.md)'s
 `external-secrets-example.yaml` section). Applying the file as-is is
-fine for a local/test cluster, not for anything real.
+fine for a local/test cluster, never for anything real.
 
 ## 4. Network policy
 
@@ -113,13 +113,13 @@ kubectl rollout status deployment/omniswitch-api -n payments --timeout=120s
 `deployment.yaml`'s pod spec references `serviceAccountName:
 omniswitch-api-sa` by name, and a Deployment referencing a
 ServiceAccount that doesn't exist yet fails pod scheduling entirely
-(`serviceaccount "omniswitch-api-sa" not found`), not just a slow
+(`serviceaccount "omniswitch-api-sa" not found`), rather than just a slow
 retry.
 
 The container's own entrypoint runs pending migrations before starting
 the server (`node ./node_modules/typeorm/cli.js ... migration:run &&
 exec node dist/main.js` — see the `Dockerfile`'s final `CMD`), so no
-separate migration `Job` is needed. **Open question, not verified
+separate migration `Job` is needed. **Open question, unverified
 either way**: `deployment.yaml` defaults to 3 replicas starting
 concurrently on a fresh deploy, each running `migration:run`
 independently — whether TypeORM's own migration-locking behavior makes
@@ -153,7 +153,7 @@ kubectl apply -f k8s/drop-cutover-tables-job.yaml
 No ordering dependency on step 7 or on each other — see
 [`../jobs.md`](../jobs.md) for what each one does.
 
-## Verifying the deployment, not just that every `kubectl apply` succeeded
+## Verifying the deployment, beyond just that every `kubectl apply` succeeded
 
 ```bash
 kubectl get pods -n payments

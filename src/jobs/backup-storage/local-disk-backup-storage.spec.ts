@@ -4,10 +4,10 @@ import { join } from 'path';
 import { LocalDiskBackupStorage } from './local-disk-backup-storage';
 
 // This spec's fs paths all come from mkdtempSync()/tmpdir() — generated
-// by this test file itself, not from any external input — so the
+// by this test file itself rather than any external input — so the
 // non-literal-path finding here is the same class of false positive
 // local-disk-backup-storage.ts's own eslint-disable comments explain;
-// suppressed per-site for the same reason, not by disabling the rule.
+// suppressed per-site for the same reason instead of disabling the rule.
 describe('LocalDiskBackupStorage', () => {
   let dir: string;
 

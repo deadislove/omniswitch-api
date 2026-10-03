@@ -11,7 +11,7 @@ export type MismatchType =
   // deliberately not folded into AMOUNT_MISMATCH since the two warrant different urgency
   | 'UNKNOWN_AT_PSP' // the PSP settled a transaction we have no record of
   | 'COMPARISON_ERROR'; // this one payment's comparison threw unexpectedly — the run continued for
-// everything else, but this payment's actual match status is unknown, not confirmed either way
+// everything else, but this payment's actual match status stays unconfirmed either way
 
 export interface ReconciliationMismatch {
   type: MismatchType;
@@ -33,7 +33,7 @@ export interface ReconciliationMismatch {
  * in a real deployment, faster than "someone eventually notices the books
  * don't add up").
  *
- * Deliberately a plain record, not a rich aggregate with invariants to
+ * Deliberately a plain record rather than a rich aggregate with invariants to
  * protect — like LedgerOutboxEvent, it's closer to a structured log entry
  * than a business entity with a lifecycle.
  */

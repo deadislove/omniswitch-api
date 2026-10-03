@@ -5,7 +5,8 @@ about acquirers, reserves, dunning, KYC gating, and delegated spend
 policies. This document is the fast path to understanding *why* the code
 is shaped the way it is — read it before you read the code. It's a guided
 tour through the business concepts this system models, in the order
-they build on each other, not an exhaustive reference (each section links
+they build on each other — a guided path rather than an exhaustive
+reference (each section links
 to the deeper doc that *is* the exhaustive reference for that topic).
 
 If you only have twenty minutes, read up through "The ledger: how money
@@ -61,8 +62,8 @@ SUCCEEDED/PARTIALLY_REFUNDED → DISPUTED → SUCCEEDED or PARTIALLY_REFUNDED (w
 Every transition is validated (`assertValidTransition` in
 `payment-status.vo.ts`) — you cannot, for example, refund a `PENDING`
 payment or capture an already-`SUCCEEDED` one. If you're adding a new
-terminal state or a new way money can move, this state machine is where
-you start, not the controller.
+terminal state or a new way money can move, start in this state
+machine rather than the controller.
 
 The single most important design fact here: **`PaymentCheckoutSaga` is
 the only code path that ever calls a PSP to charge money**, and every
@@ -82,7 +83,7 @@ Stripe" mental model: **this system keeps its own double-entry books**,
 independent of whatever Stripe/Adyen's own dashboard says. Every charge
 books at least two ledger entries (e.g. a `MERCHANT` credit and a `FEE`
 debit) that must net to zero — that's what "double-entry" means here,
-and it's enforced structurally, not just by convention.
+and it's enforced structurally, beyond just by convention.
 
 Two things make this non-trivial:
 
@@ -104,7 +105,7 @@ Two things make this non-trivial:
   charge (the saga, manual capture, and the async webhook-confirmed
   path). This used to be three separate, silently-drifting copies of the
   same logic; if you're adding a new per-charge financial concern, it
-  goes here, once, not in each caller.
+  goes here, once, instead of in each caller.
 
 Full detail, split by topic: [`ledger-accounting.md`](../business-domain/ledger-accounting.md)
 (double-entry model, the outbox pattern), [`fee-model.md`](../business-domain/fee-model.md)
@@ -124,11 +125,11 @@ PSP's live health (a Redis-backed circuit breaker,
 provider). If the chosen PSP's *call* throws (times out, connection
 refused), the saga automatically retries against the other PSP — but if
 the PSP responds normally with a decline, that's a real business
-outcome, not a technical failure, and it does **not** trigger a
+outcome rather than a technical failure, and it does **not** trigger a
 fallback. This distinction (thrown exception vs. a normal declined
 response) shows up repeatedly across the codebase — e.g. it's exactly
 why decline-code-aware dunning (§6) only classifies *real* PSP decline
-codes, not routing exceptions.
+codes — routing exceptions don't count.
 
 Full detail: [`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../business-domain/ledger-and-settlement.md#smart-psp-routing).
 
@@ -153,14 +154,14 @@ What makes this domain genuinely subtle:
   (`insufficient_funds`) gets a day 1/3/7 backoff; a hard decline
   (`stolen_card`, `expired_card`, ...) skips the retry schedule entirely
   and cancels immediately — retrying a stolen-card charge is actively
-  harmful, not just futile.
-- **Crash-recovery uses a deterministic id, not a distributed
+  harmful, beyond just futile.
+- **Crash-recovery uses a deterministic id rather than a distributed
   transaction.** Each subscription+period is charged under
   `uuidv5(subscriptionId:periodEnd)` — if the process crashes after a
   charge succeeds but before the subscription's period advances, the
   next sweep tick recognizes the period was already paid (same
   deterministic id) and advances without charging twice.
-- **A `Plan` is a reusable catalog entry**, not a live reference — a
+- **A `Plan` is a reusable catalog entry** rather than a live reference — a
   subscription created from a `Plan` snapshots the amount/interval at
   creation time, so editing a `Plan` later never retroactively repriced
   an existing subscriber.
@@ -181,7 +182,7 @@ Two gates layer on top of a connected merchant's payout, and they're
 deliberately orthogonal, mirroring real Stripe Connect's own
 `charges_enabled`/`payouts_enabled` split:
 
-- **KYC gates payouts, not charges.** A connected merchant with
+- **KYC gates payouts — charges are unaffected.** A connected merchant with
   unverified KYC can still receive split credits into its ledger
   balance — `PayoutService` still creates a `Payout` record for it, just
   flagged `kycBlocked`, so the accounting stays correct even before KYC
@@ -213,7 +214,7 @@ Full detail: [`../business-domain/ledger-and-settlement.md#merchant-risk-tiering
 
 A `Dispute` only ever originates from the PSP via webhook — there's no
 API to create one directly, because a real chargeback is initiated by
-the cardholder's bank, not by this system. Once one exists, it has its
+the cardholder's bank, never by this system. Once one exists, it has its
 own lifecycle (`NEEDS_RESPONSE → UNDER_REVIEW → WON/LOST`, though
 `UNDER_REVIEW` isn't mandatory — the PSP can hand back a final
 `WON`/`LOST` straight from `NEEDS_RESPONSE`, e.g. a withdrawn dispute or
@@ -234,7 +235,7 @@ currency a charge was made in (`settlementCurrency`) — converted via a
 real (mocked) `FXRateProviderPort` at charge time and booked as two
 correctly-balanced ledger legs. The detail that catches people off
 guard: **a refund or lost dispute replays the *original* charge-time
-rate**, not a fresh lookup — otherwise a merchant could be charged back
+rate**, instead of a fresh lookup — otherwise a merchant could be charged back
 more or less than they actually received, a real double-entry mismatch
 this system specifically closes. `presentmentCurrency` is a separate,
 purely-cosmetic concept — what the *customer's* statement shows, never
@@ -263,7 +264,7 @@ race-safe pattern this codebase already used for reserve releases and
 KYC clearing, just applied to a new kind of limit. Revoking a delegation
 reuses the *existing* JWT jti-revocation mechanism verbatim (the same
 one `POST /auth/revoke` logout uses) — it takes effect on the agent's
-very next request, not after its token naturally expires.
+very next request, instead of waiting for its token to naturally expire.
 
 Optionally, `SpendPolicy.requireApprovalAboveAmount` sits strictly below
 `perTransactionLimit` — a charge above it doesn't auto-execute (or get

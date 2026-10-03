@@ -42,7 +42,7 @@ contracts `application/` depends on. A port never imports or names a
 concrete adapter, with one deliberate exception: the notification
 dispatchers (`DisputeNotificationPort`, `SubscriptionNotificationPort`,
 `AmlReviewNotificationPort`) are injected as their concrete
-adapter class directly, not resolved through a `useClass` binding in
+adapter class directly instead of through a `useClass` binding in
 `payment.module.ts` — each merchant picks its own channel
 (EMAIL/SLACK/WEBHOOK) at runtime, so the dispatcher itself does the
 adapter selection rather than Nest's DI container picking one adapter
@@ -67,8 +67,8 @@ the layering diagram in
 That diagram *is* the enforcement mechanism: there's no separate lint
 rule forbidding `domain/` from importing TypeORM, the layering itself
 makes it structurally awkward to do by accident, and any PR that does
-it is a visible layering violation in the diff, not a runtime check
-that catches it later.
+it shows up as a visible layering violation in the diff — there's no
+runtime check catching it later.
 
 ## Consequences
 
@@ -81,14 +81,14 @@ signature and everything above it stays the same.
 
 **What this costs**: an extra layer of indirection for anything that
 touches persistence or an external call — a new field on a payment
-often means touching the aggregate, the port interface, the TypeORM
-entity, and the mapper between them, not just one file. For a
+often means touching four places: the aggregate, the port interface,
+the TypeORM entity, and the mapper between them. For a
 reference implementation with a handful of aggregates this is a
 deliberate, worthwhile trade; it would need re-evaluating if the
 number of aggregates grew by an order of magnitude and the
 boilerplate-per-change started to dominate.
 
-**A concrete case this shape prevented, not just a theoretical one**:
+**A concrete case this shape actually prevented**:
 `ChargeLedgerParamsResolverService.resolve()` — which computes
 fee/FX/reserve/split parameters for a charge — is shared by all four
 ledger-booking call sites (`PaymentCheckoutSaga`, immediate capture;
@@ -96,7 +96,8 @@ ledger-booking call sites (`PaymentCheckoutSaga`, immediate capture;
 `WebhookProcessingService.markSucceeded()`, async/3DS-confirmed;
 `AmbiguousPaymentService.bookSucceeded()`, manually-resolved ambiguous
 outcome) *because* it sits in `application/services/` depending only
-on ports, not on which adapter happens to be booking at that moment.
+on ports, independent of whichever adapter happens to be booking at
+that moment.
 Before it was extracted, an identical fee-lookup snippet was
 copy-pasted into each site and drifted (see
 [`../business-domain/fee-model.md`](../business-domain/fee-model.md))
@@ -110,8 +111,8 @@ the obvious fix rather than "extract to wherever's convenient."
   number of aggregates, but couples business rules to persistence
   details from day one — the specific bug pattern above (three
   divergent copies of the same fee logic) is *more* likely under this
-  shape, not less, since nothing structurally encourages extracting
-  shared logic to a dependency-free layer.
+  shape, since nothing structurally encourages extracting shared logic
+  to a dependency-free layer.
 - **A generic ORM-agnostic repository interface without the full
   ports/adapters split** (i.e., abstract persistence only, let
   `application/` call PSP SDKs directly): would still leave PSP

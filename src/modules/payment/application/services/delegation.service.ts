@@ -67,7 +67,7 @@ export class DelegationService {
    *
    * Refuses to create a new delegation for a merchant whose
    * `sanctionsScreeningStatus` is `HIT` — `DelegationEntity.agentName` is
-   * a merchant-chosen label for a piece of software, not a legal
+   * a merchant-chosen label for a piece of software rather than a legal
    * identity screening would apply to, so the gate attaches to the
    * capability (authorizing more spend on a known-sanctioned merchant's
    * behalf) rather than to the agent itself. See
@@ -139,7 +139,7 @@ export class DelegationService {
     return this.delegationPort.findMany(filter);
   }
 
-  /** Revoking takes effect immediately, not just on the token's natural expiry — reuses the exact same jti-revocation mechanism POST /auth/revoke (logout) does, rather than inventing a second one for delegation tokens specifically. */
+  /** Revoking takes effect immediately, beyond just waiting on the token's natural expiry — reuses the exact same jti-revocation mechanism POST /auth/revoke (logout) does, rather than inventing a second one for delegation tokens specifically. */
   async revoke(id: string): Promise<Delegation> {
     const delegation = await this.getOrThrow(id);
     if (delegation.status === 'REVOKED') {

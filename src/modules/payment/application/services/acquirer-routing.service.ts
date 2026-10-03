@@ -102,10 +102,10 @@ export class AcquirerRoutingService {
 
     const result = await this.processorFactory.executeWithFallback(context, operation).catch(translateRoutingError);
 
-    // Recorded on the actual outcome (post-fallback), not the initial pick
+    // Recorded on the actual outcome (post-fallback) rather than the initial pick
     // — this is what MerchantPspExposureService uses to decide whether the
     // merchant's *next* charge should get a stricter throttle limit, so it
-    // should reflect where their traffic really landed, not where it was
+    // should reflect where their traffic really landed instead of where it was
     // first aimed.
     await this.merchantPspExposure.recordRouting(params.merchantId, result.provider);
 

@@ -7,7 +7,7 @@ the migration *workflow* (how a schema change gets from an entity file
 to a running database), or [`../jobs.md`](../jobs.md), which covers the
 background jobs that operate on this schema. Start here if you're
 trying to answer "what does the schema actually look like" or "how is
-this database deployed/scaled," not "how do I write a migration."
+this database deployed/scaled," rather than "how do I write a migration."
 
 - [`erd.md`](./erd.md) — entity-relationship diagram and how tables
   reference each other (note up front: this project has **no
@@ -15,8 +15,8 @@ this database deployed/scaled," not "how do I write a migration."
   application-enforced, and the diagram explains why)
 - [`schema.md`](./schema.md) — table-by-table reference: what each
   table is for, which schema it lives in (`public` vs `archive`), and
-  where to find its authoritative column list (the entity file, not a
-  hand-maintained copy here)
+  where to find its authoritative column list (the entity file rather
+  than a hand-maintained copy here)
 - [`architecture.md`](./architecture.md) — the physical deployment:
   master/replica streaming replication, PgBouncer connection pooling in
   front of both, and `payments`/`ledger_outbox` table partitioning

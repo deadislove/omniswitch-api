@@ -25,7 +25,7 @@ a payment integration.
 
 Add five more clients — `sdk/java`, `sdk/dotnet`, `sdk/python`,
 `sdk/rust`, `sdk/go` — each an independent, idiomatic implementation of
-the exact same contract `sdk/node` already established, not a
+the exact same contract `sdk/node` already established, rather than a
 line-by-line port:
 
 - The same wrapped endpoints (charge/refund/capture/cancel/get-payment),
@@ -63,9 +63,9 @@ mismanage an idempotency key, or skip webhook verification.
 
 **What this costs, honestly**: six independent codebases now have to
 stay in sync with the REST API's contract instead of one. A future
-change to a wrapped endpoint's request/response shape is now six changes,
-not one, and nothing currently enforces that they're made together —
-this is a real maintenance surface, not a solved problem.
+change to a wrapped endpoint's request/response shape is now six
+changes instead of one, and nothing currently enforces that they're
+made together — a real maintenance surface, still unsolved.
 
 **Testing depth is not identical across all six.** Every package has the
 same *shape* of mocked-transport unit test suite. Only `sdk/node` also

@@ -4,7 +4,7 @@ This folder covers compliance areas that are about *how long data is
 kept and what happens to it over time* — distinct from
 [`../technical/security-and-compliance.md`](../technical/security-and-compliance.md),
 which covers JWT revocation design and PCI DSS scope/gaps (protecting
-data while it's live, not what happens to it as it ages), and from
+data while it's live, rather than what happens to it as it ages), and from
 [`../business-domain/compliance-and-security.md`](../business-domain/compliance-and-security.md),
 which explains *why* these requirements shaped specific domain-model
 decisions rather than documenting the mechanisms themselves.
@@ -17,10 +17,10 @@ decisions rather than documenting the mechanisms themselves.
   scheduled jobs that enforce this work, and — most importantly for
   anyone deploying this somewhere real — **how to configure the
   retention periods for a specific jurisdiction**, since this is a POC
-  meant to be adaptable, not a one-size-fits-all compliance product. Its
+  meant to be adaptable rather than a one-size-fits-all compliance product. Its
   ["Jurisdictional compliance review checklist"](./data-retention.md#jurisdictional-compliance-review-checklist)
-  section is the concrete starting point for that review — what to
-  confirm, not an answer key.
+  section is the concrete starting point for that review — a checklist
+  of what to confirm, rather than a set of answers already filled in.
 
 ## No third-party certification exists
 
@@ -36,8 +36,8 @@ of which this repository can produce as code.
 
 ## The honest scope of this folder
 
-This project is a reference implementation, not a certified compliance
-system. AML record-keeping requirements are set by each jurisdiction's
+This project is a reference implementation rather than a certified
+compliance system. AML record-keeping requirements are set by each jurisdiction's
 own regulator (differ by country, and sometimes by transaction type
 within a country) — nothing in this repo has been reviewed by legal or
 compliance counsel for any specific jurisdiction. `data-retention.md`

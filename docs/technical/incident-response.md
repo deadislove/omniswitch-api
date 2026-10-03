@@ -63,15 +63,15 @@ this is the earlier warning.
 
 **First step**: Same `GET /api/v1/payments/routing/health` check as above.
 Often a leading indicator of `PSPCircuitBreakerOpen` about to fire; treat
-it as a heads-up to check the PSP's status page before it escalates, not
-as something requiring its own separate fix.
+it as a heads-up to check the PSP's status page before it escalates,
+rather than something requiring its own separate fix.
 
 ### LedgerOutboxDeadLetters
 
 **Meaning**: One or more `LedgerOutboxEvent` rows exhausted their retry
 budget and are sitting in `FAILED` status — a payment state change
 happened, but its ledger entry never made it to relay. This is a
-financial-integrity issue, not just an operational one.
+financial-integrity issue, beyond just an operational one.
 
 **First step**: `GET /api/v1/admin/outbox/failed` to see what's stuck and
 why (each row carries its last error). Once the underlying cause is
@@ -86,7 +86,7 @@ a strong signal they're the same underlying incident.
 **Meaning**: The `PENDING` outbox queue has stayed above 100 for 10
 minutes — `LedgerOutboxRelayService` is falling behind, or has stopped
 running. This threshold is illustrative (see the alert's own
-`description`), not calibrated against real production volume.
+`description`) rather than calibrated against real production volume.
 
 **First step**: Confirm `LedgerOutboxRelayService.relayPendingEvents()` is
 actually still firing every 10 seconds (check logs — unlike most of this
@@ -95,9 +95,9 @@ on-demand equivalent, since it's designed to run continuously rather than
 be nudged manually). If it's not firing at all, that's a scheduler-level
 problem (pod restart, `@nestjs/schedule` not registered) worth escalating
 directly. If it is firing but the backlog still isn't draining, this is a
-throughput problem, not a correctness one — treat it as a capacity signal
-for that cron's frequency or batch size, not something to page critical
-on.
+throughput problem rather than a correctness one — treat it as a
+capacity signal for that cron's frequency or batch size, rather than
+something to page critical on.
 
 ### ReconciliationMismatchFound
 
@@ -107,7 +107,7 @@ PSP's own settlement report disagree — see that service's docblock for
 the three mismatch shapes (`MISSING_AT_PSP`, `AMOUNT_MISMATCH`,
 `UNKNOWN_AT_PSP`). This is the safety net for ledger/outbox bugs that
 tests structurally can't catch; treat every occurrence as real until
-proven otherwise, not as noise.
+proven otherwise, never as noise.
 
 **First step**: `GET /api/v1/admin/reconciliation/runs` to see the run's
 full mismatch list (each entry names the payment/transaction id and

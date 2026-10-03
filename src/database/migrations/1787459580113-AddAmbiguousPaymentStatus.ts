@@ -15,7 +15,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * payments_old (the pre-partitioning cutover safety-net table — see
  * 1787333739819-BackfillAndSwapPartitionedPaymentsAndLedgerOutbox.ts and
  * docs/compliance/data-retention.md) shares the SAME Postgres enum type
- * object for its own status column, not a separate copy — renaming
+ * object for its own status column rather than a separate copy — renaming
  * payments_status_enum renames what payments_old.status points at too,
  * so DROP TYPE ..._old fails with "other objects depend on it" unless
  * payments_old.status is detached first.

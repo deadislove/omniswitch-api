@@ -19,7 +19,7 @@ export type DisputeAutoDecision = 'ACCEPT' | 'CONTEST' | 'MANUAL_REVIEW';
 
 // Same reasoning as RiskTieringService's reserve tiers: not FX-normalized
 // across currencies — a 15-unit threshold means very different things for
-// USD vs. JPY vs. KWD. A flat major-unit cutoff, not a calibrated one.
+// USD vs. JPY vs. KWD. A flat major-unit cutoff, left uncalibrated.
 // Overridable at the call site (DisputeService reads
 // DISPUTE_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS) rather than read from
 // ConfigService here directly — this file is a pure domain module (no
@@ -29,12 +29,12 @@ export const DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS = 15;
 
 // Multipliers applied to the base auto-accept threshold by the charging
 // merchant's current risk tier (see decideAutoDisposition()'s
-// merchantRiskTier param) — same "illustrative, overridable, not
-// calibrated" posture as the base threshold above. LOW *lowers* the
+// merchantRiskTier param) — same "illustrative, overridable, uncalibrated"
+// posture as the base threshold above. LOW *lowers* the
 // threshold (fewer disputes auto-accepted, more reach the CONTEST check —
 // worth contesting more aggressively for a merchant with a strong track
-// record); HIGH *raises* it (more small disputes auto-accepted outright,
-// not spending contest effort on a merchant already flagged higher-risk).
+// record); HIGH *raises* it (more small disputes auto-accepted outright
+// instead of spending contest effort on a merchant already flagged higher-risk).
 export const DEFAULT_LOW_RISK_THRESHOLD_MULTIPLIER = 0.5;
 export const DEFAULT_HIGH_RISK_THRESHOLD_MULTIPLIER = 2;
 
@@ -52,8 +52,8 @@ const AUTO_CONTESTABLE_REASONS = new Set(['product_not_received', 'duplicate']);
 
 // Only added to the contestable set for a LOW-risk merchant (see
 // decideAutoDisposition()) — a strong track record buys a merchant a
-// templated auto-contest on one more reason code than the default set,
-// not a change to which reasons are ever templatable in principle.
+// templated auto-contest on one more reason code than the default set —
+// it doesn't change which reasons are ever templatable in principle.
 const LOW_RISK_EXTRA_CONTESTABLE_REASONS = new Set(['subscription_canceled']);
 
 const EVIDENCE_TEMPLATES: Record<string, string> = {

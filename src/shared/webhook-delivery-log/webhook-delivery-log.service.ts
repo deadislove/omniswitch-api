@@ -18,7 +18,7 @@ export interface RecordWebhookDeliveryParams {
 
 /**
  * Webhook Delivery Log Service
- * Lives in `shared/`, not `payment/` or `merchant/`, because both
+ * Lives in `shared/` rather than `payment/` or `merchant/`, because both
  * modules' `Webhook*NotificationAdapter` classes need to call
  * `record()` — dispute/subscription/AML-review adapters live in
  * `PaymentModule`, the sanctions adapter in `MerchantModule` — and
@@ -26,7 +26,7 @@ export interface RecordWebhookDeliveryParams {
  * `docs/technical/architecture.md`'s module graph). Same reasoning
  * `notification-delivery.util.ts` itself already moved here for.
  *
- * Deliberately a plain persistence service, not a port/adapter pair —
+ * Deliberately a plain persistence service rather than a port/adapter pair —
  * unlike `KYCProviderPort`/`SanctionsScreeningPort`, there's no real
  * "mock vs. real" swap here: recording a delivery to this app's own
  * database has exactly one real implementation regardless of
@@ -75,7 +75,7 @@ export class WebhookDeliveryLogService {
    * Keyset-paginated (see `RiskTieringService.findActiveAutoManagedBatch()`'s
    * own docblock for why offset pagination doesn't scale here either),
    * newest first — an operator inspecting delivery history cares about
-   * recent activity, not the oldest row first.
+   * recent activity — the oldest row first would bury it.
    */
   async findByMerchant(
     merchantId: string,

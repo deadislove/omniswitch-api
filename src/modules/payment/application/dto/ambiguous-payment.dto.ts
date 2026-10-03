@@ -28,7 +28,7 @@ export class ResolveAmbiguousPaymentDto {
   @ApiProperty({
     example: 'Confirmed no charge in Stripe dashboard for this idempotency key',
     description:
-      'Required — what the operator found when checking the PSP directly. This is a manual override of financial state (SUCCEEDED books real ledger entries), so it always needs a stated justification, not just an optional note.',
+      'Required — what the operator found when checking the PSP directly. This is a manual override of financial state (SUCCEEDED books real ledger entries), so it always needs a stated justification rather than an optional note.',
   })
   @IsString()
   @MinLength(1)

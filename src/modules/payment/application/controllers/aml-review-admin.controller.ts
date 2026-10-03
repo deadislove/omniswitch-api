@@ -19,8 +19,8 @@ import {
  * AmbiguousRiskAdminController): a HIGH-industry merchant's hard-decline
  * history doesn't "age out" the way an ambiguous-outcome incident does —
  * an AML-review flag is meant to stay live until a human actually
- * clears it (PATCH .../aml-review with flagged: false), not expire on a
- * timer.
+ * clears it (PATCH .../aml-review with flagged: false) instead of expiring on
+ * a timer.
  */
 @ApiTags('Admin — AML Review Monitoring')
 @ApiBearerAuth()

@@ -37,7 +37,7 @@ onboarding path through both, see [`../guide/`](../guide/).
 - [`security-and-compliance.md`](./security-and-compliance.md) — JWT
   revocation design and an honest PCI DSS scope/gap assessment
 - [`compliance-certification-roadmap.md`](./compliance-certification-roadmap.md) —
-  the SOC 2 / PCI DSS certification path, not a certification itself
+  the SOC 2 / PCI DSS certification path rather than a certification itself
 - [`secret-management.md`](./secret-management.md) — Vault-backed
   envelope encryption for the one secret this app mints itself
 - [`external-review-checklist.md`](./external-review-checklist.md) —
@@ -55,7 +55,7 @@ onboarding path through both, see [`../guide/`](../guide/).
 - [`incident-response.md`](./incident-response.md) — runbook for the
   alerts defined in `monitoring/alert.rules.yml`
 - [`disaster-recovery.md`](./disaster-recovery.md) — multi-region/
-  cross-AZ strategy (documented, not verified against real
+  cross-AZ strategy (documented but not verified against real
   infrastructure)
 - [`k8s/`](./k8s/) — what's actually in `k8s/` and why it's shaped
   the way it is

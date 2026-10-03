@@ -25,8 +25,8 @@ unverified webhooks) that are otherwise easy to get wrong under
 deadline pressure. For anything it doesn't cover yet (subscriptions,
 disputes, marketplace splits, delegations, any admin operation), call
 the REST API directly per [`../api/README.md`](../api/README.md) — the
-client is a convenience layer over a subset of the API, not a
-replacement for the API itself.
+client is a convenience layer over a subset of the API, rather than
+a replacement for the API itself.
 
 ## Install
 
@@ -34,8 +34,8 @@ replacement for the API itself.
 npm install @deadislove/omniswitch-node
 ```
 
-Published to this repository's own GitHub Packages npm registry, not
-the public npm registry — see the package's own
+Published to this repository's own GitHub Packages npm registry,
+rather than the public npm registry — see the package's own
 [`README.md`](../../../sdk/node/README.md) and
 [ADR-0007](../../adr/0007-github-packages-publishing.md) for why only
 here. Or, within this repository, straight from source:

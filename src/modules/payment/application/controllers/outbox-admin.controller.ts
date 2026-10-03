@@ -57,7 +57,7 @@ function toSummary(event: LedgerOutboxEvent): OutboxEventSummaryDto {
  * Outbox Admin Controller
  * Operator-facing recovery for dead-lettered ledger outbox events — see
  * OutboxRecoveryService's docblock for why this exists (markFailed() is
- * deliberately terminal, not auto-retried).
+ * deliberately terminal rather than auto-retried).
  */
 @ApiTags('Admin — Ledger Outbox')
 @ApiBearerAuth()

@@ -1,4 +1,4 @@
-# ADR-0005: A first-party Node/TypeScript client, not just a documented REST API
+# ADR-0005: A first-party Node/TypeScript client, beyond just a documented REST API
 
 ## Status
 
@@ -52,22 +52,22 @@ specifically so tests can substitute a mock without needing a real
 network call.
 
 **HMAC signing, idempotency-key generation, and token lifecycle are all
-handled internally**, not left to the caller: `signRequest()` computes
+handled internally** rather than left to the caller: `signRequest()` computes
 the exact same signed-payload string `HmacSignatureGuard` verifies;
 every signed call gets a fresh `crypto.randomUUID()` `Idempotency-Key`
 unless the caller explicitly passes one to reuse across a retry;
 `POST /auth/token` is called lazily on first use and the resulting JWT
 is cached and refreshed shortly before its own expiry, with a single
-forced re-authentication on an unexpected 401 (bounded to one retry, not
-an unconditional loop).
+forced re-authentication on an unexpected 401 (bounded to one retry
+rather than an unconditional loop).
 
 **Scoped to merchant credentials in this first cut** — not an
 agent-delegation credential (its own signing key, no `X-Merchant-Id`,
 a different token-issuance endpoint). A merchant credential with MFA
 enabled is explicitly rejected with a clear error rather than silently
 returning a token that every subsequent call would then fail against;
-MFA guards a human dashboard login, not a machine-to-machine credential
-this client is built for.
+MFA guards a human dashboard login, a different thing entirely from
+the machine-to-machine credential this client is built for.
 
 **Verified two different ways, deliberately**: unit tests against a
 mocked `fetch` prove the client computes the right request shape and
@@ -76,8 +76,8 @@ end-to-end test (`test/sdk-node-client.e2e-spec.ts`) boots a real
 instance of this application on a real TCP port and drives it through
 the client's own real HTTP calls — proving the real
 `HmacSignatureGuard`/`IdempotencyInterceptor` actually accept what this
-client sends, not merely that the client and a hand-written assertion
-agree with each other about what "correct" means.
+client sends — a stronger claim than just the client and a hand-written
+assertion agreeing with each other about what "correct" means.
 
 ## Consequences
 
@@ -92,20 +92,20 @@ REST API. Today it wraps five endpoints; the rest of the API (
 subscriptions, disputes, marketplace splits, every admin operation) has
 no first-party client at all, and that gap has to stay honestly
 documented rather than implied to be covered. Every future change to a
-wrapped endpoint's contract now needs updating in two places, not one.
+wrapped endpoint's contract now needs updating in two places instead of
+one.
 
 **Not published to any package registry.** This lives in the same
 repository as the API it wraps and is built from source
-(`cd sdk/node && npm install && npm run build`), not installable via
-`npm install @omniswitch/node` from a public registry. Publishing it
+(`cd sdk/node && npm install && npm run build`) — not something you
+can `npm install @omniswitch/node` from a public registry. Publishing it
 is a distinct decision — it commits to public versioning, a support
 lifecycle, and a compatibility contract independent of this
 repository's own release cadence — and isn't made by this ADR.
 
 **MFA-enabled credentials can't use this client.** A real, deliberate
-constraint for the server-side integration use case this targets, not
-an oversight — but worth stating plainly so it isn't discovered as a
-surprise: rotate to (or create) an API credential without MFA enabled
+constraint for the server-side integration use case this targets —
+stated plainly here so it isn't discovered as a surprise: rotate to (or create) an API credential without MFA enabled
 for this kind of integration.
 
 ## Alternatives considered

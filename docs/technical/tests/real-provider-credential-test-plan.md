@@ -11,13 +11,13 @@ external integrations this codebase has real (not just mocked) adapters
 for — KYC/KYB (Persona) and ACH/wire bank transfer — plus two things
 `contract-testing.md` explicitly states are out of its own scope (real
 webhook delivery, reconciliation against a real settlement report). One
-of the findings below is a genuine code gap, not just a missing-
+of the findings below is a genuine code gap, beyond just a missing-
 credentials problem — flagged in its own section rather than glossed
 over.
 
 ---
 
-## KYC/KYB (Persona) — blocked on a real code gap, not just config
+## KYC/KYB (Persona) — blocked on a real code gap, beyond just config
 
 `merchant.module.ts` already wires a config-driven switch
 (`KYC_PROVIDER`/`KYB_PROVIDER`, `mock` default, `persona` the real
@@ -55,7 +55,7 @@ same way Persona's real API would.
 
 **Before this can be tested with real credentials**:
 1. Add real auth support to both adapters. Dwolla specifically uses
-   OAuth2 client-credentials — a token-fetch-and-cache step, not a
+   OAuth2 client-credentials — a token-fetch-and-cache step rather than a
    static bearer header, so this is a slightly larger change than the
    Persona case above.
 2. Only then: point `ACH_PROVIDER_URL`/`WIRE_PROVIDER_URL` at Dwolla's

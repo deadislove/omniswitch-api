@@ -36,7 +36,7 @@ export class PlanService {
   }
 
   /**
-   * Reads via findByIdOnMaster(), not the ambient replica-routed
+   * Reads via findByIdOnMaster() instead of the ambient replica-routed
    * findById() — a merchant creating a plan and immediately viewing,
    * subscribing to, or deactivating it is an ordinary sequence, and this
    * catalog's read volume is low enough that every lookup here can

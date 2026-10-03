@@ -37,7 +37,7 @@ credit lands on the same `MERCHANT`-type ledger row a direct charge to
 that merchant would produce, so `GET /admin/reserves` and every other
 merchant-scoped ledger query already work against it unmodified.
 
-**Validated before the PSP is ever called, not after.** Every split
+**Validated before the PSP is ever called, never after.** Every split
 recipient must be an active `CONNECTED` merchant whose
 `platformMerchantId` matches the charging merchant
 (`SPLIT_RECIPIENT_INVALID`, 422), and the split total can't exceed the
@@ -46,7 +46,7 @@ net (post-fee, post-reserve) payout amount (`SPLIT_EXCEEDS_NET_AMOUNT`,
 validation — used to only ever run *after* a successful PSP charge (see
 its callers in `PaymentCheckoutSaga`/`PaymentLifecycleService`), because
 until splits existed it could never fail (an FX lookup failure there was
-already handled by silently falling back, not throwing). Adding a
+already handled by silently falling back rather than throwing). Adding a
 validation path that *can* throw meant it had to move earlier —
 `PaymentCheckoutSaga.execute()` now resolves and validates these
 parameters right after the payment intent is created, before routing or
@@ -80,7 +80,7 @@ charge with different rates:
 | `{platformMerchantId}` | CREDIT | (payout amount − Σ splits), converted at the *platform's own* rate if it has a `settlementCurrency` | platform's settlement currency, or charge currency if unset |
 
 The platform's own conversion applies to what's left over **after** all
-splits are carved out (the remainder), not the full payout — see
+splits are carved out (the remainder) rather than the full payout — see
 `ChargeLedgerParamsResolverService.resolve()`. Each conversion is resolved
 and can fail independently: an FX lookup failure for one recipient falls
 back to booking that recipient in the charge currency without affecting
@@ -101,7 +101,7 @@ of how the charge was split:
 
 - Each connected merchant's debit is
   `split.amount × (refundAmount / originalChargeAmount)`, computed in
-  integer minor units (floor division), not floating-point fractions.
+  integer minor units (floor division) rather than floating-point fractions.
 - The platform absorbs whatever's left —
   `refundAmount − Σ(connected debits)` — the same "remainder goes to the
   platform" shape the original charge-time split used, just reversed. This
@@ -119,14 +119,14 @@ of how the charge was split:
   `createRefundEntries()`'s docblock) — a refunded merchant's account has
   always been debited the raw refund amount, never a fee-adjusted one.
 
-**A real bug found building this, not just during testing**: `splits`
+**A real bug found building this, beyond just during testing**: `splits`
 used to only be recorded on the `Payment` aggregate inside
 `PaymentCheckoutSaga`'s `SUCCEEDED` branch — the *immediate*-capture path.
 A charge that instead came back `REQUIRES_ACTION` (a 3DS challenge) skips
 that branch entirely; the charge is only actually confirmed later, when
 `WebhookProcessingService.markSucceeded()` processes the PSP's webhook —
-by which point it only has the persisted `Payment` row to work with, not
-the original request. Recording `splits` only in the immediate-success
+by which point it only has the persisted `Payment` row to work with,
+rather than the original request. Recording `splits` only in the immediate-success
 branch meant a split charge that happened to need a 3DS challenge would
 silently lose its split the moment the challenge completed — the ledger
 entry would book as an ordinary, unsplit charge. Fixed by recording
@@ -200,9 +200,9 @@ for the business framing). `MerchantEntity.kycStatus`
 (`NOT_STARTED` | `PENDING_REVIEW` | `VERIFIED` | `REJECTED`) now gates
 that, via `POST /admin/merchants/:id/kyc/submit` (`{ legalName, taxId }`)
 calling `KYCProviderPort.verify()` — a real HTTP call to an external
-verification service, not a database flag an operator flips by hand.
+verification service rather than a database flag an operator flips by hand.
 
-**KYC gates payouts, not charges** — a `CONNECTED` merchant with
+**KYC gates payouts, never charges** — a `CONNECTED` merchant with
 `kycStatus: 'NOT_STARTED'` can still be a split recipient and accumulate
 real `MERCHANT` ledger credit exactly as before; nothing in
 `ChargeLedgerParamsResolverService.resolve()`'s split validation reads
@@ -259,7 +259,7 @@ gate. A `CONNECTED` merchant can have `kycStatus: 'VERIFIED'` and
 `kybStatus: 'NOT_STARTED'` at the same time; only `kycStatus` affects
 whether a payout can transfer. See
 [`merchants.md#step-3--kyb-for-connected-merchants-only`](./merchants.md#step-3--kyb-for-connected-merchants-only)
-for why that scope limit is deliberate, not a gap to be closed later
+for why that scope limit is deliberate rather than a gap to be closed later
 without a decision.
 
 ### Payout KYC gating and real transfer initiation
@@ -342,8 +342,8 @@ Verified against real infrastructure in `test/marketplace-payouts.e2e-spec.ts`
 (15 tests, the mock rail/mock KYC provider), `test/bank-transfer-rail.e2e-spec.ts`
 (11 tests, the two real bank-transfer rails), and `test/kyc-review.e2e-spec.ts`
 (9 tests, the real async KYC provider — submitting an application
-against it returns `PENDING_REVIEW` with a real `kycApplicationId`, not
-an immediate decision; a correctly-signed `approved`/`rejected` webhook
+against it returns `PENDING_REVIEW` with a real `kycApplicationId`
+rather than an immediate decision; a correctly-signed `approved`/`rejected` webhook
 resolves it to `VERIFIED`/`REJECTED`; redelivering the same webhook
 twice is idempotent; a webhook for an unknown `applicationId` is a
 no-op `200`; a missing/invalid `X-KYC-Signature` is rejected `401`; and
@@ -379,7 +379,7 @@ correctly-signed `settled` webhook confirms it to `INITIATED`, a
 correctly-signed `failed` webhook moves it to `FAILED` with the given
 reason; redelivering the same `settled` webhook twice is idempotent (no
 error, no double-processing); a webhook for an unknown `transferId` is a
-no-op `200`, not an error; a missing or invalid `X-Bank-Transfer-Signature`
+no-op `200` rather than an error; a missing or invalid `X-Bank-Transfer-Signature`
 is rejected with 401; and an outright rail rejection (`merchantId`
 containing "transferreject") fails synchronously without ever reaching
 `PENDING_CONFIRMATION`. `test/reserve-followup-transfer.e2e-spec.ts`

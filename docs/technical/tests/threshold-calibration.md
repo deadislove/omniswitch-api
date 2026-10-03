@@ -1,8 +1,8 @@
 # Threshold Calibration (Risk Tiering & Dispute Auto-Accept)
 
 `RiskTieringService`'s reserve-tier thresholds and `DisputeService`'s
-auto-accept amount cutoff are illustrative, not calibrated against real
-fraud/chargeback history — this repository has none. Rather than leaving
+auto-accept amount cutoff are illustrative rather than calibrated
+against real fraud/chargeback history — this repository has none. Rather than leaving
 that as a documentation-only gap, `scripts/calibration/` runs an actual
 calibration *methodology* against a synthetic, deliberately-realistic
 stand-in dataset, generated with a fixed seed so results are reproducible.
@@ -20,14 +20,14 @@ npm run calibration:run        # reads it, prints the calibration report
 `generate-synthetic-history.ts` uses a seeded PRNG (Mulberry32, seed
 `20260901`) — the same seed always produces the same synthetic dataset,
 so `calibration:run`'s output is reproducible across machines and over
-time, not a different answer on every run. The generated JSON file is
+time, instead of a different answer on every run. The generated JSON file is
 gitignored (deterministically regenerated, no reason to commit it).
 
 ## What the synthetic data models, and why
 
 - **Risk tiering**: 2,000 synthetic merchants, each assigned a *true*
-  risk label (85% LOW, 12% MEDIUM, 3% HIGH — a skewed mixture, not a
-  bell curve, matching how real payment-platform risk actually
+  risk label (85% LOW, 12% MEDIUM, 3% HIGH — a skewed mixture rather
+  than a bell curve, matching how real payment-platform risk actually
   distributes: most merchants are fine, a small tail drives most real
   loss) and a true underlying lost-dispute rate drawn from that label's
   range. Each merchant's *observed* settled-charge volume (log-normal —
@@ -55,8 +55,8 @@ gitignored (deterministically regenerated, no reason to commit it).
   reason-code weighting calibration below tests.
 - **Dispute auto-accept**: 5,000 synthetic disputes with log-normal
   amounts and a per-reason-code contest win rate (`fraudulent`: 15%,
-  `duplicate`: 85% — deliberately different per reason, not one flat
-  rate, since that differentiation is the entire point of a
+  `duplicate`: 85% — deliberately different per reason instead of one
+  flat rate, since that differentiation is the entire point of a
   reason-aware policy).
 
 ## What the calibration script actually computes
@@ -81,13 +81,14 @@ gitignored (deterministically regenerated, no reason to commit it).
   (`RISK_TIER_NEW_MERCHANT_AGE_DAYS`'s default) — a direct test of
   whether the escalation actually catches merchants a purely rate-based
   threshold would miss (see `future-directions.md` for the numeric
-  result), not just a plausibility argument.
+  result), beyond just a plausibility argument.
 - **Dispute reason-code weighting (Phase 1)**: scores the same
   population's HIGH/MEDIUM+ precision/recall using the *raw* (unweighted)
   lost-dispute rate vs. a rate weighted by
   `getDisputeRiskWeight()` — imported directly from
   `src/modules/payment/domain/services/dispute-risk-weight.ts`, the real
-  production function, not a copy, so this calibration can't silently
+  production function rather than a copy, so this calibration can't
+  silently
   drift from what the codebase actually does. See `future-directions.md`
   for the numeric result.
 
@@ -98,7 +99,7 @@ scoring, the percentile derivation, the break-even calculation — runs
 correctly and produces real, reproducible, internally-consistent
 numbers, including a genuine, non-obvious finding (percentile-based risk
 thresholds break down at a 0% MEDIUM cutoff on this population — a
-zero-inflation artifact real historical data would very plausibly share,
+zero-inflation artifact real historical data would very plausibly share —
 not something a purely theoretical writeup would have surfaced).
 
 **Doesn't**: tell you what the real production thresholds should be. The
@@ -112,33 +113,33 @@ none exists in this repository.
 ## What else was considered, and what wasn't added here
 
 A Phase 1 review pass ([`future-directions.md`](../../business-domain/future-directions.md))
-catalogued every other "illustrative, not calibrated" number in the
+catalogued every other "illustrative rather than calibrated" number in the
 risk-scoring surface and asked whether each one fits this same
 precision/recall/break-even framework. The new-merchant-age and
 dispute-reason-code items above turned out to fit directly — both are
-now real calibration exercises, not just plausibility arguments. The
+now real calibration exercises, beyond just plausibility arguments. The
 agent risk-scoring bumps needed a genuinely new, separate synthetic
 generator (see below) rather than an extension of this one, and now have
 one. The remaining two don't fit at all, for each one's own reason —
-documented gaps, not oversights:
+documented gaps rather than oversights:
 
 - **MCC risk-category table**
   (`src/modules/merchant/mcc-risk-lookup.ts`) — a categorical
-  industry classification (gambling = HIGH, groceries = LOW), not a
-  numeric threshold. There's no "95th percentile" version of "is this
+  industry classification (gambling = HIGH, groceries = LOW) rather than
+  a numeric threshold. There's no "95th percentile" version of "is this
   MCC code inherently risky" to derive from synthetic data; a real
-  calibration would need actual chargeback-rate-by-MCC data, not a
-  statistical technique applied to a stand-in population. **Verified,
+  calibration would need actual chargeback-rate-by-MCC data instead of
+  a statistical technique applied to a stand-in population. **Verified,
   2026** — every one of the 19 codes checked against real MCC reference
   sources for both the code-to-category mapping and the risk tier; all
   confirmed accurate (several, like gambling/dating-services/inbound-
   telemarketing, are explicitly labeled `HIGH RISK` in real
-  acquirer-facing guidance, not just this codebase's own judgment call).
+  acquirer-facing guidance, beyond just this codebase's own judgment call).
   See `mcc-risk-lookup.ts`'s own docblock for the full note.
 - **Stripe/Adyen hard-decline code sets**
   (`decline-code-classifier.ts`'s `HARD_DECLINE_CODES`) — this is a
   documentation-accuracy question (does this code list match what each
-  PSP's real decline-code taxonomy actually documents?), not a
+  PSP's real decline-code taxonomy actually documents?) rather than a
   statistical one — synthetic data can't validate "is `'25'` really
   Adyen's Restricted Card code," only that PSP's own real API
   documentation can. **Verified, 2026** — every code in both sets was
@@ -188,7 +189,7 @@ actually does. Scores at two thresholds and against a "flag nothing" baseline:
 At the lower threshold, the two signals lift precision 10 points over
 having no signal at all while still catching 95% of genuinely
 problematic charges on this synthetic population — a real, measured
-case that the feature does better than nothing, not just a
+case that the feature does better than nothing, beyond just a
 plausible-sounding idea. As with every other exercise here: illustrative
 only — the *size* of the correlation this population assumes between
 each signal and genuine anomaly is itself an assumption, and there is no

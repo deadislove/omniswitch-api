@@ -107,7 +107,7 @@ export class LedgerOutboxEvent {
    * currency than the charge would leave that group permanently
    * unbalanced. Instead it's two separately-balanced legs linked by an
    * FX_CLEARING account — standard double-entry treatment for a currency
-   * conversion, not a special case bolted onto validateDoubleEntry() itself:
+   * conversion rather than a special case bolted onto validateDoubleEntry() itself:
    *   - Charge-currency group: PSP_SETTLEMENT debit, FEE credit,
    *     FX_CLEARING credit (net amount) — still balances exactly as before.
    *   - Settlement-currency group: FX_CLEARING debit, MERCHANT credit
@@ -119,8 +119,8 @@ export class LedgerOutboxEvent {
    * aggregate that tracks when it becomes releasable). Always taken out of
    * the *charge*-currency net amount, before any settlement conversion —
    * a reserve is the platform temporarily not paying out funds it already
-   * holds in the charge currency, not a separate currency-conversion
-   * question. That composes cleanly with settlementConversion above: the
+   * holds in the charge currency — a distinct concern from
+   * currency conversion. That composes cleanly with settlementConversion above: the
    * RESERVE credit is just a fourth entry in the charge-currency group
    * (which still balances, since it's carved out of the same net amount
    * that would otherwise have gone entirely to MERCHANT or FX_CLEARING),
@@ -139,7 +139,7 @@ export class LedgerOutboxEvent {
    * can now coexist: each split may carry its *own* `settlementConversion`
    * (that recipient's own settlement currency, independent rate), and the
    * top-level `settlementConversion` — if present — converts whatever's
-   * left over after all splits (`remaining` below), not the full payout.
+   * left over after all splits (`remaining` below) rather than the full payout.
    * A charge with no splits is just the degenerate case where `remaining`
    * equals the whole payout. This method doesn't re-validate the split
    * amounts/recipients, it trusts ChargeLedgerParamsResolverService.resolve()
@@ -387,11 +387,11 @@ export class LedgerOutboxEvent {
    * lines that never net against each other, silently leaving the
    * merchant either short-refunded or over-refunded depending on which
    * way the rate moved since the charge. Uses the *original* charge-time
-   * rate, not a fresh one — refunding at a different rate than the money
+   * rate rather than a fresh one — refunding at a different rate than the money
    * was paid out at would just create a new mismatch instead of fixing
    * the old one. Same two-leg-via-FX_CLEARING shape as
    * createChargeEntries()'s settlementConversion, just with every entry
-   * type flipped (this reverses a payout, not creates one):
+   * type flipped (this reverses a payout instead of creating one):
    *   - Charge-currency group: PSP_SETTLEMENT credit, FX_CLEARING debit
    *     (refund amount) — balances on its own.
    *   - Settlement-currency group: FX_CLEARING credit, MERCHANT debit
@@ -408,8 +408,8 @@ export class LedgerOutboxEvent {
    * each split may replay its *own* original rate against its proportional
    * share, and the top-level `settlementConversion` — if present — replays
    * the platform's own original rate against whatever's left after all
-   * split debits (`platformDebitMinorUnits` below), not the full refund
-   * amount. Both `rate`/`provider` here are the *original charge-time*
+   * split debits (`platformDebitMinorUnits` below) rather than the full
+   * refund amount. Both `rate`/`provider` here are the *original charge-time*
    * values (see PaymentAggregate.recordSettlementConversion()/recordSplits()) —
    * this method computes the converted amount itself from the correctly
    * proportioned base, the caller doesn't pre-convert.
@@ -428,7 +428,7 @@ export class LedgerOutboxEvent {
      * The *original* charge-time splits and the full original charge
      * amount they were carved out of — needed together, since a partial
      * refund reverses each recipient's share in the same proportion the
-     * charge itself split (refundAmount / originalChargeAmount), not a
+     * charge itself split (refundAmount / originalChargeAmount), never a
      * fixed amount. Computed in integer minor units (floor division per
      * split, remainder absorbed by the platform's own debit) rather than
      * floating-point fractions, so a full refund (refundAmount ==

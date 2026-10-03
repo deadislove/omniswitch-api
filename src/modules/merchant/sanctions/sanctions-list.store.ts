@@ -31,8 +31,8 @@ export const BUNDLED_SDN_SNAPSHOT: SanctionsListEntry[] = [
  * Holds the currently-active sanctions list in memory —
  * `SanctionsListRefreshService` replaces its contents on a successful
  * fetch from `SANCTIONS_LIST_SOURCE_URL`; `OfacSdnSanctionsAdapter`
- * reads from it on every `screen()` call. A plain in-memory singleton,
- * not a database table — the list is re-fetched wholesale on refresh
+ * reads from it on every `screen()` call. A plain in-memory singleton
+ * rather than a database table — the list is re-fetched wholesale on refresh
  * (never partially updated), so there's no durability requirement a
  * restart-loses-it in-memory store doesn't already satisfy: a fresh
  * process just re-fetches (or falls back to the bundled snapshot) on

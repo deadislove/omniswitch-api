@@ -55,8 +55,8 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     // Caps how many concurrent outbound calls to Adyen this pod will have
     // in flight at once — see makeRequest() below, a bulkhead against one
     // degrading dependency exhausting this pod's own connection pool.
-    // In-memory/per-pod, not Redis-backed: this protects this pod's own
-    // connection pool/event loop capacity, not a cross-replica quota.
+    // In-memory/per-pod rather than Redis-backed: this protects only this
+    // pod's own connection pool/event loop capacity, never a cross-replica quota.
     // Read directly from process.env (not configService.get, which
     // doesn't coerce numeric strings) — same reasoning and pattern as
     // PaymentController's CHARGE_RATE_LIMIT_MAX.
@@ -434,7 +434,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
   async fetchSettlementTransactions(since: Date, until: Date): Promise<PSPSettlementTransaction[]> {
     const query = new URLSearchParams({
       since: Math.floor(since.getTime() / 1000).toString(),
-      // ceil, not floor — whole-second resolution truncates `until`'s own
+      // ceil rather than floor — whole-second resolution truncates `until`'s own
       // fractional second otherwise, silently excluding a real
       // transaction landing later in that same second (found live via a
       // fast e2e test's charge and its own `until = new Date()` capture
@@ -521,7 +521,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
       // Same reasoning as StripePSPAdapter.makeRequest()'s equivalent catch:
       // fetch() itself threw (timeout or a lower-level network failure)
       // before any response was received — whether Adyen actually
-      // processed this request is unknown, not "no."
+      // processed this request is unknown rather than "no."
       throw Object.assign(
         new Error(`Adyen request failed with no response: ${err instanceof Error ? err.message : String(err)}`),
         { isAmbiguousOutcome: true },

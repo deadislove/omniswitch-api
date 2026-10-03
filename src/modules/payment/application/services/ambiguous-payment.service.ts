@@ -64,8 +64,8 @@ export class AmbiguousPaymentService {
     private readonly reserveService: ReserveService,
     private readonly processorFactory: PaymentProcessorFactory,
   ) {
-    // Read directly from process.env in the constructor, not module-level
-    // consts — so an e2e test can override before createTestApp() reads
+    // Read directly from process.env in the constructor rather than
+    // module-level consts — so an e2e test can override before createTestApp() reads
     // this service's providers. Same reasoning/pattern as
     // AmbiguousRiskMonitoringService's thresholds, established after
     // PSP_BULKHEAD_MAX_CONCURRENT's hoisting bug (a module-level const
@@ -80,7 +80,8 @@ export class AmbiguousPaymentService {
   }
 
   private async getOwnedAmbiguous(paymentId: string): Promise<PaymentAggregate> {
-    // Master, not the ambient replica-routed connection — same reasoning
+    // Forced onto master rather than the ambient replica-routed
+    // connection — same reasoning
     // as PaymentLifecycleService.getOwnedPayment(): an operator resolving
     // this could plausibly be reacting to a payment that was only just
     // marked AMBIGUOUS moments earlier, and the ~1s replica lag is a real
@@ -92,7 +93,7 @@ export class AmbiguousPaymentService {
     if (payment.status !== PaymentStatus.AMBIGUOUS) {
       throw new ConflictException({
         statusCode: 409,
-        error: `Payment ${paymentId} is ${payment.status}, not AMBIGUOUS — nothing to resolve`,
+        error: `Payment ${paymentId} is ${payment.status} rather than AMBIGUOUS — nothing to resolve`,
         code: 'PAYMENT_NOT_AMBIGUOUS',
       });
     }
@@ -104,7 +105,7 @@ export class AmbiguousPaymentService {
    * PSP for a payment stuck AMBIGUOUS. SUCCEEDED books the same ledger
    * entries a webhook confirmation would (fee/reserve/split resolution,
    * transactional payment+outbox write) — this is real money being
-   * recorded as collected, not just a status flip. FAILED is the
+   * recorded as collected, beyond just a status flip. FAILED is the
    * simpler branch: no charge happened, nothing to book.
    */
   async resolve(params: {
@@ -221,7 +222,7 @@ export class AmbiguousPaymentService {
    * (AmbiguousPaymentAdminController's run-now endpoint), same dual
    * pattern as AmbiguousRiskMonitoringService.runAutoClearSweep(). Every
    * item gets its own try/catch — one payment's PSP call failing (e.g. a
-   * transient network error, not a real STILL_UNKNOWN answer) must not
+   * transient network error, as opposed to a real STILL_UNKNOWN answer) must not
    * abort the whole batch, same posture as PayoutService's sweep.
    */
   @Cron(CronExpression.EVERY_10_MINUTES, { name: 'ambiguous-payment-auto-resolution' })
@@ -252,12 +253,12 @@ export class AmbiguousPaymentService {
     payment: PaymentAggregate,
     result: { succeeded: number; failed: number; stillUnknown: number; skipped: number },
   ): Promise<void> {
-    // Re-read on master right before acting, not the (possibly
+    // Re-read on master right before acting, instead of the (possibly
     // now-stale) copy the sweep's list query returned — an operator may
     // have resolved this exact payment manually via
     // POST /admin/payments/:id/resolve-ambiguous between the sweep's
     // list query and this iteration reaching it. Silently skip rather
-    // than error: this is an expected race, not a fault, and
+    // than error: this is an expected race rather than a fault, and
     // markSucceeded()/markFailed() would throw on a payment that's no
     // longer AMBIGUOUS anyway (assertValidTransition).
     const fresh = await this.paymentRepository.findByIdOnMaster(payment.id);

@@ -178,8 +178,8 @@ export class ReserveService {
    * their old (still-valid, just not-yet-escalated) amount rather than a
    * half-applied batch. Holds whose target at the new rate isn't actually
    * higher than what they already hold (the new rate is lower, or this
-   * specific hold already exceeds it for some other reason) are skipped,
-   * not topped up to a smaller number — this method only ever adds.
+   * specific hold already exceeds it for some other reason) are skipped
+   * rather than topped up to a smaller number — this method only ever adds.
    */
   async topUpHeldReservesForMerchant(
     merchantId: string,

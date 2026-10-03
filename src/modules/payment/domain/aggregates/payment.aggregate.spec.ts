@@ -8,7 +8,7 @@ import { Money } from '../value-objects/money.vo';
  * decline-code-classifier.ts) to one-off charges. Covers the specific
  * bug class markFailed()'s pspProvider param was added to prevent: a
  * charge that falls back to a second PSP must be classified against
- * *that* PSP's decline vocabulary, not whichever provider first
+ * *that* PSP's decline vocabulary, instead of whichever provider first
  * attempted it (see PaymentCheckoutSaga's own comment at its
  * compensate_markFailed() call site for the fallback scenario this
  * covers).
@@ -52,7 +52,7 @@ describe('PaymentAggregate.declineCategory', () => {
     });
     // Fallback attempt actually declined on ADYEN with an ADYEN-vocabulary
     // code ('25' = Restricted Card) — markFailed() must override
-    // _pspProvider to ADYEN, not classify '25' against Stripe's table
+    // _pspProvider to ADYEN rather than classify '25' against Stripe's table
     // (where it would wrongly come back RETRYABLE).
     payment.markFailed('PSP declined', '25', 'ADYEN');
     expect(payment.pspProvider).toBe('ADYEN');

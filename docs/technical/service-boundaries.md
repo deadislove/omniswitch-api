@@ -19,7 +19,7 @@ database, one deploy. This document is about the next step up:
 data, and a real network between them. Nothing here is urgent — see
 "Recommendation" — but the boundaries are worth naming precisely while
 the system is still small enough that getting them right costs a
-docblock, not a migration.
+docblock rather than a migration.
 
 ## The central coupling fact
 
@@ -46,7 +46,7 @@ The `payments` table itself has the same shape at the schema level:
 for "did this charge happen") all live in one table today. `ledger_outbox`
 is already a separate table, consumed asynchronously by
 `LedgerOutboxRelayService` — the one piece of today's schema that
-already looks like a service boundary, not a monolith table.
+already looks like a service boundary instead of a monolith table.
 
 ## What each boundary would own
 
@@ -61,10 +61,10 @@ whatever it says happened is what happened, financially.
 
 **Already closest to separable**: the outbox pattern
 (`LedgerOutboxRelayService`) is *already* an async consumer of a
-Postgres table, not a synchronous in-process call — the same shape a
+Postgres table rather than a synchronous in-process call — the same shape a
 real service boundary would take (a queue/table another service polls),
 just not yet a different process. Reconciliation and payouts are also
-already scheduled sweeps (`@Cron`), not synchronous request-path code.
+already scheduled sweeps (`@Cron`), rather than synchronous request-path code.
 
 ### Routing
 
@@ -78,10 +78,10 @@ concern, symmetric with routing calling a PSP out).
 **Hardest to separate**: this is the one boundary that's *synchronously*
 in the hot path by nature — a charge cannot complete without a real PSP
 round-trip, so extracting Routing into its own service means every
-charge crosses a real network hop to get there, not an optional one. The
+charge crosses a real, unavoidable network hop to get there. The
 circuit breaker and bulkhead already exist because a *PSP* being slow
 shouldn't take down the whole app; a Routing *service* being slow would
-be a second, new failure mode on top of that, not a replacement for it.
+be a second, new failure mode layered on top of that, rather than a replacement for it.
 
 ### Risk
 
@@ -95,7 +95,7 @@ monitoring/resolution (`AmbiguousPaymentService`,
 *settled* charge history after the fact (a daily `@Cron`, plus an
 on-demand admin trigger) — it doesn't need to be in the synchronous
 charge path at all today. `AmbiguousRiskMonitoringService` is invoked
-from the saga, but only to *flag* a risk condition, not to gate whether
+from the saga, but only to *flag* a risk condition rather than to gate whether
 the charge proceeds — that call could become async (an emitted event
 Risk consumes later) with the least behavioral change of anything listed
 here.

@@ -8,7 +8,7 @@
  * row alone can't serve as that cursor, since a window with no eligible
  * merchant produces no Payout row at all.
  *
- * Deliberately a plain record, not a rich aggregate with invariants to
+ * Deliberately a plain record rather than a rich aggregate with invariants to
  * protect — same posture as `ReconciliationRun`.
  */
 export class PayoutSweepRun {

@@ -186,7 +186,7 @@ describe('ReconciliationService', () => {
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
     fetchSettlementTransactions.mockResolvedValue([
       makeSettlement({ pspTransactionId: 'pi_partial2', amount: Money.of(40, 'USD') }),
-      makeSettlement({ pspTransactionId: 'pi_partial2', amount: Money.of(50, 'USD') }), // sums to 90, not 100
+      makeSettlement({ pspTransactionId: 'pi_partial2', amount: Money.of(50, 'USD') }), // sums to 90 instead of 100
     ]);
 
     const run = await service.reconcile('STRIPE', since, until);

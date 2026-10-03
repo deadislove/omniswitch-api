@@ -2,12 +2,12 @@ import { PSPProvider } from '../aggregates/payment.aggregate';
 
 /**
  * Decline codes a real card network/PSP can return where retrying is
- * actively harmful, not just unlikely to succeed — a stolen/lost/
+ * actively harmful, beyond just unlikely to succeed — a stolen/lost/
  * fraudulent card retried again is a real signal to whoever's monitoring
  * for card testing, and an expired card will never succeed on a retry
  * with the *same* stored credential regardless of backoff.
  *
- * **Per-PSP (Phase 1), not one shared vocabulary.** `errorCode` reaching
+ * **Per-PSP (Phase 1) rather than one shared vocabulary.** `errorCode` reaching
  * this function is the *raw* value each PSP adapter returns verbatim —
  * `StripePSPAdapter` passes through `response.last_payment_error?.code`
  * (Stripe's own `decline_code` strings, e.g. `stolen_card`) and
@@ -19,9 +19,9 @@ import { PSPProvider } from '../aggregates/payment.aggregate';
  * `RETRYABLE` (the exact bug this Phase 1 item fixes). See
  * `docs/business-domain/subscriptions.md`'s Dunning section for the
  * fuller reasoning. Each PSP's set is a documentation-accuracy claim
- * ("this code is really what that PSP's own docs say it is"), not a
- * statistical one — verified against each PSP's own, currently-published
- * documentation (via WebFetch, 2026), not trained-data recall:
+ * ("this code is really what that PSP's own docs say it is") rather than
+ * a statistical one — verified against each PSP's own, currently-published
+ * documentation (via WebFetch, 2026), never trained-data recall:
  *
  * - **Stripe** (docs.stripe.com/declines/codes) — all 6 confirmed as
  *   real, current `decline_code` values with the exact meanings this

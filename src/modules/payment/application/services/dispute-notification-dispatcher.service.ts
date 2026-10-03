@@ -11,7 +11,7 @@ import { MerchantService } from '../../../merchant/merchant.service';
  * env var), which channel handles a given merchant's dispute
  * notifications varies *per merchant* — so this is a small runtime
  * registry (same shape as `PaymentProcessorFactory`'s `Map<PSPProvider,
- * PSPAdapterPort>`), not a DI-level `useFactory` binding. Called from
+ * PSPAdapterPort>`), rather than a DI-level `useFactory` binding. Called from
  * `DisputeNotificationListener`, itself the actual `@OnEvent` subscriber
  * — kept separate so this class's per-merchant routing logic is testable
  * without needing a real `EventEmitter2` emission to exercise it.

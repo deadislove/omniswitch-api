@@ -1,7 +1,7 @@
 # Contract Testing (Stripe / Adyen Sandbox)
 
 `test/contract/` verifies `StripePSPAdapter`/`AdyenPSPAdapter` against
-the **real** Stripe/Adyen test-mode APIs, not `scripts/mock-psp/server.js`.
+the **real** Stripe/Adyen test-mode APIs instead of `scripts/mock-psp/server.js`.
 The e2e suite (`test/*.e2e-spec.ts`) exercises real Postgres/Redis/Vault
 but talks to mock-psp for the PSP leg — mock-psp is a hand-maintained
 approximation of Stripe's/Adyen's request/response shapes, so it can only
@@ -16,8 +16,8 @@ and `test/contract/adyen.contract-spec.ts` have not been run against the
 real APIs. Both files are `describe.skip`ped unless their required
 credential env var is set, so `npm test` / `npm run test:e2e` / CI never
 touch them. Treat every assertion in these files as "this is what the
-adapter's own code says the response should look like," not as something
-independently confirmed against Stripe/Adyen — that confirmation only
+adapter's own code says the response should look like," rather than as
+something independently confirmed against Stripe/Adyen — that confirmation only
 happens the first time someone actually runs this with real credentials.
 
 ## Why real credentials, and why they aren't in CI
@@ -90,7 +90,7 @@ one-time setup in the Adyen Customer Area sandbox.
 
 **What it covers**: `charge()` (immediate and manual-capture), `capture()`,
 `refund()` (Adyen refunds are asynchronous — the assertion is that the
-request is accepted with `status: 'PENDING'`, not that funds have
+request is accepted with `status: 'PENDING'`, rather than that funds have
 settled), `cancel()`, `verifyPaymentMethod()` (a zero-value,
 off-session authorization — see `AdyenPSPAdapter.verifyPaymentMethod()`'s
 own docblock for why Adyen has no separate SetupIntent-style API), and
@@ -100,7 +100,7 @@ own docblock for why Adyen has no separate SetupIntent-style API), and
 
 A clean run (`npm run test:contract` with both credential sets present)
 means every assertion above passed against the real API on the day it
-ran — treat it as a point-in-time confirmation, not a standing
+ran — treat it as a point-in-time confirmation rather than a standing
 guarantee; re-run after any change to either adapter or before a release
 that touches PSP integration code. A failure here, with mock-psp-backed
 e2e tests still green, is the specific signal this suite exists to

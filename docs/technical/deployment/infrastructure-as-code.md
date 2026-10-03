@@ -4,10 +4,10 @@ Everything in [`../k8s/`](../k8s/) assumes a Kubernetes cluster, a
 VPC/VNet, IAM, and (for a real deployment) a managed database/cache
 already exist. `terraform/` at the repo root is what actually
 provisions those — one independent Terraform project per cloud
-(AWS/GCP/Azure), not one shared codebase parameterized by provider. See
+(AWS/GCP/Azure), rather than one shared codebase parameterized by provider. See
 [`../../../terraform/README.md`](../../../terraform/README.md) for the
 full module-by-module breakdown; this page is the summary and the
-current status, not a duplicate of that doc.
+current status, rather than a duplicate of that doc.
 
 ## What's in each cloud's Terraform project
 
@@ -23,7 +23,7 @@ Five modules, same shape across all three clouds:
 
 Each cloud's modules are wired together in its own
 `environments/dev/` root module. `staging/`/`production/` exist as
-empty scaffolding, not yet filled in.
+empty scaffolding that isn't filled in yet.
 
 ## Architecture diagrams
 
@@ -36,9 +36,9 @@ tier down, and each cloud's own real connection-pooling gap (see
 "Known gaps" below) is called out directly on the diagram rather than
 left implicit.
 
-These are illustrative architecture diagrams, not screenshots of a
-running system — they visualize the design described in this doc and
-in `terraform/`, not proof that any of it has been applied.
+These are illustrative architecture diagrams rather than screenshots
+of a running system — they visualize the design described in this doc
+and in `terraform/` — not proof that any of it has been applied.
 
 ### AWS
 
@@ -83,8 +83,8 @@ This repo's `Security Scan` workflow (`.github/workflows/security-scan.yml`)
 runs Trivy's misconfiguration scanner against everything in this repo,
 including `terraform/`, and blocks merges on any CRITICAL finding. All
 three clouds' Terraform currently pass that gate with zero CRITICAL
-findings — verified with the exact same command the CI job runs, not
-just `terraform validate`.
+findings — verified with the exact same command the CI job runs, beyond just
+`terraform validate`.
 
 Two defaults worth knowing before you change them:
 
@@ -95,8 +95,8 @@ Two defaults worth knowing before you change them:
   `terraform/azure/modules/container-service`). A public control plane
   fails Trivy's AWS-0040/AZU-0041 checks regardless of IP restriction
   (AWS-0040 specifically fires on public access being enabled at all,
-  not just an open CIDR) — this is the textbook-correct default, not
-  just a scanner-pleasing one. **Real consequence**: `terraform apply`
+  beyond just an open CIDR) — this is the textbook-correct default,
+  beyond just a scanner-pleasing one. **Real consequence**: `terraform apply`
   for either cluster — including the `helm_release` resources those
   modules create themselves (metrics-server, kube-prometheus-stack,
   VPA, prometheus-adapter) — can only run from something with network
@@ -106,21 +106,21 @@ Two defaults worth knowing before you change them:
   OIDC deploy role `terraform/*/modules/iam` sets up is not, by itself,
   sufficient to run `apply` against these two modules as currently
   designed — this is a real, unresolved piece of the eventual CI/CD
-  wiring, not something already solved. GCP's GKE module doesn't carry
+  wiring, still unsolved. GCP's GKE module doesn't carry
   the equivalent finding at CRITICAL severity in Trivy's ruleset, but
   the same underlying gap (no `master_authorized_networks`/private
   endpoint configured) exists there too — it just surfaces as
   HIGH-severity in the "Full scan (report only)" step instead of
   blocking merges.
-- **One CRITICAL finding is deliberately suppressed, not fixed** — see
+- **One CRITICAL finding is deliberately suppressed rather than fixed** — see
   `.trivyignore.yaml` at the repo root. It's the EKS managed node
   group's unrestricted (`0.0.0.0/0`) outbound rule, which lives inside
-  the pinned `terraform-aws-modules/eks` community module, not this
-  repo's own code, and exists because worker nodes need to reach
+  the pinned `terraform-aws-modules/eks` community module rather than
+  this repo's own code, and exists because worker nodes need to reach
   container registries (`registry.k8s.io`, `ghcr.io`, `quay.io`,
   `docker.io`, ...) whose IP ranges aren't fixed or enumerable —
-  narrowing it would break image pulls, not improve security. The
-  suppression is scoped to that exact finding ID and file path, not a
+  narrowing it would break image pulls instead of improving security. The
+  suppression is scoped to that exact finding ID and file path — not a
   blanket rule-wide or repo-wide disable; every other instance of the
   same underlying check (the VPC's base security group, the RDS and
   Redis security groups) is fixed for real, scoped to the VPC's own
@@ -142,7 +142,7 @@ Two defaults worth knowing before you change them:
   `k8s/postgres.yaml`, `k8s/redis.yaml`, and `k8s/pgbouncer.yaml`
   self-host these inside the cluster today, mirroring
   `docker-compose.yml`. The `cloud-saas` modules build the managed-service
-  target state alongside that, not a migration — cutting over means a
+  target state alongside that, rather than a migration — cutting over means a
   real data migration (logical replication/`pg_dump`+restore, Redis
   RDB/AOF) and repointing `DB_MASTER_HOST`/`DB_REPLICA_HOST`/`REDIS_HOST`,
   then retiring the self-hosted manifests.
@@ -157,6 +157,6 @@ Two defaults worth knowing before you change them:
   `apply` them, as currently designed.** See "Security posture" above —
   both control planes default to private-only, which a GitHub-hosted
   runner can't reach. `terraform/*/modules/iam`'s GitHub Actions OIDC
-  federation covers authentication, not network reachability; a real
+  federation covers authentication rather than network reachability; a real
   CI/CD pipeline for these two modules still needs a bastion, VPN, or
   self-hosted runner inside the VPC/VNet — not yet built.

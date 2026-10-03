@@ -5,12 +5,12 @@ import { createHmac } from 'crypto';
  * channel across every event family this platform has (dispute,
  * subscription, AML review, sanctions-screening — each email/Slack/
  * webhook) — a plain JSON POST with a timeout, and the HMAC scheme
- * `WebhookDisputeNotificationAdapter` originated. Lives in `shared/`,
- * not `payment/adapters/notifications/` where it originated, because
+ * `WebhookDisputeNotificationAdapter` originated. Lives in `shared/`
+ * rather than `payment/adapters/notifications/` where it originated, because
  * sanctions-screening notifications are dispatched from `MerchantModule`
  * — which `PaymentModule` depends on, never the reverse (see
  * `docs/technical/architecture.md`'s module graph) — so a module-graph-
- * respecting shared location, not a fourth copy of this fetch call, is
+ * respecting shared location, rather than a fourth copy of this fetch call, is
  * what let that family reuse it too.
  */
 
@@ -23,7 +23,7 @@ export interface NotificationDeliveryError extends Error {
  * Returns the response's status on success — every existing caller
  * ignored the return value entirely before `WebhookDeliveryLogService`
  * needed it (see that service's own docblock), so widening this from
- * `Promise<void>` is backward compatible, not a behavior change for any
+ * `Promise<void>` is backward compatible — not a behavior change for any
  * of them.
  */
 export async function postJsonNotification(

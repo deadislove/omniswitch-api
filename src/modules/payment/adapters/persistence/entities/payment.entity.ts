@@ -10,7 +10,7 @@ import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 // every unique constraint on a partitioned table to include the
 // partition key). TypeORM's own migration-generation isn't used in this
 // codebase (all migrations here are hand-written), so this decorator is
-// documentation only, not a live schema-sync source — expressing the
+// documentation only, never a live schema-sync source — expressing the
 // true 3-column constraint here would be misleading in the other
 // direction (implying TypeORM manages it), so it's left off entirely
 // rather than declared incorrectly.
@@ -142,7 +142,7 @@ export class PaymentEntity {
   settlementConversion?: { currency: string; rate: number; provider: string };
 
   /**
-   * A cross-border audit record, not a tax calculation — see
+   * A cross-border audit record rather than a tax calculation — see
    * PaymentAggregate.recordTaxRecord()'s and
    * src/modules/payment/domain/services/tax-record.ts's docblocks. Only
    * set when this charge was cross-border (same condition as

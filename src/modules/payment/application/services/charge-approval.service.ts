@@ -49,7 +49,7 @@ export class ChargeApprovalService {
   }
 
   /**
-   * Reads via findByIdOnMaster(), not the ambient replica-routed
+   * Reads via findByIdOnMaster() instead of the ambient replica-routed
    * findById() — this hold state only exists so an operator can act on
    * it right away, so every read here (the general detail view included)
    * has to see a just-written approval immediately. Low enough volume
@@ -144,8 +144,8 @@ export class ChargeApprovalService {
    * docblock describes: this signal used to be permanently absent on
    * every charge that goes through approval, which — because
    * `ChargeApproval` only exists above `requireApprovalAboveAmount` — is
-   * by construction every one of this delegation's largest charges, not
-   * a rare edge case.
+   * by construction every one of this delegation's largest charges rather
+   * than a rare edge case.
    *
    * This charge's own `amount` was already reserved against the
    * delegation back at creation time (`PaymentController.charge()`), so
@@ -155,9 +155,9 @@ export class ChargeApprovalService {
    * pre-reservation `Delegation` object `reserveSpendOrThrow()` returns.
    * Using *current* spend for everything else the delegation has done
    * since creation (not a frozen creation-time snapshot) is a genuine
-   * improvement, not just a stale re-read — an approval sitting for days
-   * should reflect what the delegation has actually spent since, not
-   * what it looked like when the approval was first created.
+   * improvement, beyond just a stale re-read — an approval sitting for days
+   * should reflect what the delegation has actually spent since, rather
+   * than what it looked like when the approval was first created.
    *
    * Returns `undefined` (the previous, honest "signal absent" behavior)
    * if the numbers don't support a meaningful calculation — the calendar

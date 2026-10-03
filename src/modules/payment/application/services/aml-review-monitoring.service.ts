@@ -15,7 +15,7 @@ import { AmlReviewNotificationDispatcherService } from './aml-review-notificatio
  * decline-code-classifier.ts) in a short window is exactly the kind of
  * cross-referenceable signal that's too hard to fully automate a
  * judgment from, but easy to surface for a human reviewer — a warning
- * flag, not an auto-block.
+ * flag rather than an auto-block.
  *
  * Evaluated inline, right after a charge is marked FAILED (see
  * `evaluate()`, called from
@@ -31,7 +31,7 @@ import { AmlReviewNotificationDispatcherService } from './aml-review-notificatio
  * Only ever evaluates `industryRiskCategory === 'HIGH'` merchants — a
  * deliberate scope limit (not "every merchant"), the same MCC-risk
  * premise `mcc-risk-lookup.ts` already encodes: a LOW-risk industry's
- * occasional hard-decline is just card-testing/fraud noise, not an
+ * occasional hard-decline is just card-testing/fraud noise instead of an
  * AML-adjacent signal worth a human's time.
  *
  * A merchant flagged manually (PATCH .../aml-review) has
@@ -43,15 +43,15 @@ import { AmlReviewNotificationDispatcherService } from './aml-review-notificatio
  * Unlike `AmbiguousRiskMonitoringService`, this fires a real
  * notification (email/Slack/webhook, per merchant config) the moment the
  * flag trips — a HIGH-industry merchant crossing this threshold is
- * compliance-relevant enough to page someone in real time, not just show
- * up on a dashboard whenever an operator next looks. Only sent once per
- * trip, not re-sent on every subsequent hard-decline while already
- * flagged (see the already-flagged branch below).
+ * compliance-relevant enough to page someone in real time, beyond just
+ * showing up on a dashboard whenever an operator next looks. Only sent
+ * once per trip — never re-sent on every subsequent hard-decline while
+ * already flagged (see the already-flagged branch below).
  */
 @Injectable()
 export class AmlReviewMonitoringService {
   private readonly logger = new Logger(AmlReviewMonitoringService.name);
-  // Read in the constructor, not as module-level constants — see
+  // Read in the constructor rather than as module-level constants — see
   // AmbiguousRiskMonitoringService's own docblock for why (a test
   // wanting a low threshold set via process.env in beforeAll would
   // otherwise silently get the real default instead).

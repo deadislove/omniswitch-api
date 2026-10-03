@@ -9,7 +9,7 @@ policy they enforce, see
 For day-2 operation (running them, reading their logs, troubleshooting),
 see [`../guide/jobs/`](../guide/jobs/).
 
-## Standalone scripts, not `@Cron()` methods
+## Standalone scripts rather than `@Cron()` methods
 
 Every job in `src/jobs/` is a plain script with a `main()` guarded by
 `if (require.main === module)` — not a `@Cron()`-decorated method on a
@@ -62,9 +62,9 @@ Every job's k8s resource (CronJob or Job) carries
 `workload-type: batch-job`, at both `metadata.labels` and the pod
 template's `spec.template.metadata.labels`. The API's own
 `k8s/deployment.yaml` carries `workload-type: service` instead — purely
-descriptive, not part of any `selector.matchLabels` (a Deployment's
-selector is immutable after creation, so this is layered on top, not
-load-bearing for scheduling). This exists so an operator can select
+descriptive rather than part of any `selector.matchLabels` (a Deployment's
+selector is immutable after creation, so this is layered on top
+rather than load-bearing for scheduling). This exists so an operator can select
 every maintenance/batch pod across the whole `payments` namespace in
 one query, independent of which specific job it is:
 
@@ -91,7 +91,7 @@ kubectl get pods -n payments -l workload-type=batch-job
    process happens to be configured against.
 
 **Why a structured JSON log line instead of a metrics endpoint:** these
-are short-lived CLI processes, not long-running HTTP servers —
+are short-lived CLI processes instead of long-running HTTP servers —
 `prom-client` can't scrape them the normal way mid-run (there's no
 "mid-run" to scrape; they finish in well under a second at this
 project's data volume). A single-line JSON summary is greppable
@@ -106,10 +106,10 @@ for the specific fields each job emits.
 writes its pre-deletion export to, based on `DELETION_BACKUP_STORAGE`.
 
 This is a **plain factory function** (`export function
-getBackupStorage(): BackupStorage { switch (...) { ... } }`), not a
+getBackupStorage(): BackupStorage { switch (...) { ... } }`), rather than a
 NestJS-injected provider the way `PaymentProcessorFactory` selects
 between Stripe and Adyen adapters. The distinction matters and is
-deliberate, not an inconsistency to "fix" later:
+deliberate — worth calling out explicitly here rather than quietly "fixed" later:
 
 - `PaymentProcessorFactory` lives inside `PaymentModule`, resolved
   through Nest's DI container at request time — the running API always
@@ -120,7 +120,7 @@ deliberate, not an inconsistency to "fix" later:
   provider registry for `getBackupStorage()` to participate in, so a
   `useFactory`/`useClass` provider binding isn't an option — a plain
   function called directly (`getBackupStorage().write(...)`) is the
-  actual mechanism available in this context, not a simplification of
+  actual mechanism available in this context, rather than a simplification of
   one.
 
 If a future job ever needs multi-provider selection *and* runs inside
@@ -128,7 +128,7 @@ the Nest DI container (e.g., something exposed through an admin HTTP
 endpoint rather than a CronJob), that one should use the
 `PaymentProcessorFactory`-style DI pattern instead — the plain-function
 factory here is specifically because this caller has no container to
-inject into, not a general preference for one pattern over the other.
+inject into, rather than a general preference for one pattern over the other.
 
 See [`../technical/clouds/README.md`](./clouds/README.md) for the
 three cloud adapters this factory selects between, and
@@ -166,7 +166,7 @@ Two layers, matching the rest of this codebase's testing split
 **Never exercised against real cloud infrastructure**: the three cloud
 `BackupStorage` adapters have no live-bucket test anywhere in this
 project — no real AWS/GCP/Azure credentials exist in CI or local dev.
-This is a real, documented gap, not an oversight — see
+This is a real, documented gap — not an oversight — see
 [`clouds/README.md`](./clouds/README.md#what-this-doesnt-cover).
 
 ## Job inventory
@@ -183,4 +183,4 @@ This is a real, documented gap, not an oversight — see
 data-retention story (it's what a legal hold blocks the other jobs
 from touching), but it's the one exception to "standalone script
 outside DI" — it's invoked synchronously from an HTTP request, so it's
-a normal injectable Nest service, not a CronJob target.
+a normal injectable Nest service instead of a CronJob target.

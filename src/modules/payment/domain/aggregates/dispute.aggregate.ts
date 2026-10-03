@@ -13,8 +13,8 @@ const DEFAULT_RESPONSE_WINDOW_DAYS = 7;
 /**
  * Dispute Aggregate
  * A chargeback/dispute reported by a PSP against an already-`SUCCEEDED`
- * payment (see PaymentAggregate.markDisputed()). Tracked as its own record,
- * not just a payment status flip, because a dispute has a lifecycle of its
+ * payment (see PaymentAggregate.markDisputed()). Tracked as its own record —
+ * more than just a payment status flip, because a dispute has a lifecycle of its
  * own — evidence submission, a response deadline, an eventual won/lost
  * outcome — that the payment's own state machine has no room to represent.
  */
@@ -48,7 +48,7 @@ export class Dispute {
     reason?: string;
     /** Set once, at creation, by DisputeService.recordDispute() — see dispute-policy.ts. Immutable: an operator's later manual action doesn't retroactively change what the policy originally recommended. */
     autoDecision?: DisputeAutoDecision;
-    /** Snapshotted at creation from the disputed Payment — see DisputeEntity.delegationId's docblock for why this is a snapshot, not a live join. */
+    /** Snapshotted at creation from the disputed Payment — see DisputeEntity.delegationId's docblock for why this is a snapshot rather than a live join. */
     delegationId?: string;
     initiatedBy?: PaymentInitiator;
     /** Audit-only snapshot of the merchant's risk tier at the moment decideAutoDisposition() ran — see dispute-policy.ts's merchantRiskTier param. `undefined` when the merchant had no evaluable tier (same as 'MEDIUM' for the decision itself). */
