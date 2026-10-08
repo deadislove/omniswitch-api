@@ -17,6 +17,11 @@ on:
   push:
     branches: [main]
     tags: ['**']
+  schedule:
+    # Catches branch deletions that never push to main — e.g. Dependabot
+    # closing a superseded PR and deleting its branch fires no push event,
+    # so a deletion-only change can otherwise sit unmirrored indefinitely.
+    - cron: '0 6 * * 1' # weekly, Monday 06:00 UTC
 
 permissions:
   contents: read
