@@ -1,11 +1,24 @@
 # CI/CD
 
-Two GitHub Actions workflows, plus Dependabot, run against every push and
-pull request to `main`. This document covers what each one does, why
-certain gates are blocking and others aren't, and two failure modes this
-pipeline is built to guard against — both with root causes that aren't
-obvious from the failure output alone, worth reading before touching
-either workflow file.
+`ci.yml` and `security-scan.yml` run against every push and pull
+request to `main` — these two are this document's main subject: what
+each one does, why certain gates are blocking and others aren't, and
+two failure modes this pipeline is built to guard against, both with
+root causes that aren't obvious from the failure output alone, worth
+reading before touching either workflow file.
+
+Four other workflows exist under `.github/workflows/` with narrower,
+unrelated triggers, each documented where its subject matter actually
+lives rather than here: `chaos-drill.yml` (monthly schedule +
+`workflow_dispatch`, not push-triggered — see
+[`tests/chaos-testing.md`](./tests/chaos-testing.md)), `sdk-package.yml`
+(push to `main`, but only on `sdk/**` changes) and `sdk-publish.yml`
+(triggered by `sdk-v*` tags, not pushes — see
+[`sdk/README.md`](./sdk/README.md)), and `gitlab-mirror.yml` (push to
+`main`, unconditional — see
+[`disaster-recovery.md`](./disaster-recovery.md#known-gaps), a backup
+mechanism rather than a CI/CD gate). Dependabot (below) runs
+independently of all of these.
 
 ## `.github/workflows/ci.yml`
 

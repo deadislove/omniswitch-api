@@ -58,8 +58,13 @@ the double-booking one found and fixed during this project) could silently
 misstate the books indefinitely. `ReconciliationService` now runs hourly
 per PSP (`@Cron`), diffing our own charged-status payments against Stripe's
 balance transactions / Adyen's settlement report for the same window, and
-flags three distinct mismatch shapes (`MISSING_AT_PSP`, `AMOUNT_MISMATCH`,
-`UNKNOWN_AT_PSP`) rather than a single undifferentiated "doesn't match."
+flags five distinct mismatch shapes (`MISSING_AT_PSP`, `AMOUNT_MISMATCH`,
+`UNKNOWN_AT_PSP`, `CURRENCY_MISMATCH`, `COMPARISON_ERROR`) rather than a
+single undifferentiated "doesn't match" — `CURRENCY_MISMATCH` is kept
+separate from `AMOUNT_MISMATCH` since a settled currency differing from
+the charge currency can be a legitimate PSP-side conversion rather than a
+bug, and `COMPARISON_ERROR` isolates one payment's comparison throwing
+unexpectedly so it doesn't fail the whole provider's run.
 Every run — clean or not — is persisted (`reconciliation_runs`) and
 queryable via `ReconciliationAdminController`
 (`GET /admin/reconciliation/runs`, `POST /admin/reconciliation/run` for an
@@ -126,8 +131,15 @@ honestly-labeled example and a written migration path:
 adopting it needs zero deployment-manifest changes) and
 [`docs/technical/secret-management.md`](docs/technical/secret-management.md#migration-path-for-k8s-level-secrets-and-production-vault)'s
 "Migration path" section, covering both the K8s-secrets question and the
-separate dev-mode-Vault-to-production steps (persistent storage backend,
-AppRole/K8s auth instead of a static root token).
+remaining dev-mode-Vault-to-production steps (persistent storage backend,
+HA, auto-unseal against a cloud KMS). The auth-method half of that
+migration is already done, not just planned: `VaultTransitService` now
+supports an `approle` mode (`VAULT_AUTH_METHOD=approle`, short-lived
+token with background renewal — see `src/shared/vault/vault-transit.service.ts`)
+alongside the original static root token; `docker-compose.yml`'s `vault`
+service still uses the static token for local dev, which is the right
+default for a disposable dev stack, not a sign the alternative doesn't
+exist.
 
 ### 5. Observability gaps — partially resolved
 `k8s/deployment.yaml` had carried `prometheus.io/scrape: "true"` /
@@ -357,16 +369,29 @@ benefit from USD volume crossing the same numeric threshold; clearing
 tiers reverts to the flat rate; and non-ascending/duplicate thresholds
 are rejected 422 rather than silently sorted.
 
-**Still open**: this platform fee — flat or tiered — is still not
-reconciled against actual PSP interchange cost.
-`SmartRoutingStrategy.calculateFee()` separately *estimates* PSP fees for
-routing/display purposes (`estimatedFee` in charge responses), and that
-number remains completely disconnected from what's actually booked to the
-ledger via `platformFeeBps`/`feeTiers`. If the platform fee is meant to
-be "PSP cost plus margin," that calculation still doesn't exist — making
-the platform-side rate configurable (and now volume-tiered) didn't
-connect it to real PSP cost data, which this project has no source for
-in the first place (the mock PSP doesn't simulate interchange costs).
+**The PSP-interchange-cost side is resolved too, as a separate
+reconciliation rather than feeding back into the platform fee itself**:
+`SmartRoutingStrategy.calculateFee()` still *estimates* PSP fees for
+routing/display purposes (`estimatedFee` in charge responses,
+`PspFeeScheduleService`, now configurable per-deployment instead of
+hardcoded), and that number stays intentionally separate from what's
+booked to the ledger via `platformFeeBps`/`feeTiers` — those answer "what
+does the platform charge the merchant," not "what does the platform pay
+the PSP." What *was* missing is a way to check the estimate against
+reality. `PspCostReconciliationService` (`POST
+/admin/psp-cost-reconciliation/run`) now closes that: it computes the
+estimated fee from real settled charges and diffs it against the actual
+invoiced fee from `PSPAdapterPort.fetchFeeStatement()` (or an
+operator-supplied override, e.g. a downloaded real PSP statement),
+recording which source was used (`actualFeeSource`) so a report can't be
+mistaken for the other kind. Against `mock-psp`'s `/statement` endpoints
+here, that's a deterministic *simulated* real fee with per-transaction
+variance (a premium-card surcharge on a fifth of transactions) rather
+than an unrealistic exact match every time — proving the reconciliation
+math against genuine drift. "PSP cost plus margin" as a pricing *policy*
+still isn't automatic — the reconciliation reports the gap, it doesn't
+feed back into `platformFeeBps` on its own — but the data to make that
+decision on now exists, which it didn't before.
 
 ### 9. Circuit breaker / health metrics are unbounded cumulative counters — ✅ resolved
 `successCount`/`totalRequests`/`totalLatencyMs` used to accumulate for as
@@ -2159,37 +2184,45 @@ starting it; that file gives the *business* reasoning in full.
   all done)** — the platform/connected-account relationship, charge-time
   split rules, proportional refund/dispute-loss reversal, batched payout
   scheduling with a rolling reserve, a real (mocked) KYC review gating
-  payouts (not charges), and real (mocked) bank-transfer initiation are
-  now real, Tier 3 above. What's still missing: a real KYC review (the
-  mock decision is synchronous and marker-driven, not an actual
-  reviewer); a follow-up transfer for a reserve released after its
-  payout's net amount was already sent; and a real bank/ACH/wire rail
-  (the mock resolves "sent" synchronously, a real one settles over days).
+  payouts (not charges), real (mocked) bank-transfer initiation, and a
+  follow-up transfer for a reserve released after its payout's net
+  amount was already sent (a fully independent second transfer track,
+  not a special case bolted onto the first) are now real, Tier 3 above.
+  What's still missing: a real KYC review (the mock decision is
+  synchronous and marker-driven, not an actual reviewer) and a real
+  bank/ACH/wire rail (the mock resolves "sent" synchronously, a real one
+  settles over days).
 - **Merchant risk tiering & reserves (mechanism and a basic auto-policy
   done, real underwriting still open)** — the reserve-hold mechanism and
   a working `RiskTieringService` (trailing lost-dispute rate ->
   `reserveBps`/`reserveHoldDays`, both directions, with a manual-override
-  escape hatch) are now real, Tier 3 above. What's still missing is a
-  *real* risk model: the three tiers built here are deliberately simple,
-  round thresholds illustrating the mechanism, not something calibrated
-  against real fraud/chargeback data. A production system would also
-  weigh MCC code, account tenure, and dispute *reason* codes (fraud vs.
-  "product not as described" carry very different signal) rather than a
-  single lost-dispute-rate number, and would probably use a continuous
-  function instead of 3 buckets.
+  escape hatch) are now real, Tier 3 above. MCC code and account tenure
+  now feed in too, as escalation-only modifiers on top of the base
+  lost-dispute-rate tier (a clean dispute history doesn't excuse a
+  high-risk MCC; a low-risk MCC doesn't excuse a bad dispute history) —
+  not the single-signal model this item originally described. What's
+  still missing is a *real* risk model beyond that: the three tiers and
+  escalation thresholds are deliberately simple, round numbers
+  illustrating the mechanism, not something calibrated against real
+  fraud/chargeback data; dispute *reason* codes still don't feed in at
+  all (fraud vs. "product not as described" carry very different signal,
+  and nothing here distinguishes them yet); and a real model would
+  probably use a continuous function instead of discrete tiers.
 - **Dispute resolution policy layer (mechanism done, real calibration
   still open)** — auto-accept/contest by amount and reason code,
   reason-code-specific evidence guidance, and a structured
   `dispute.created`/`dispute.resolved` notification hook are now real,
-  Tier 3 above. What's still missing: the thresholds/reason table are
-  illustrative, not calibrated against real chargeback win-rate data. The
-  connection between this and `RiskTieringService` is one-way —
-  `RiskTieringService` already reads dispute *outcomes* (lost-dispute
-  rate) to set a merchant's reserve, but the dispute policy doesn't read
-  a merchant's risk tier back to inform auto-accept/contest decisions.
-  Also missing: decline-code-nuanced learning from past outcomes, and no
-  actual email/Slack/paging integration subscribed to the new event hook
-  yet.
+  Tier 3 above. The `RiskTieringService` connection is now two-way, not
+  one: `RiskTieringService` reads dispute *outcomes* (lost-dispute rate)
+  to set a merchant's reserve, and `dispute-policy.ts`'s
+  `decideAutoDisposition()` reads that same risk tier back to scale the
+  auto-accept threshold (LOW tier ×0.5, HIGH tier ×2) and extend the
+  auto-contestable reason set for LOW-risk merchants. What's still
+  missing: the thresholds/reason table and the tier multipliers
+  themselves are illustrative, not calibrated against real chargeback
+  win-rate data; decline-code-nuanced learning from past outcomes; and
+  no actual email/Slack/paging integration subscribed to the new event
+  hook yet.
 - **Cross-border settlement & tax (VAT/tax and a real hedging product
   remain open)** — the settlement-conversion mechanism, refunds/lost
   disputes netting cleanly against it, and presentment currency are all
@@ -2202,18 +2235,19 @@ starting it; that file gives the *business* reasoning in full.
   the charge-time rate and reusing it for that payment's refunds/disputes
   — see Tier 3 above) but not in the broader sense of a merchant wanting
   to lock in a rate *before* committing to a sale.
-- **Agentic payments (delegation + spend-policy enforcement done, human-
-  approval/agent-specific risk scoring still open)** — a merchant can now
-  authorize an autonomous agent via a real, atomically-enforced
-  `Delegation`/`SpendPolicy` (per-transaction limit, rolling monthly
-  limit, category allowlist), scoped to exactly one route
-  (`POST /payments/charge`) and revocable in real time via the existing
-  JWT jti-revocation mechanism, Tier 3 above. What's still missing: no
-  "hold for human approval" above a threshold (a charge either fits the
-  policy or is rejected outright); no agent-specific risk scoring
-  (`calculateRiskScore()` treats an agent charge like a human one); and
-  no per-request agent signing (the delegation JWT's own possession is
-  this MVP's authenticity proof).
+- **Agentic payments (delegation + spend-policy enforcement, human-
+  approval hold, and per-agent request signing all done — agent-specific
+  risk scoring still open)** — a merchant can now authorize an autonomous
+  agent via a real, atomically-enforced `Delegation`/`SpendPolicy`
+  (per-transaction limit, rolling monthly limit, category allowlist),
+  scoped to exactly one route (`POST /payments/charge`) and revocable in
+  real time via the existing JWT jti-revocation mechanism; a charge above
+  `requireApprovalAboveAmount` holds for human approval instead of
+  auto-executing or being rejected outright; and every delegation gets
+  its own HMAC signing key, verified by `HmacSignatureGuard` on every
+  agent-initiated charge the same way a merchant's own key is — all
+  Tier 3 above. What's still missing: agent-specific risk scoring
+  (`calculateRiskScore()` treats an agent charge like a human one).
 
 ### AI agents / agentic payments
 
@@ -2226,14 +2260,16 @@ for the business framing. What follows is the technical detail on the
 genuinely remaining gaps, deliberately left open because they're new
 design surface, not oversights:
 
-- **Pre-authorized intents with a human-approval step.** The business
-  framing this section originally called for ("ask me first for
-  anything above $200") isn't built — `reserveSpendOrThrow()` either
-  admits a charge or rejects it outright; there's no "hold pending human
-  review" intermediate state. That's a genuinely new async flow (the
-  charge request would need to pause, not just succeed/fail synchronously)
-  closer to Stripe's SetupIntent/mandate model than an extension of the
-  current reserve-then-charge path.
+- **Pre-authorized intents with a human-approval step — ✅ resolved**,
+  see "Agentic payment human-approval hold" above: a charge above
+  `SpendPolicy.requireApprovalAboveAmount` (but within the delegation's
+  hard per-transaction limit) now holds in a `PENDING_APPROVAL` state
+  (`ChargeApproval` aggregate) instead of auto-executing or being
+  rejected outright — spend is reserved either way before the approval
+  decision, so pending requests can't collectively bust the monthly
+  budget while waiting. What's still open: no SLA/expiry on a pending
+  approval sitting unactioned, and no notification to the human approver
+  that one exists (they have to poll `GET /charge-approvals`).
 - **Risk scoring for non-human initiators.** `PaymentAggregate.calculateRiskScore()`
   still reasons about amount and card origin only — an agent-initiated
   charge is scored identically to a human one. A real model would weigh

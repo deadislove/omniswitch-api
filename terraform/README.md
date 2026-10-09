@@ -60,9 +60,7 @@ terraform/
 │   │   ├── cloud-saas/  # Cloud SQL, Memorystore, GCS, Secret Manager
 │   │   └── hsm/         # Cloud KMS (Cloud HSM is a later, separate decision)
 │   └── environments/
-│       ├── dev/
-│       ├── staging/
-│       └── production/
+│       └── dev/          # staging/production not yet scaffolded for this cloud
 ├── azure/
 │   ├── bootstrap/       # one-time: Storage Account remote state backend (blob
 │   │                    #   lease locking, no separate lock table needed)
@@ -73,9 +71,7 @@ terraform/
 │   │   ├── cloud-saas/  # Postgres Flexible Server, Cache for Redis, Storage, Key Vault
 │   │   └── hsm/         # Premium (HSM-backed) Key Vault key (Managed HSM is a later, separate decision)
 │   └── environments/
-│       ├── dev/
-│       ├── staging/
-│       └── production/
+│       └── dev/          # staging/production not yet scaffolded for this cloud
 └── shared/
     └── tagging.md       # the one tag/label schema all three clouds map onto
 ```

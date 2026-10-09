@@ -116,7 +116,14 @@ self-heals via each Deployment's own retry/readiness behavior, but the
 dependency order that actually matters if deploying by hand or debugging
 a partial rollout:
 
-1. `configmap.yaml`, `secret.yaml` — everything else reads from these.
+1. `configmap.yaml`, `secret.yaml`, `serviceaccount.yaml` — foundational,
+   no dependency on each other. `deployment.yaml` fails to schedule
+   without `serviceaccount.yaml`'s `omniswitch-api-sa` already existing
+   (`serviceAccountName: omniswitch-api-sa`); the app itself makes no
+   Kubernetes API calls, so this ServiceAccount intentionally carries no
+   Role/RoleBinding — it exists only so the pod runs under its own
+   identity rather than the namespace's `default` one, which is what a
+   future cloud IAM binding (IRSA/Workload Identity) would attach to.
 2. `postgres.yaml`, `redis.yaml`, `vault.yaml` — the data-layer backends.
    `postgres.yaml`'s replica specifically needs `postgres-master`
    reachable to complete its `pg_basebackup` bootstrap on first start.

@@ -108,7 +108,9 @@ src/
 │       │   │                      # ports above)
 │       │   ├── cache/             # Redis (ioredis) — idempotency locking
 │       │   ├── circuit-breaker/   # RedisCircuitBreakerService — per-PSP health, shared
-│       │   │                      # across replicas (see "A note on shared state")
+│       │   │                      # across replicas (see "A note on shared state");
+│       │   │                      # MerchantPspExposureService — per-merchant PSP routing
+│       │   │                      # concentration, feeds DegradedPspAwareThrottlerGuard
 │       │   ├── fx/                # FXRateProviderAdapter — calls mock-psp's /fx/rates
 │       │   ├── bank/              # Mock/Ach/WireBankTransferAdapter — payout transfer
 │       │   │                      # initiation, selected via BANK_TRANSFER_PROVIDER;
@@ -124,10 +126,11 @@ src/
 │           │                      # SubscriptionController, PlanController,
 │           │                      # DelegationController, ChargeApprovalController (the
 │           │                      # PENDING_APPROVAL hold state for an above-threshold
-│           │                      # agent charge), plus 12 focused admin controllers
+│           │                      # agent charge), plus 13 focused admin controllers
 │           │                      # (Outbox/Reconciliation/Dispute/Reserve/Subscription/
 │           │                      # RiskTiering/MarketplacePayout/LegalHold/AmbiguousPayment/
-│           │                      # AmbiguousRisk/AmlReview/PspCostReconciliation —
+│           │                      # AmbiguousRisk/AmlReview/PspCostReconciliation/
+│           │                      # WebhookDelivery —
 │           │                      # LegalHold is
 │           │                      # POST/DELETE admin/payments/:id/legal-hold, see
 │           │                      # docs/compliance/data-retention.md)

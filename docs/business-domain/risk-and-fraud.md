@@ -123,9 +123,13 @@ reason (`src/modules/payment/domain/services/dispute-risk-weight.ts`)
 instead of counting every one identically: `fraudulent` at full weight,
 `product_not_received`/`subscription_canceled` at half,
 `duplicate` at a quarter — the same reason-code vocabulary
-`dispute-policy.ts`'s auto-contest table already uses. Two merchants
-with the same raw *count* of `LOST` disputes can land in different
-tiers depending on why those disputes were lost.
+`dispute-policy.ts`'s auto-contest table already uses. An unlisted
+reason code defaults to full weight — the conservative choice, since
+treating an unrecognized reason as low-risk by default could silently
+under-count real risk as new reason codes appear at the PSP level
+before this table is updated to know about them. Two merchants with
+the same raw *count* of `LOST` disputes can land in different tiers
+depending on why those disputes were lost.
 
 **Escalation now reaches back to already-booked reserves (Phase 1) —
 both when the sweep escalates and when an operator manually escalates

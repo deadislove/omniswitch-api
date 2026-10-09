@@ -38,7 +38,8 @@ things wrong:
 ## Decision
 
 Build a first-party Node/TypeScript client, `sdk/node` (package name
-`@omniswitch/node`), living in this repository rather than a separate
+`@omniswitch/node` at the time — see the update note in Consequences
+below), living in this repository rather than a separate
 one, covering the money-movement endpoints
 (charge/refund/capture/cancel/get-payment) plus a standalone
 `verifyWebhookSignature()` export a merchant's own webhook receiver can
@@ -95,13 +96,18 @@ documented rather than implied to be covered. Every future change to a
 wrapped endpoint's contract now needs updating in two places instead of
 one.
 
-**Not published to any package registry.** This lives in the same
-repository as the API it wraps and is built from source
-(`cd sdk/node && npm install && npm run build`) — not something you
-can `npm install @omniswitch/node` from a public registry. Publishing it
-is a distinct decision — it commits to public versioning, a support
-lifecycle, and a compatibility contract independent of this
-repository's own release cadence — and isn't made by this ADR.
+**Not published to any package registry, at the time this ADR was
+written.** This lived in the same repository as the API it wraps and
+was built from source (`cd sdk/node && npm install && npm run build`),
+not installable from a public registry. Publishing was a distinct
+decision this ADR deliberately didn't make.
+
+*(Update — see [ADR-0007](./0007-github-packages-publishing.md):
+`sdk/node` is now published to this repository's own GitHub Packages
+npm registry, under the renamed package `@deadislove/omniswitch-node`
+— GitHub Packages requires a scoped package's namespace to match the
+repository owner, which `@omniswitch` didn't. Still not on the public
+npm registry.)*
 
 **MFA-enabled credentials can't use this client.** A real, deliberate
 constraint for the server-side integration use case this targets —

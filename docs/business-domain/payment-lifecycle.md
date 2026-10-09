@@ -207,12 +207,19 @@ happen in the same webhook handler, though not in a single DB transaction
 **Auto-decision policy**: at creation, `DisputeService.recordDispute()`
 also runs a pure policy function (`dispute-policy.ts`) that classifies the
 new dispute as `ACCEPT`, `CONTEST`, or `MANUAL_REVIEW` — amount checked
-first (below an illustrative $15 — too small to be worth contesting
-regardless of
-reason), then reason code (only `product_not_received`/`duplicate` are
-templated for auto-contest today; `fraudulent` and anything unrecognized
-default to `MANUAL_REVIEW`). `CONTEST` is the one decision that actually
-*acts*: it immediately calls the PSP with a templated evidence string,
+first against an illustrative $15 base threshold, then reason code (only
+`product_not_received`/`duplicate` are templated for auto-contest today;
+`fraudulent` and anything unrecognized default to `MANUAL_REVIEW`). The
+base threshold isn't flat: the charging merchant's current risk tier
+(`RiskTieringService`) scales it — `LOW` *lowers* it (×0.5, so fewer
+disputes auto-accept and more reach the contest check, worth the extra
+scrutiny for a merchant with a strong track record) and `HIGH` *raises*
+it (×2, more small disputes auto-accepted outright rather than spending
+contest effort on a merchant already flagged higher-risk elsewhere). A
+`LOW`-risk merchant's contestable reason set also gains one more entry,
+`subscription_canceled`, on top of the two above. `CONTEST` is the one
+decision that actually *acts*: it immediately calls the PSP with a
+templated evidence string,
 moving the dispute straight to `UNDER_REVIEW` before an operator ever sees
 it. `ACCEPT`/`MANUAL_REVIEW` are recorded but advisory only — this system
 has no PSP "accept/close" action to call, so `ACCEPT` just tells an

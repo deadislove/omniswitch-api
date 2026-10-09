@@ -104,16 +104,24 @@ something to page critical on.
 **Meaning**: `ReconciliationService`'s most recent hourly run for this
 provider found at least one place where this system's ledger and the
 PSP's own settlement report disagree — see that service's docblock for
-the three mismatch shapes (`MISSING_AT_PSP`, `AMOUNT_MISMATCH`,
-`UNKNOWN_AT_PSP`). This is the safety net for ledger/outbox bugs that
-tests structurally can't catch; treat every occurrence as real until
-proven otherwise, never as noise.
+the five mismatch shapes (`MISSING_AT_PSP`, `AMOUNT_MISMATCH`,
+`UNKNOWN_AT_PSP`, `CURRENCY_MISMATCH`, `COMPARISON_ERROR`). This is the
+safety net for ledger/outbox bugs that tests structurally can't catch;
+treat every occurrence as real until proven otherwise, never as noise.
 
 **First step**: `GET /api/v1/admin/reconciliation/runs` to see the run's
 full mismatch list (each entry names the payment/transaction id and
 describes the discrepancy). `MISSING_AT_PSP` is the more dangerous
 direction — this system believes a charge succeeded that the PSP has no
-record of. Escalate to finance/on-call engineering per your organization's
-process; this document doesn't prescribe one (see the Req 12 gap noted
-above). `POST /api/v1/admin/reconciliation/run` re-runs on demand once you
+record of. `CURRENCY_MISMATCH` (settled currency differs from the
+charge currency) is kept distinct from `AMOUNT_MISMATCH` since it can
+be a legitimate PSP-side conversion rather than a bug — check the
+settlement currency before escalating it the same way as an amount
+discrepancy. `COMPARISON_ERROR` means one payment's comparison itself
+threw during the run (isolated per-payment so it doesn't fail the
+whole provider's run) — treat it as a code/data defect on that specific
+payment, not a settlement discrepancy. Escalate the rest to
+finance/on-call engineering per your organization's process; this
+document doesn't prescribe one (see the Req 12 gap noted above).
+`POST /api/v1/admin/reconciliation/run` re-runs on demand once you
 believe the cause is fixed, to confirm the next window comes back clean.

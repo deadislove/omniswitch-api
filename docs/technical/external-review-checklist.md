@@ -71,15 +71,20 @@ the actual reason this document exists, rather than a disclaimer to get past.
 
 ## Tier 2 — worth spot-checking, lower blast radius if wrong
 
-### Reconciliation: is exception handling scoped per-payment, or does one bad record fail an entire provider's run?
+### Reconciliation: is per-payment exception isolation actually sound?
 
-- **Claim to check**: `ReconciliationService.reconcile()`
-  (see [`reconciliation.md`](./reconciliation.md)) — confirm whether a
-  single currency-mismatch exception while summing partial-capture
-  settlement records for one payment is caught and recorded as its own
-  mismatch, or propagates and fails the whole hourly run for that
-  provider. If the latter, that's a real "one bad record takes down the
-  batch" failure mode worth confirming is still open or already fixed.
+- **Status: fixed** — `ReconciliationService.reconcile()` (see
+  [`reconciliation.md`](./reconciliation.md)) now catches a failure in
+  one payment's comparison and records it as its own `COMPARISON_ERROR`
+  mismatch, rather than letting it propagate and fail the whole hourly
+  run for that provider. A currency mismatch specifically is also kept
+  as its own `CURRENCY_MISMATCH` type, distinct from `AMOUNT_MISMATCH`,
+  since it can be a legitimate PSP-side conversion rather than a bug.
+- **Verify independently**: trigger a comparison exception for one
+  payment in a batch (e.g. malformed settlement data) and confirm the
+  other payments in the same run still get compared and reported
+  correctly — don't just trust that the `try`/`catch` is positioned
+  correctly by reading it; run it.
 
 ### SAST exception (`bearer.ignore`): is the SSRF false-positive reasoning actually sound?
 

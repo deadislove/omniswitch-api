@@ -80,7 +80,7 @@ from touching one), so the dispute policy falls back to the base
 threshold, same as an unclassified merchant. See
 [`future-directions.md`](./future-directions.md#dispute-resolution-workflow)
 for the real break-even calculation
-[`../technical/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
+[`../technical/tests/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
 ran against synthetic data to check the base default against.
 
 **Reason code decides the rest — and a `LOW`-tier merchant gets one more
@@ -175,7 +175,7 @@ processing itself.
 
 The actual HTTP-POST/HMAC-signing mechanics behind all three adapters
 live in shared code
-(`src/modules/payment/adapters/notifications/notification-delivery.util.ts`)
+(`src/shared/utils/notification-delivery.util.ts`)
 rather than copy-pasted per event family — `SubscriptionNotificationListener`
 (see [`subscriptions.md`](./subscriptions.md)) reuses the exact same
 delivery functions for `subscription.past_due`/`subscription.canceled`,

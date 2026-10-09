@@ -67,6 +67,18 @@ ordering). They don't interfere with each other because
 into the storage key — different tracker, different key, independent count,
 even sharing one `ThrottlerStorageService` instance.
 
+### A third dimension: per-merchant PSP-exposure throttling
+
+`MerchantPspExposureService` (`src/modules/payment/adapters/circuit-breaker/`)
+adds a third tracker on top of the two above, built on the same
+TTL-refresh-on-write Redis pattern as `RedisCircuitBreakerService`'s own
+counters: a sliding window of which PSP a merchant's recent charges
+actually resolved to, used to tighten that specific merchant's `charge`
+rate limit when their traffic is concentrated on a currently-degraded
+PSP. Full design — the three tuned constants, the concentration
+calculation, and the actual rate-limit consequence — in
+[`merchant-psp-exposure-throttling.md`](./merchant-psp-exposure-throttling.md).
+
 ### The `@Global()` surprise
 
 The first implementation attempt gave `MerchantThrottlerGuard` its *own*

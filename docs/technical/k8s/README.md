@@ -70,3 +70,6 @@ for how to actually install and wire up each of these three.
 | `ingress.yaml` | Ingress | [`networking.md`](./networking.md) |
 | `ingress-nginx-security-headers-configmap.yaml` | ConfigMap | [`networking.md`](./networking.md) |
 | `archiving-cronjob.yaml`, `deletion-cronjob.yaml`, `partition-maintenance-cronjob.yaml`, `drop-cutover-tables-job.yaml` | CronJob (x3), Job | [`../jobs.md`](../jobs.md) |
+| `serviceaccount.yaml` | ServiceAccount | [`../deployment/prerequisites.md`](../deployment/prerequisites.md), [`../deployment/runbook.md`](../deployment/runbook.md) — cluster setup, not this app's own behavior |
+| `prometheus-rules.yaml` | PrometheusRule | [`../incident-response.md`](../incident-response.md), [`../security-and-compliance.md`](../security-and-compliance.md) — alerting policy, not infrastructure shape |
+| `log-shipping-example.yaml` | ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap, DaemonSet (illustrative, not applied) | [`../deployment/prerequisites.md`](../deployment/prerequisites.md) |

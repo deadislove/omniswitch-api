@@ -340,8 +340,8 @@ an unrecognized or already-resolved `transferId` either way.
 
 Verified against real infrastructure in `test/marketplace-payouts.e2e-spec.ts`
 (15 tests, the mock rail/mock KYC provider), `test/bank-transfer-rail.e2e-spec.ts`
-(11 tests, the two real bank-transfer rails), and `test/kyc-review.e2e-spec.ts`
-(9 tests, the real async KYC provider — submitting an application
+(10 tests, the two real bank-transfer rails), and `test/kyc-review.e2e-spec.ts`
+(10 tests, the real async KYC provider — submitting an application
 against it returns `PENDING_REVIEW` with a real `kycApplicationId`
 rather than an immediate decision; a correctly-signed `approved`/`rejected` webhook
 resolves it to `VERIFIED`/`REJECTED`; redelivering the same webhook
@@ -383,7 +383,7 @@ no-op `200` rather than an error; a missing or invalid `X-Bank-Transfer-Signatur
 is rejected with 401; and an outright rail rejection (`merchantId`
 containing "transferreject") fails synchronously without ever reaching
 `PENDING_CONFIRMATION`. `test/reserve-followup-transfer.e2e-spec.ts`
-(8 tests) covers the reserve follow-up transfer specifically, always
+(7 tests) covers the reserve follow-up transfer specifically, always
 releasing the reserve *after* the netAmount transfer already ran (the
 exact ordering the gap used to name): initiating a reserve transfer
 before the reserve is released is rejected `409`

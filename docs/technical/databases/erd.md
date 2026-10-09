@@ -52,7 +52,9 @@ erDiagram
     merchants ||--o{ payouts : "merchant_id -> merchant_id"
     merchants ||--o{ delegations : "merchant_id -> merchant_id"
     merchants ||--o{ charge_approvals : "merchant_id -> merchant_id"
+    merchants ||--o{ webhook_deliveries : "merchant_id -> merchant_id"
     merchants ||--o{ merchants : "platform_merchant_id -> merchant_id (self, CONNECTED accounts)"
+    webhook_deliveries ||--o{ webhook_deliveries : "id -> replay_of_delivery_id (self, replay chain)"
 
     payments ||--o{ ledger_outbox : "id -> payment_id"
     payments ||--o{ disputes : "id -> payment_id"
@@ -133,6 +135,13 @@ erDiagram
         uuid id PK
         varchar psp_provider
         timestamptz ran_at
+    }
+    webhook_deliveries {
+        uuid id PK
+        varchar merchant_id
+        varchar event_type
+        boolean success
+        uuid replay_of_delivery_id "nullable, self-ref"
     }
 ```
 

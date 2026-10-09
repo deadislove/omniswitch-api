@@ -8,8 +8,11 @@ export interface LegalHoldResult {
 }
 
 /**
- * Legal Hold Service (Phase 3 follow-up #5 — see
- * docs/compliance/data-retention.md, "No legal-hold mechanism").
+ * Legal Hold Service — places/releases the `legal_hold` boolean that
+ * overrides both archiving and deletion eligibility regardless of age,
+ * status, or dispute state. See docs/compliance/data-retention.md's
+ * "Legal hold" section for the full design, including why this is
+ * deliberately a single boolean with no audit trail.
  *
  * Operates on `payments`/`archive.payments` directly via raw SQL
  * through the injected `DataSource` instead of through `PaymentRepositoryPort`/

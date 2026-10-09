@@ -268,3 +268,12 @@ region scope:
   split-brain this design manually avoids) and is out of scope here.
 - **Never drilled against real infrastructure** — see the status banner
   at the top of this document.
+- **Source-repository backup is a separate, already-solved problem,
+  out of this document's infrastructure scope.** `.github/workflows/gitlab-mirror.yml`
+  mirrors every branch/tag/PR ref from GitHub to a GitLab project on
+  every push to `main` (plus a weekly schedule, to catch branch
+  deletions that don't push to `main`) — a real, live, verified
+  mechanism, unlike everything else in this document. It protects
+  against losing the GitHub repository itself (account lockout,
+  GitHub-side outage), not against losing the running infrastructure
+  this document covers — the two are independent failure domains.

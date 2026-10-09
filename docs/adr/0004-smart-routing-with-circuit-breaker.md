@@ -132,6 +132,17 @@ than waiting for `FAILURE_THRESHOLD` failures to accumulate again. Full
 detail in
 [`../technical/distributed-state.md`](../technical/distributed-state.md#circuit-breaker).
 
+**Addendum — per-merchant exposure as a separate, narrower signal**:
+`MerchantPspExposureService` tracks, per merchant, which PSP their
+recent successful charges actually resolved to, and
+`DegradedPspAwareThrottlerGuard` uses it to tighten rate limits only
+for a merchant whose own recent traffic is concentrated on a
+currently-degraded PSP — a separate mechanism from the breaker above,
+not a restatement of it: the breaker decides routing eligibility, this
+decides rate-limit strictness for whoever's exposed to a PSP it just
+excluded. Full design in
+[`../technical/merchant-psp-exposure-throttling.md`](../technical/merchant-psp-exposure-throttling.md).
+
 ## Consequences
 
 **What this buys**: a PSP outage degrades gracefully and consistently

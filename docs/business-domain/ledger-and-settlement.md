@@ -119,9 +119,14 @@ gap: an hourly job (plus on-demand via the admin API) diffs our own
 charged-status payments against each PSP's own settlement report (Stripe's
 balance transactions, Adyen's settlement report) and flags anything that
 doesn't match — a charge we booked that the PSP has no record of, an
-amount mismatch, or a PSP settlement we have no payment record for at all.
-Full design, plus a real pre-existing timezone bug this surfaced in the
-date-range query layer, in
+amount mismatch, a settled currency that differs from the charge
+currency (kept as its own category rather than folded into "amount
+mismatch," since it can be a legitimate PSP-side conversion rather than
+a bug), a PSP settlement we have no payment record for at all, or one
+payment's comparison throwing unexpectedly (isolated per-payment so it
+can't fail the whole provider's reconciliation run). Full design, plus
+a real pre-existing timezone bug this surfaced in the date-range query
+layer, in
 [`docs/technical/reconciliation.md`](../technical/reconciliation.md).
 Matching sums settlement records sharing a `pspTransactionId` rather than
 assuming exactly one per id — required once partial-capture accounting

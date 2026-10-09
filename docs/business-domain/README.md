@@ -59,8 +59,9 @@ instead; for a guided onboarding path through both, see
 
 ## Client SDKs
 
-- [`sdk/`](./sdk/) — why this platform ships a first-party Node/
-  TypeScript client rather than relying on API documentation alone
+- [`sdk/`](./sdk/) — why this platform ships first-party clients
+  (Node, Java, .NET, Python, Rust, Go) rather than relying on API
+  documentation alone
 
 ## Reference
 

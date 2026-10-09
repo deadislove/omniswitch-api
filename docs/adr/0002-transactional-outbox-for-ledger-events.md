@@ -49,9 +49,11 @@ failure marks the event `FAILED` — a terminal state nothing retries automatica
 separate 5-minute sweep (`detectStaleEvents`) alerts on anything that's
 been `PENDING` too long without ever being attempted (relay crash or
 falling behind), but doesn't resubmit `FAILED` events itself — that's a
-deliberate operator action (`POST /admin/outbox/:id/retry`,
-ADMIN/OPERATOR only) — never an automatic retry loop or a hand-run SQL
-update against production.
+deliberate operator action, never an automatic retry loop or a
+hand-run SQL update against production. See
+[`../technical/ledger-outbox-recovery.md`](../technical/ledger-outbox-recovery.md)
+for the recovery endpoint and its concurrency/role-restriction
+details.
 
 Full design and the reliability contract (poll → publish →
 mark-published-only-on-success → alert on failure) in
