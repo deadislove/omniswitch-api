@@ -10,11 +10,11 @@ const tracer = trace.getTracer('omniswitch-api');
  * underneath `fn` — this exists for the handful of call sites where the
  * *grouping* itself is the thing worth seeing (e.g. "smart routing took
  * 40ms, the PSP charge that followed took 800ms" as two adjacent spans
- * under one checkout, not just an unlabeled flat list of HTTP calls).
+ * under one checkout, beyond just an unlabeled flat list of HTTP calls).
  *
  * Always ends the span, and marks it as an error (without swallowing the
  * exception — `fn`'s own rejection still propagates to the caller) so a
- * failed step is visible in a trace, not just a successful one.
+ * failed step is visible in a trace, beyond just a successful one.
  */
 export async function traced<T>(spanName: string, fn: () => Promise<T>, attributes?: Attributes): Promise<T> {
   return tracer.startActiveSpan(spanName, async (span) => {

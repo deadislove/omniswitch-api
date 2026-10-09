@@ -23,6 +23,7 @@ drift the first time someone adds a column and forgets this doc.
 | `delegations` | `.../entities/delegation.entity.ts` | Agentic-payment credentials: an agent's spend policy, current-month spend counter, token expiry/revocation |
 | `charge_approvals` | `.../entities/charge-approval.entity.ts` | Hold-for-human-approval record for an above-threshold agentic charge — the original charge request stored verbatim, pending an ADMIN/OPERATOR approve/deny |
 | `reconciliation_runs` | `.../entities/reconciliation-run.entity.ts` | One row per ledger-vs-PSP-settlement diff run, with any mismatches found in a `jsonb` array — see [`../reconciliation.md`](../reconciliation.md) |
+| `webhook_deliveries` | `src/shared/webhook-delivery-log/webhook-delivery-log.entity.ts` | One row per attempted outbound WEBHOOK-channel notification (dispute/subscription/AML-review/sanctions events) — success or failure, both recorded, so a merchant can inspect and replay deliveries to their own endpoint. Scoped to the WEBHOOK channel only, not EMAIL/SLACK |
 | `schema_cutover_log` | `src/database/migrations/1787339024677-CreateSchemaCutoverLog.ts` (no entity — read only by `drop-cutover-tables.ts`) | Tracks when the partitioning cutover ran, per legacy table, so `drop-cutover-tables.ts` can compute the retention window without guessing from a file timestamp |
 
 **Not currently in a tracked entity list above, but present in the
@@ -68,7 +69,7 @@ Every other "status"-shaped column in this schema (`disputes.status`,
 `charge_approvals.status`, `payouts.transfer_status`,
 `reserve_holds.status`) is a plain `varchar`
 with the valid set enforced in application code (the aggregate's own
-state-machine methods), not a Postgres `enum` type or `CHECK`
+state-machine methods) rather than a Postgres `enum` type or `CHECK`
 constraint — `payments.status` is the one exception, inherited from
 this project's original schema before the wider pattern was
 established, kept as-is rather than migrated for consistency's own

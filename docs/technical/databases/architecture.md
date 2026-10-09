@@ -6,7 +6,7 @@ connection pooling, and table partitioning.
 ## Master/replica streaming replication
 
 One primary (`postgres-master`), one streaming-replication read replica
-(`postgres-replica`) — physical (WAL-based) replication, not logical.
+(`postgres-replica`) — physical (WAL-based) replication rather than logical.
 The app's own `TypeOrmModule.forRootAsync()` (`app.module.ts`) opens
 **two separate connection pools**: one at `DB_MASTER_HOST` for writes
 (and any read that needs read-after-write consistency), one at
@@ -20,8 +20,8 @@ The replica is read-only at the Postgres level (`hot_standby`) — it
 can never accept a write, so there's no split-brain risk from
 accidentally routing a write there. Replication lag is real but
 unbounded-in-theory; code paths reading from the replica need to be
-correct under "this row might be a few hundred milliseconds stale," not
-assume synchronous consistency.
+correct under "this row might be a few hundred milliseconds stale,"
+rather than assume synchronous consistency.
 
 ## PgBouncer — connection pooling in front of both
 
@@ -30,7 +30,7 @@ assume synchronous consistency.
 pooling mode (`POOL_MODE: transaction`) with `DEFAULT_POOL_SIZE: 50`.
 The app connects to these, never directly to `postgres-master`/
 `postgres-replica` — `DB_MASTER_HOST`/`DB_REPLICA_HOST` in
-`k8s/configmap.yaml` point at the poolers, not the real Postgres
+`k8s/configmap.yaml` point at the poolers rather than the real Postgres
 backends (`PGBOUNCER_MASTER_BACKEND_HOST`/`PGBOUNCER_REPLICA_BACKEND_HOST`
 is where the poolers themselves point).
 
@@ -47,16 +47,16 @@ number of real backend connections (`DEFAULT_POOL_SIZE: 50` per
 instance, well under the 200 budget, leaving headroom for replication
 streams, migrations, and admin tooling).
 
-**Load-tested, not just configured**: see
+**Load-tested, beyond just configured**: see
 [`load-testing.md`](../tests/load-testing.md) (Finding #3) for a real
 throughput/latency comparison against the actual production Docker
 image, resource-capped to `k8s/pgbouncer.yaml`'s own 0.5 CPU/128Mi
-limits — PgBouncer matches or beats the pre-PgBouncer baseline, not
-just "doesn't obviously break things."
+limits — PgBouncer matches or beats the pre-PgBouncer baseline, beyond just
+"doesn't obviously break things."
 
 **Migrations bypass the pooler.** `src/database/data-source.ts` (the
 CLI `DataSource` used by `migration:run`/`migration:generate`) points
-at `postgres-master`'s own port directly in local/dev, not
+at `postgres-master`'s own port directly in local/dev, rather than
 `pgbouncer-master`. DDL and transaction-mode pooling don't mix well
 (a pooled connection can be handed to a different logical session
 mid-transaction in ways that interact badly with certain DDL patterns),
@@ -68,14 +68,14 @@ to solve in the first place — see
 
 `payments` and `ledger_outbox` are Postgres **declarative range
 partitions**, partitioned by `created_at`, one partition per calendar
-month. This was a two-stage migration, not a single step — worth
+month. This was a two-stage migration rather than a single step — worth
 understanding both stages if you're reading the schema or the
 migration files directly:
 
 **Stage 1** (`1787325352938-CreatePartitionedPaymentsAndLedgerOutbox.ts`)
 created new, empty, correctly-partitioned tables under staging names
-(`payments_partitioned`, `ledger_outbox_partitioned`) — not yet the
-live tables. Primary keys and unique constraints both had to include
+(`payments_partitioned`, `ledger_outbox_partitioned`) — staging names
+that haven't yet become the live tables. Primary keys and unique constraints both had to include
 `created_at` (`PRIMARY KEY ("id", "created_at")`) — Postgres requires
 the partition key to be part of any PK/unique constraint on a
 partitioned table. `idempotency_key` moved from a standalone `UNIQUE`
@@ -90,8 +90,8 @@ tables to `payments_old`/`ledger_outbox_old` and the new partitioned
 tables into the live `payments`/`ledger_outbox` names — all inside one
 migration transaction, so the app is never left pointed at a table that
 doesn't exist under the expected name. No entity or repository code
-changed for this cutover: TypeORM maps by table name, not by which
-physical table happens to hold it, so `PaymentEntity`/
+changed for this cutover: TypeORM maps by table name rather than by
+which physical table happens to hold it, so `PaymentEntity`/
 `PaymentTypeOrmRepository` kept working unmodified.
 
 **The rename doesn't cascade to child partitions — this is the single
@@ -108,8 +108,8 @@ this naming deliberately; an earlier draft of that job used
 overlap partition \"payments_partitioned_2026_08\""` the first time it
 ran against the real cutover schema.
 
-**Partition maintenance is a separate, ongoing job, not part of either
-migration above.** Stage 1 only pre-created partitions for a fixed
+**Partition maintenance is a separate, ongoing job — no part of either
+migration above handles it.** Stage 1 only pre-created partitions for a fixed
 window relative to when *it* ran (6 months back, 2 forward) — nothing
 in either migration keeps extending that window as real time moves
 past it. `src/jobs/create-partitions-job.ts` (a weekly CronJob) does
@@ -138,13 +138,13 @@ retention policy.
 ### The `archive` schema
 
 Cold storage for the data-retention policy — a separate Postgres
-*schema* (`archive.payments`, `archive.ledger_outbox`), not a separate
-database, deliberately: same instance, same backup/HA story as the
+*schema* (`archive.payments`, `archive.ledger_outbox`) rather than a
+separate database, deliberately: same instance, same backup/HA story as the
 live tables, no new vendor or connection pool to manage. Unlike
 `public.payments`/`public.ledger_outbox`, the `archive.*` tables are
-**flat, not partitioned** — cold storage is written to rarely (once per
-archiving run) and read even more rarely (an audit/compliance lookup,
-not a hot query path), so the vacuum/bloat problem partitioning exists
+**flat rather than partitioned** — cold storage is written to rarely
+(once per archiving run) and read even more rarely (an audit/compliance
+lookup, never a hot query path), so the vacuum/bloat problem partitioning exists
 to solve doesn't apply to it the way it does to the live tables. See
 [`schema.md`](./schema.md#archive-schema--cold-storage) for the
 `varchar`-vs-`enum` type difference this introduces on the `status`
@@ -160,8 +160,7 @@ this project's actual measured bottlenecks (connection count at HPA
 scale, unbounded table growth) at its current and reasonably-projected
 data volume, without taking on a distributed system's operational
 complexity (rebalancing, cross-shard transactions, a second thing to
-run and monitor). Citus remains a future option, not something in
-progress — a real deployment outgrowing a single primary even after
+run and monitor). Citus remains a future option — nothing currently in progress — a real deployment outgrowing a single primary even after
 partitioning/retention/pooling are all in place is the trigger
-condition for revisiting it, not a default assumption that it's coming
-next.
+condition for revisiting it, rather than a default assumption that
+it's coming next.

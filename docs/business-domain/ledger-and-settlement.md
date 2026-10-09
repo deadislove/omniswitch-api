@@ -48,7 +48,7 @@ supports that country.
 
 **Preference override** (checked before scoring): if the charge
 request set `preferredProvider` and that PSP survived entitlement and
-the filter above, it's selected directly — a true override, not a
+the filter above, it's selected directly — a true override rather than a
 scoring input, matching the charge API's own documented contract
 ("overrides smart routing"). Scoring below is only reached when
 there's no preference, or the preferred provider didn't survive the
@@ -85,7 +85,7 @@ immediately, without needing to re-accumulate 5 failures. Every other
 call arriving while that single trial is still outstanding is rejected
 the same as `OPEN`, rather than the whole replica fleet's traffic
 resuming at once the instant the state flips — the entire point of a
-recovery probe is to send the PSP a trickle, not a burst, right as it
+recovery probe is to send the PSP a trickle rather than a burst, right as it
 may be starting to recover. State lives in Redis
 (`RedisCircuitBreakerService`, via the same `CachePort` idempotency
 already uses — no new connection), shared across every replica — this
@@ -119,9 +119,14 @@ gap: an hourly job (plus on-demand via the admin API) diffs our own
 charged-status payments against each PSP's own settlement report (Stripe's
 balance transactions, Adyen's settlement report) and flags anything that
 doesn't match — a charge we booked that the PSP has no record of, an
-amount mismatch, or a PSP settlement we have no payment record for at all.
-Full design, plus a real pre-existing timezone bug this surfaced in the
-date-range query layer, in
+amount mismatch, a settled currency that differs from the charge
+currency (kept as its own category rather than folded into "amount
+mismatch," since it can be a legitimate PSP-side conversion rather than
+a bug), a PSP settlement we have no payment record for at all, or one
+payment's comparison throwing unexpectedly (isolated per-payment so it
+can't fail the whole provider's reconciliation run). Full design, plus
+a real pre-existing timezone bug this surfaced in the date-range query
+layer, in
 [`docs/technical/reconciliation.md`](../technical/reconciliation.md).
 Matching sums settlement records sharing a `pspTransactionId` rather than
 assuming exactly one per id — required once partial-capture accounting
@@ -134,8 +139,9 @@ nothing to match against a PSP settlement record; `ReconciliationService`
 skips any payment without one. See
 [`payment-lifecycle.md`](./payment-lifecycle.md)'s note on `AMBIGUOUS`
 for the full picture — a separate automated sweep asks the PSP directly
-what happened (a read-only lookup by idempotency key, not something
-this reconciliation job itself does), and books the same ledger entries
+what happened (a read-only lookup by idempotency key, separate from
+what this reconciliation job itself does), and books the same ledger
+entries
 as a webhook confirmation once it gets a definitive answer; a manual
 admin action (`POST /admin/payments/:id/resolve-ambiguous`) remains
 available for whatever that sweep's retry budget doesn't resolve.
@@ -159,7 +165,7 @@ higher-risk merchant typically has a slice of each charge withheld in a
 rolling reserve for a period, specifically to cover potential future
 chargebacks. Fixed with `MerchantEntity.reserveBps`/`reserveHoldDays`
 (basis points of the *net* amount, directly configurable per merchant —
-same idiom as `platformFeeBps`, not a `riskTier` enum this codebase has
+same idiom as `platformFeeBps`, rather than a `riskTier` enum this codebase has
 no real risk model to drive) and a new `ReserveHold` domain object
 tracking each individual withheld amount's own `HELD` -> `RELEASED`
 lifecycle, separate from the `LedgerOutboxEvent` that created it — a hold
@@ -231,7 +237,7 @@ daily sweep (`POST /admin/risk-tiering/run` on demand, same dual
 on-demand + scheduled shape as `ReconciliationService`/`ReserveService`)
 recomputes each auto-managed merchant's trailing 90-day lost-dispute rate
 and adjusts `reserveBps`/`reserveHoldDays` to one of three tiers — in
-both directions, not just escalation, since every tick recomputes from
+both directions, beyond just escalation, since every tick recomputes from
 scratch off the current window rather than only ever ratcheting up.
 `MerchantEntity.riskTierAutoManaged` (default `true`) gates this; an
 operator's manual `PATCH .../reserve-policy` call sets it to `false` as a
@@ -281,11 +287,11 @@ for the full writeup.
 **Still not modeled** (see
 [`future-directions.md`](./future-directions.md#merchant-risk-tiering--reserves)
 for the fuller business-domain framing): the tiering thresholds are
-still illustrative production defaults, not calibrated against real
-fraud data — `scripts/calibration/` has run the actual calibration
+still illustrative production defaults rather than calibrated
+against real fraud data — `scripts/calibration/` has run the actual calibration
 *methodology* (precision/recall scoring against known labels) against a
 realistic synthetic dataset, since no real fraud/chargeback history
-exists in this repo, but that's a validated method, not a real number to
+exists in this repo, but that validates the method rather than producing a real number to
 ship; no MCC code, account tenure, or dispute-reason-code weighting; and
 a tier change only ever affects charges going forward, never reserves
 already withheld from earlier ones.

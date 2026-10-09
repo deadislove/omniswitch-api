@@ -57,7 +57,7 @@ class PayoutSummaryDto {
   @ApiProperty({
     enum: ['NONE', 'HELD', 'RELEASED'],
     description:
-      'NONE: reserveAmount is 0. HELD: withheld, not yet eligible or not yet released. RELEASED: credited back.',
+      'NONE: reserveAmount is 0. HELD: withheld — either not yet eligible, or eligible but awaiting release. RELEASED: credited back.',
   })
   reserveStatus: PayoutReserveStatus;
 
@@ -306,7 +306,7 @@ export class MarketplacePayoutAdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Run the transfer-initiation sweep now instead of waiting for the daily schedule — initiates a transfer for every eligible payout (not KYC-blocked, has a net amount, not already initiated)',
+      'Run the transfer-initiation sweep now instead of waiting for the daily schedule — initiates a transfer for every eligible payout (not KYC-blocked, has a net amount, and has not already been initiated)',
   })
   @ApiResponse({ status: 200, type: TransferSweepResultDto })
   async initiateEligibleTransfers(): Promise<TransferSweepResultDto> {
@@ -336,7 +336,7 @@ export class MarketplacePayoutAdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Run the reserve-transfer-initiation sweep now instead of waiting for the daily schedule — initiates a reserve transfer for every eligible payout (reserve released, has a reserve amount, not KYC-blocked, not already initiated)',
+      'Run the reserve-transfer-initiation sweep now instead of waiting for the daily schedule — initiates a reserve transfer for every eligible payout (reserve released, has a reserve amount, is not KYC-blocked, and has not already been initiated)',
   })
   @ApiResponse({ status: 200, type: TransferSweepResultDto })
   async initiateEligibleReserveTransfers(): Promise<TransferSweepResultDto> {

@@ -16,11 +16,11 @@ export type BillingInterval = 'day' | 'week' | 'month' | 'year';
  *
  * Known simplification: 'month'/'year' use JS's native
  * setUTCMonth()/setUTCFullYear(), which overflows on a day that doesn't
- * exist in the target month (Jan 31 + 1 month becomes Mar 3, not Feb 28).
+ * exist in the target month (Jan 31 + 1 month becomes Mar 3 instead of Feb 28).
  * Real billing systems (Stripe included) clamp to the target month's last
  * day instead — not implemented here; a subscription anchored on the 29th
  * through 31st will drift forward across February in the current
- * implementation. Documented, not fixed.
+ * implementation. A documented gap, still unfixed.
  */
 export function addBillingInterval(date: Date, interval: BillingInterval, count: number): Date {
   const d = new Date(date.getTime());
@@ -46,9 +46,10 @@ export function addBillingInterval(date: Date, interval: BillingInterval, count:
  * charge — index 0 applies after the 1st failure (before the 2nd
  * attempt), index 1 after the 2nd (before the 3rd), index 2 after the
  * 3rd (before the 4th and final attempt). A fixed backoff schedule
- * spread over about a week, not the "retry on the very next daily sweep
- * tick" behavior this used to have — see recordFailedCharge()'s
- * docblock for why that was a real gap, not just a stylistic choice.
+ * spread over about a week — a deliberate departure from the "retry on
+ * the very next daily sweep tick" behavior this used to have — see
+ * recordFailedCharge()'s docblock for why that was a real gap, beyond
+ * just a stylistic choice.
  */
 const RETRY_SCHEDULE_DAYS = [1, 3, 7];
 
@@ -64,7 +65,7 @@ const RETRY_SCHEDULE_DAYS = [1, 3, 7];
  * catalog entry — see plan.aggregate.ts), but always carries its own
  * amount/currency/interval directly rather than a live reference to one —
  * `planId` is provenance ("this was created from/last changed to Plan
- * X"), not something re-read from the Plan on every billing cycle. That
+ * X"), rather than something re-read from the Plan on every billing cycle. That
  * snapshotting is deliberate: a Plan's price is meant to be immutable
  * once created (see Plan's own docblock), so there's no "the plan changed
  * out from under an existing subscriber" case to handle — but even if a
@@ -99,7 +100,7 @@ export class Subscription {
     private _lastDeclinePspProvider: PSPProvider | undefined = undefined,
   ) {}
 
-  /** No charge yet — the first real charge happens when the trial period elapses (see runBillingSweep()'s TRIALING branch), not at creation. */
+  /** No charge yet — the first real charge happens when the trial period elapses (see runBillingSweep()'s TRIALING branch) — never at creation. */
   static startTrial(params: {
     id: string;
     merchantId: string;
@@ -251,7 +252,7 @@ export class Subscription {
 
   /**
    * Anchors the new period to the *schedule* (old currentPeriodEnd + one
-   * interval), not to `now` — a charge that succeeds after a dunning
+   * interval), rather than to `now` — a charge that succeeds after a dunning
    * retry delay still bills the next period on the original cadence,
    * rather than letting retries drift the schedule forward.
    */
@@ -355,7 +356,7 @@ export class Subscription {
    * simplification.
    *
    * Anchored to the *current* period's actual boundaries
-   * (currentPeriodStart/End), not to the interval in the abstract — a
+   * (currentPeriodStart/End) rather than to the interval in the abstract — a
    * period shortened/lengthened by a previous dunning retry still
    * prorates correctly against how long this period actually is.
    */

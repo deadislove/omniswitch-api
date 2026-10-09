@@ -14,7 +14,7 @@ for the ledger/reserve mechanics and
 [`future-directions.md`](./future-directions.md#merchant-risk-tiering--reserves)
 for what's still genuinely missing from the tiering model.
 
-## Why two separate signals, not one risk score
+## Why two separate signals instead of one risk score
 
 It's tempting to fold every "something's off with this merchant" signal
 into a single number. This platform deliberately doesn't:
@@ -26,9 +26,9 @@ into a single number. This platform deliberately doesn't:
 - **Ambiguous-risk monitoring** answers "have PSP calls for this
   merchant been failing to return a clear answer often enough to worry
   about?" — an *operational reliability* question about this platform's
-  own integration health, not necessarily anything the merchant did
-  wrong. A merchant with a run of `AMBIGUOUS` payments might be the
-  victim of a flaky PSP connection, not a fraud risk.
+  own integration health — not necessarily anything the merchant did
+  wrong. A merchant with a run of `AMBIGUOUS` payments might just be the
+  victim of a flaky PSP connection rather than a real fraud risk.
 
 Conflating these would mean a PSP having a bad day could look
 indistinguishable from a merchant actually bleeding chargebacks — two
@@ -77,7 +77,7 @@ sweep leaves that merchant alone until an operator explicitly
 re-enables automation via `PATCH /admin/merchants/:id/risk-tier-auto`. A
 hand-tuned reserve is never silently overwritten by the sweep. This isn't
 just a sweep-scheduling detail — `RiskTieringService.evaluateMerchant()`
-itself (the single-merchant entry point, not just the sweep's batch
+itself (the single-merchant entry point, beyond just the sweep's batch
 query) refuses to evaluate a `riskTierAutoManaged = false` merchant at
 all, returning no tier. Every caller of `evaluateMerchant()` inherits
 this, including `DisputeService`'s dispute-policy tier lookup (see
@@ -123,9 +123,13 @@ reason (`src/modules/payment/domain/services/dispute-risk-weight.ts`)
 instead of counting every one identically: `fraudulent` at full weight,
 `product_not_received`/`subscription_canceled` at half,
 `duplicate` at a quarter — the same reason-code vocabulary
-`dispute-policy.ts`'s auto-contest table already uses. Two merchants
-with the same raw *count* of `LOST` disputes can land in different
-tiers depending on why those disputes were lost.
+`dispute-policy.ts`'s auto-contest table already uses. An unlisted
+reason code defaults to full weight — the conservative choice, since
+treating an unrecognized reason as low-risk by default could silently
+under-count real risk as new reason codes appear at the PSP level
+before this table is updated to know about them. Two merchants with
+the same raw *count* of `LOST` disputes can land in different tiers
+depending on why those disputes were lost.
 
 **Escalation now reaches back to already-booked reserves (Phase 1) —
 both when the sweep escalates and when an operator manually escalates
@@ -190,15 +194,15 @@ Every industry classification carries some potential money-laundering
 exposure, but a `HIGH`-`industryRiskCategory` merchant (gambling, dating/
 escort services, telemarketing, cryptocurrency — see
 `mcc-risk-lookup.ts`) racking up hard-declines (stolen/lost/fraudulent-
-card-class outcomes, not just any decline — see
+card-class outcomes, beyond just any decline — see
 `decline-code-classifier.ts`) in a short window is exactly the kind of
 cross-referenceable signal that's too hard to fully automate a judgment
 from, but easy to surface for a human reviewer. `AmlReviewMonitoringService`
-implements that: a warning flag, not an automated block — the actual
+implements that: a warning flag rather than an automated block — the actual
 judgment of whether a given HIGH-industry merchant poses real AML risk
 still requires a human to look, the same posture every other MCC-risk
-decision in this codebase already takes (manual onboarding review, not a
-programmatic accept/reject).
+decision in this codebase already takes: manual onboarding review, never
+a programmatic accept/reject.
 
 **Evaluated inline**, right after a charge is marked `FAILED` — same
 "evaluate synchronously on the triggering event, no separate detection
@@ -211,8 +215,8 @@ one-off charges.
 **Trigger**: `AML_REVIEW_HARD_DECLINE_THRESHOLD` (default 5) hard-decline
 events within a trailing `AML_REVIEW_WINDOW_DAYS` window (default 30),
 for a `HIGH`-industry merchant only — a `LOW`/`MEDIUM`/`UNKNOWN`-industry
-merchant's hard-decline is treated as ordinary card-testing/fraud noise,
-not an AML-adjacent signal.
+merchant's hard-decline is treated as ordinary card-testing/fraud noise
+rather than an AML-adjacent signal.
 
 **Purely observational, same as ambiguous-risk monitoring** — sets
 `MerchantEntity.amlReviewFlagged`, visible via `GET /admin/merchants`,
@@ -231,15 +235,15 @@ is compliance-relevant enough to page someone in real time —
 `PATCH /admin/merchants/:id/aml-review-notification-channel` configures
 EMAIL/Slack/webhook delivery per merchant, reusing the same
 `postJsonNotification`/HMAC-signing mechanism dispute and subscription
-notifications already use. Sent once per trip, not re-sent on every
+notifications already use. Sent once per trip, never re-sent on every
 subsequent hard-decline while already flagged.
 
 **Scoped deliberately narrow.** This only cross-references decline
 behavior against a merchant's already-known industry classification —
 it does not attempt to calibrate a numeric threshold the way risk
 tiering's reserve tiers do (see `docs/technical/tests/threshold-
-calibration.md` for why an MCC risk table is a categorical, not
-statistical, judgment), and it does not introduce a second industry-risk
+calibration.md` for why an MCC risk table is a categorical judgment
+rather than a statistical one), and it does not introduce a second industry-risk
 taxonomy alongside `industryRiskCategory`.
 
 ## Sanctions/watchlist screening (onboarding + periodic re-screening)
@@ -249,7 +253,7 @@ The three signals above all answer some form of "is this merchant's
 question entirely: "is this merchant, by legal identity, someone this
 platform is required to refuse to do business with at all" — see
 [`compliance-and-security.md#sanctionswatchlist-screening-who-this-platform-is-legally-required-to-refuse`](./compliance-and-security.md#sanctionswatchlist-screening-who-this-platform-is-legally-required-to-refuse)
-for why that's a legal question, not a risk-appetite one, and why it
+for why that's a legal question rather than a risk-appetite one, and why it
 therefore can't be treated the way the other three signals are.
 
 **`SanctionsScreeningPort`** takes a name (plus optional tax ID/country)
@@ -259,8 +263,8 @@ and returns one of three outcomes:
 - **`POTENTIAL_MATCH`** — a fuzzy match below the confidence threshold
   configured as "certain" (`SANCTIONS_MATCH_THRESHOLD`). Common names
   produce these routinely; treating every one as a confirmed hit would
-  refuse real merchants over coincidence, so this is a visibility flag,
-  not a block — `MerchantEntity.sanctionsScreeningStatus` is set, a
+  refuse real merchants over coincidence, so this is a visibility flag
+  rather than a block — `MerchantEntity.sanctionsScreeningStatus` is set, a
   real-time notification fires (same channel-configuration shape as
   AML review, below), and `PATCH /admin/merchants/:id/sanctions-review`
   lets an operator record a real determination (cleared as a false
@@ -309,16 +313,16 @@ without a human in the loop.
   heuristic (plus, for an agent-initiated charge only, two agent-context
   signals — see
   [`future-directions.md`](./future-directions.md#agentic-payments))
-  recorded for visibility, not something that gates or routes a charge
-  differently — see [`payment-lifecycle.md`](./payment-lifecycle.md) for
+  recorded for visibility rather than something that gates or routes a
+  charge differently — see [`payment-lifecycle.md`](./payment-lifecycle.md) for
   what it actually does. Neither risk-tiering nor ambiguous-risk
   monitoring feeds back into it. **The PSP's own risk signal (Stripe
   Radar's outcome, Adyen's fraudResult) is now captured** —
   `PaymentEntity.pspRiskSignal` — but deliberately stored *alongside*
-  this heuristic score, not blended into it: the heuristic score is
+  this heuristic score rather than blended into it: the heuristic score is
   computed and acted on (3DS-skip, the human-approval-hold threshold)
   *before* the PSP is ever called, so there's no way to fold a signal
   that doesn't exist yet into that same number without retroactively
   changing a value several existing callers already treat as final.
   Actually incorporating it into risk tiering or the approval threshold
-  is real future work, not something this plumbing pass silently did.
+  is real future work this plumbing pass deliberately left undone.

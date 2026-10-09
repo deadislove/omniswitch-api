@@ -8,8 +8,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * safety-net tables" section for the full reasoning.
  *
  * TypeORM's own `typeorm_migrations` table only stores each migration's
- * version number (the filename timestamp), not the real wall-clock time
- * it actually executed — there's no built-in way to answer "how long
+ * version number (the filename timestamp) rather than the real
+ * wall-clock time it actually executed — there's no built-in way to answer "how long
  * ago did the cutover happen" from that table alone. This is the
  * dedicated record for that instead: `src/jobs/drop-cutover-tables.ts`
  * reads it to decide whether the configured retention window

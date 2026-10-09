@@ -63,7 +63,7 @@ export function jaroWinklerSimilarity(a: string, b: string): number {
   return jaro + prefixLength * prefixScale * (1 - jaro);
 }
 
-/** Uppercase + collapse to single spaces + strip everything but letters/digits/spaces — so "O'Brien, John." and "OBRIEN JOHN" compare as the names they are, not as punctuation-sensitive strings. */
+/** Uppercase + collapse to single spaces + strip everything but letters/digits/spaces — so "O'Brien, John." and "OBRIEN JOHN" compare as the names they are instead of as punctuation-sensitive strings. */
 export function normalizeName(name: string): string {
   return name
     .toUpperCase()

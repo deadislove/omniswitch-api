@@ -197,8 +197,8 @@ Submits (or re-submits) this merchant's KYC application — resolves
 default), returning `kycStatus: 'VERIFIED'`/`'REJECTED'` immediately; a
 real provider (`KYC_PROVIDER=persona`) returns `'PENDING_REVIEW'`
 instead, with the final decision arriving later via `POST /webhooks/kyc`.
-Only meaningful for a `CONNECTED` merchant; gates payout transfers, not
-charges.
+Only meaningful for a `CONNECTED` merchant; gates payout transfers,
+never charges.
 
 Also re-runs sanctions/watchlist screening against the submitted
 `legalName`, at full confidence — superseding any degraded-confidence
@@ -368,8 +368,8 @@ recorded as a permanent audit trail. Unlike
 `PATCH .../ambiguous-risk`/`PATCH .../aml-review`, this does **not**
 disable automatic re-screening going forward — a cleared false positive
 today should still be re-screened on the next sweep, since the
-determination was about *this specific match*, not a request to stop
-checking this merchant at all.
+determination was about *this specific match*, never a request to
+stop checking this merchant at all.
 
 - **Body**: `{ resolution: 'CLEARED' | 'CONFIRMED', reason: string }`
 - **Errors**: `422` if `reason` is missing/empty.

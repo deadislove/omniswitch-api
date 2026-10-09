@@ -8,8 +8,8 @@ import { PSPProvider, PaymentSplit } from '../../domain/aggregates/payment.aggre
 
 // Fallback only for the (shouldn't-happen) case of no merchant record —
 // every caller of this service already only runs for an authenticated,
-// JWT-bearing merchant or a payment created by one, so this is defensive,
-// not a real code path. Matches the default MerchantEntity.platformFeeBps
+// JWT-bearing merchant or a payment created by one, so this is defensive
+// rather than a real code path. Matches the default MerchantEntity.platformFeeBps
 // carries for every merchant created without an explicit rate.
 const DEFAULT_PLATFORM_FEE_BPS = 150;
 
@@ -42,8 +42,8 @@ export interface ChargeLedgerParams {
    * than making PaymentCheckoutSaga/AcquirerRoutingService do a second one.
    * Only unset in the shouldn't-happen "no merchant record" case (same
    * fallback posture as resolvePlatformFeeBps's DEFAULT_PLATFORM_FEE_BPS
-   * above) — SmartRoutingStrategy treats undefined as "no restriction," not
-   * "entitled to nothing," so this fallback is deliberately permissive.
+   * above) — SmartRoutingStrategy treats undefined as "no restriction,"
+   * distinct from "entitled to nothing," so this fallback is deliberately permissive.
    */
   enabledPspProviders?: PSPProvider[];
 }

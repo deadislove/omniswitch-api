@@ -37,8 +37,8 @@ export class HmacSignatureGuard implements CanActivate {
     // notice a missing or copy-pasted-placeholder value sitting there
     // unguarded until the day it actually got used. Guards are singletons
     // by default in Nest, so this constructor runs once at DI-container
-    // build time — refusing to start here is the same "fail loud at boot,
-    // not silently at request time" posture as JwtStrategy's check.
+    // build time — refusing to start here is the same "fail loud at boot
+    // instead of silently at request time" posture as JwtStrategy's check.
     const hmacSecret = configService.get<string>('HMAC_SECRET');
     if (!hmacSecret || hmacSecret.length < 32) {
       throw new Error(
@@ -66,7 +66,7 @@ export class HmacSignatureGuard implements CanActivate {
     // Only a merchant caller needs to send this — an agent's identity
     // (and therefore which key to verify against) comes from its JWT's
     // own delegationId claim, already authenticated by JwtAuthGuard
-    // upstream, not from a client-supplied header.
+    // upstream rather than from a client-supplied header.
     const merchantId = request.headers['x-merchant-id'];
 
     if (!signature || !timestamp || (!isAgent && !merchantId)) {
@@ -231,8 +231,8 @@ export class HmacSignatureGuard implements CanActivate {
    * DelegationService.createDelegation() generates a signing key scoped to
    * this one delegation, encrypted the same way (Vault Transit) as a
    * merchant's own hmacSecretCiphertext. `delegationId` comes from the
-   * caller's own JWT (`request.user.delegationId`, set by JwtStrategy),
-   * not a client-supplied header — there's no reason to trust a header over
+   * caller's own JWT (`request.user.delegationId`, set by JwtStrategy)
+   * rather than a client-supplied header — there's no reason to trust a header over
    * the token that was already cryptographically verified to get this far.
    *
    * Returns null for a delegation with no signing key at all — either one

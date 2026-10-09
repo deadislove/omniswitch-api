@@ -94,7 +94,7 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleDestroy 
     // connection first, or something else in the shutdown sequence already
     // closed it) — the goal of this hook is "make sure it's closed," and
     // quit() throwing "Connection is closed" on an already-closed client
-    // means that goal is already met, not a real shutdown failure.
+    // means that goal is already met rather than a real shutdown failure.
     try {
       await this.client.quit();
     } catch (err: unknown) {

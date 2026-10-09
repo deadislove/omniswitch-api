@@ -34,7 +34,7 @@ export interface BankTransferResponse {
  * see docs/business-domain/marketplace-and-payouts.md#payout-kyc-gating-and-real-transfer-initiation
  * for why, before this, a `Payout` was purely a scheduling/accounting
  * record with no rail to actually move money. Same "single external HTTP
- * call" shape as FXRateProviderPort/KYCProviderPort, not a whole
+ * call" shape as FXRateProviderPort/KYCProviderPort, rather than a whole
  * PSP-style multi-method interface.
  *
  * Three concrete adapters implement this — `MockBankTransferAdapter`
@@ -63,7 +63,7 @@ export abstract class BankTransferPort {
    * Follow-up lookup for a `PENDING` transfer's real outcome. Exists
    * because a real async rail's webhook — Dwolla's included
    * (developers.dwolla.com/docs/webhook-events) — is a lightweight
-   * `{id, topic, resourceId}` *notification*, not an outcome payload: the
+   * `{id, topic, resourceId}` *notification* rather than an outcome payload: the
    * receiver has to fetch the resource itself to learn anything beyond
    * "something happened," including a failure reason.
    * `WebhookController.bankTransferWebhook()` calls this after a failure

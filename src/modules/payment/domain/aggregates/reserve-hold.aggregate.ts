@@ -8,13 +8,13 @@ export type ReserveHoldStatus = 'HELD' | 'RELEASED';
  * merchant after `releaseEligibleAt` — the mechanism behind
  * `MerchantEntity.reserveBps`/`reserveHoldDays` (see that entity's
  * docblock). Tracked as its own record with a real lifecycle (`HELD` ->
- * `RELEASED`), not folded into `LedgerOutboxEvent`, because a hold has to be
+ * `RELEASED`), kept separate from `LedgerOutboxEvent` because a hold has to be
  * queryable and individually releasable long after the ledger event that
  * created it has already been published — the ledger entries are a
  * point-in-time journal, this is the thing an operator (or the release
  * sweep) needs to find and act on later.
  *
- * The withheld amount is always in the *charge* currency, not whatever
+ * The withheld amount is always in the *charge* currency, regardless of whatever
  * currency the merchant might be settled in — see
  * ChargeLedgerParamsResolverService's docblock for why reserve and FX
  * settlement conversion compose the way they do.

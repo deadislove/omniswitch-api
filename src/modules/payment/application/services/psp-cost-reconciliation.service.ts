@@ -30,7 +30,7 @@ export interface PspCostReconciliationReport {
   /** True when actualInvoicedFeeMinorUnits came from PSPAdapterPort.fetchFeeStatement() rather than an operator-supplied override. */
   actualFeeSource: 'PSP_STATEMENT' | 'MANUAL_OVERRIDE';
   deltaMinorUnits: string;
-  /** null when estimatedFeeMinorUnits is 0 — a percentage of zero is undefined, not zero. */
+  /** null when estimatedFeeMinorUnits is 0 — a percentage of zero is undefined rather than zero. */
   deltaPercent: number | null;
 }
 
@@ -43,7 +43,7 @@ export interface PspCostReconciliationReport {
  * settled charges, the actual side from PSPAdapterPort.fetchFeeStatement()
  * — against mock-psp's `/statement` endpoints in this environment (a
  * real, deterministic simulated fee schedule with per-transaction
- * variance, not a flat match to the estimate — see mock-psp's own
+ * variance rather than a flat match to the estimate — see mock-psp's own
  * comment), against whatever a real Stripe/Adyen deployment's own fee
  * reporting API returns in production. `actualInvoicedFeeMinorUnits` can
  * still be passed explicitly to override the fetched figure (e.g.
@@ -93,7 +93,7 @@ export class PspCostReconciliationService {
     }
 
     const schedule = this.feeSchedule.getSchedule(provider);
-    // Plain Number arithmetic for the percentage leg, not Money/bigint —
+    // Plain Number arithmetic for the percentage leg instead of Money/bigint —
     // this is an *estimate* (feePercentage is a configured approximation
     // of a real, per-card-network interchange schedule this codebase
     // doesn't model), so the sub-cent precision Money's bigint math exists

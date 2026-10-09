@@ -4,7 +4,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Legal-hold flag (Phase 3 follow-up #5 — see docs/compliance/data-
  * retention.md, "What this doesn't cover" → "No legal-hold mechanism").
  *
- * A single boolean, not a full audit-trail table (who placed it, when,
+ * A single boolean rather than a full audit-trail table (who placed it, when,
  * why, when released) — deliberately. That kind of record-keeping is a
  * real compliance/legal-process concern, but it's outside this
  * project's PSP/payment-processing scope, and this project doesn't
@@ -12,7 +12,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `autoDecision` or a merchant's `isActive` toggle carry no audit trail
  * in this codebase). If a real deployment needs "who/when/why" for
  * legal holds specifically, that's an explicit, separate addition on
- * top of this flag, not something this migration tries to anticipate.
+ * top of this flag — not something this migration attempts here.
  *
  * Added to both `payments` (partitioned parent — `ADD COLUMN` on a
  * partitioned table propagates to every existing and future partition
@@ -22,7 +22,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `false`: placing a hold on an already-archived payment pulls it back
  * into the live `payments` table instead of flipping the flag in place
  * (see `LegalHoldService.placeHold()`) — a held record needs to be
- * trackable through the normal live-payment query path, not sitting in
+ * trackable through the normal live-payment query path instead of sitting in
  * cold storage. The column still exists on `archive.payments` for
  * schema-parity and as a defense-in-depth check in the deletion job.
  */

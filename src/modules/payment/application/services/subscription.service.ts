@@ -20,7 +20,7 @@ const MAX_DUNNING_ATTEMPTS = 4;
 
 // A fixed namespace for uuidv5 — deterministic per-period payment ids are
 // derived from `${subscriptionId}:${currentPeriodEnd}` under this
-// namespace, not randomly generated. Any fixed UUID works as a v5
+// namespace rather than randomly generated. Any fixed UUID works as a v5
 // namespace; this one has no meaning beyond "this codebase's constant".
 const SUBSCRIPTION_PAYMENT_NAMESPACE = '7c9c9f2e-2c1a-4b8e-9c1a-1f6b6f8b9a10';
 
@@ -33,8 +33,8 @@ const SUBSCRIPTION_PAYMENT_NAMESPACE = '7c9c9f2e-2c1a-4b8e-9c1a-1f6b6f8b9a10';
  * Each billing cycle reuses PaymentCheckoutSaga.execute() wholesale rather
  * than re-implementing charging — a recurring charge should get the same
  * smart routing, risk scoring, ledger booking (including FX/reserve
- * handling), and 3DS-response handling a one-time charge gets, not a
- * parallel, drifting copy of that logic. `binInfo` is omitted (there's no
+ * handling), and 3DS-response handling a one-time charge gets, instead
+ * of a parallel, drifting copy of that logic. `binInfo` is omitted (there's no
  * live card entry happening for an off-session renewal); every PSP adapter
  * and SmartRoutingStrategy already treat it as optional.
  *
@@ -53,7 +53,7 @@ const SUBSCRIPTION_PAYMENT_NAMESPACE = '7c9c9f2e-2c1a-4b8e-9c1a-1f6b6f8b9a10';
  * exists but isn't SUCCEEDED (a prior failed attempt for the same period,
  * still PAST_DUE), retrying reuses the same row via the saga's own
  * `save()`-is-an-upsert behavior — same posture as a real dunning retry
- * being "another attempt at the same invoice", not a new one.
+ * being "another attempt at the same invoice" rather than a new one.
  */
 @Injectable()
 export class SubscriptionService {
@@ -75,7 +75,7 @@ export class SubscriptionService {
     trialDays?: number;
     orderId?: string;
     description?: string;
-    /** Either planId, or all three of amount/interval/intervalCount — resolved here, not left to the caller to reconcile. */
+    /** Either planId, or all three of amount/interval/intervalCount — resolved here instead of left to the caller to reconcile. */
     planId?: string;
     amount?: Money;
     interval?: BillingInterval;
@@ -186,8 +186,8 @@ export class SubscriptionService {
    * falls back to another provider exactly the way a charge would, but a
    * genuine decline (the PSP actually says this card is bad) does not —
    * `executeWithFallback()` only retries on a *thrown* error, and a
-   * declined verification is a normal `{ success: false }` return value,
-   * not an exception. `amount` is only ever used for routing/risk-scoring
+   * declined verification is a normal `{ success: false }` return value
+   * rather than an exception. `amount` is only ever used for routing/risk-scoring
    * purposes here; the PSP call itself never moves it (see
    * PSPVerifyPaymentMethodRequest's docblock).
    */
@@ -232,7 +232,7 @@ export class SubscriptionService {
    * Subscription.computeUpgradeProration()'s docblock). A downgrade
    * instead issues a *credit* for the unused portion of the current
    * period (Subscription.computeDowngradeCredit()) — applied against a
-   * *future* period's charge, not refunded now, since this system has no
+   * *future* period's charge rather than refunded now, since this system has no
    * refund/account-credit primitive to hand it back with immediately. If
    * a proration charge is owed and it fails, the plan change is not
    * applied at all — better a clear failed request than a subscriber
@@ -345,13 +345,13 @@ export class SubscriptionService {
   }
 
   /**
-   * Real event emission, not just a log line — the same "at least
+   * Real event emission, beyond just a log line — the same "at least
    * something a merchant could subscribe to" posture DisputeService's
    * dispute.created/dispute.resolved events already established. Nothing
    * in this codebase actually subscribes to these yet (no email, no
    * Slack, no paging) — see docs/business-domain/future-directions.md's
    * Recurring Billing section for that still-open gap; this closes "the
-   * event isn't even emitted at all", not "someone acts on it".
+   * event isn't even emitted at all" rather than the "someone acts on it" gap.
    */
   private emitPastDueEvent(subscription: Subscription): void {
     this.eventEmitter.emit('subscription.past_due', {
@@ -405,7 +405,7 @@ export class SubscriptionService {
           continue;
         }
 
-        // action === 'CHARGE'. amountDueThisPeriod, not `amount` directly
+        // action === 'CHARGE'. Uses amountDueThisPeriod rather than `amount` directly
         // — a pending downgrade credit (Subscription.applyDowngradeCredit())
         // reduces (or zeroes out) what's actually owed this period.
         const chargeAmount = subscription.amountDueThisPeriod;

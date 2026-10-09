@@ -7,7 +7,7 @@ import { ReserveService } from './reserve.service';
  * `merchant.reserve_policy.escalated` event by topping up the
  * merchant's still-HELD reserve holds to the new rate — the same thing
  * `RiskTieringService`'s own automatic sweep escalation already does via
- * `ReserveService.topUpHeldReservesForMerchant()`. Lives here, not in
+ * `ReserveService.topUpHeldReservesForMerchant()`. Lives here rather than in
  * `MerchantModule`, because `MerchantModule` -> `PaymentModule` is the
  * wrong direction of this codebase's one-way module dependency (the
  * reverse already holds); an event crossing that boundary is the same

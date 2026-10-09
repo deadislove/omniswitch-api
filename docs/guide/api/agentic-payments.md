@@ -92,8 +92,8 @@ and `status` (`ACTIVE`/`REVOKED`).
 ## `POST /delegations/:id/revoke`
 
 Revokes a delegation. **Takes effect immediately** — the agent's JWT is
-rejected on its very next request (`401 TOKEN_REVOKED`), not just once
-it naturally expires. Reuses the exact same JWT jti-revocation mechanism
+rejected on its very next request (`401 TOKEN_REVOKED`), well before
+it would naturally expire. Reuses the exact same JWT jti-revocation mechanism
 `POST /auth/revoke` (logout) uses; see
 [`system-design.md`](../system-design.md#5-cross-cutting-infrastructure-concerns).
 
@@ -183,4 +183,5 @@ later disputed, `GET /admin/disputes`/`GET /admin/disputes/:id` surface
 the same `delegationId`/`initiatedBy`, snapshotted at the moment the
 dispute was recorded. See
 [`disputes.md`](../../business-domain/disputes.md#agentdispute-attribution-phase-1)
-— this is audit-trail data capture only, not a liability determination.
+— this is audit-trail data capture only, no liability determination
+made or implied.

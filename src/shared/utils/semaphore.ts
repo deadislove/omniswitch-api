@@ -4,7 +4,7 @@
  * frees up, rather than being rejected outright. In-memory and per-pod on
  * purpose (not Redis-backed like RedisCircuitBreakerService): this exists
  * to protect *this pod's own* connection pool/event loop capacity from one
- * degrading dependency, not to coordinate a limit across replicas.
+ * degrading dependency, rather than to coordinate a limit across replicas.
  */
 export class Semaphore {
   private available: number;

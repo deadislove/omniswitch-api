@@ -34,8 +34,8 @@ What's still genuinely missing:
   silently fell through to `RETRYABLE`. Now `Record<PSPProvider,
   Set<string>>`, with `pspProvider` threaded through
   `recordFailedCharge()`/`classifyDeclineCode()` from the saga's own
-  result. Each PSP's set is still a small, reasonable-looking one, not
-  validated against real-world decline-code taxonomies or every
+  result. Each PSP's set is still a small, reasonable-looking one,
+  unvalidated against real-world decline-code taxonomies or every
   acquirer-specific variation — same illustrative-not-calibrated posture
   as the risk-tier thresholds themselves. See
   `subscription.aggregate.spec.ts`.
@@ -48,7 +48,7 @@ What's still genuinely missing:
   already established for dispute events — the actual HTTP-send/HMAC-
   signing mechanics are shared code
   (`src/modules/payment/adapters/notifications/
-  notification-delivery.util.ts`), not copy-pasted per event family,
+  notification-delivery.util.ts`), shared rather than copy-pasted per event family,
   but the channel/target fields themselves
   (`subscriptionNotificationChannel`/`subscriptionNotificationTarget`)
   are independent of disputes' own — a merchant can reasonably want
@@ -77,9 +77,10 @@ for the ledger mechanics, and
 for the technical build history.
 
 What's still genuinely missing is a *real* underwriting model — what was
-built is explicitly a mechanism demonstration, not a calibrated one:
-- **The thresholds are illustrative production defaults, not calibrated
-  against real data — but a real calibration *methodology* has been run,
+built is explicitly a mechanism demonstration rather than a calibrated one:
+- **The thresholds are illustrative production defaults rather than
+  something calibrated against real data — though a real calibration
+  *methodology* has been run,
   against a synthetic stand-in for the real data this repo doesn't have.**
   `scripts/calibration/generate-synthetic-history.ts` generates 2,000
   synthetic merchants from a deliberately realistic, skewed risk mixture
@@ -87,7 +88,7 @@ built is explicitly a mechanism demonstration, not a calibrated one:
   matching how real payment-platform risk is actually distributed), each
   with a *known* true risk label plus a settled-charge volume and lost-dispute
   count sampled from that label (log-normal volume, Poisson-sampled
-  disputes — real sampling noise, not a clean signal).
+  disputes — real sampling noise rather than a clean signal).
   `scripts/calibration/calibrate-thresholds.ts` then does what a real
   calibration pass would: scores `RiskTieringService`'s current fixed
   thresholds (HIGH >1%, MEDIUM >0.5%) against the *known* labels
@@ -117,7 +118,7 @@ built is explicitly a mechanism demonstration, not a calibrated one:
   writeup wouldn't have. `RISK_TIER_HIGH_THRESHOLD`/
   `RISK_TIER_MEDIUM_THRESHOLD` (env-configurable, `RiskTieringService`'s
   constructor) stay at their original defaults — this synthetic
-  exercise validates the *methodology*, not a number to actually ship;
+  exercise validates the *methodology* rather than a number to actually ship;
   the real path forward is running the same two scripts' logic against
   real historical `(merchantId, trailing lost-dispute rate, actual
   future loss outcome)` data once it exists (a real calibration would
@@ -127,12 +128,13 @@ built is explicitly a mechanism demonstration, not a calibrated one:
   [`../technical/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
   for how to run it.
 - **The new-merchant-age escalation (below) is now calibrated against
-  the same synthetic population, not just plausibility-argued.** The
+  the same synthetic population, beyond just plausibility-argued.** The
   synthetic generator now also assigns each merchant an `accountAgeDays`
   independent of its true risk label, with `settledCharges` capped by
   how much volume that age could plausibly have accumulated — modeling
   the actual claim the age-escalation feature makes: a new account's low
-  observed rate is less trustworthy, not necessarily lower-risk. Scored
+  observed rate signals less trust, independent of whether it's
+  actually lower-risk. Scored
   against the same fixed seed:
 
   | | precision | recall |
@@ -142,12 +144,12 @@ built is explicitly a mechanism demonstration, not a calibrated one:
 
   On this synthetic population, escalating new accounts trades 4.6
   points of precision for only 2.6 points of recall — a real,
-  measured cost, not a clearly-favorable trade. It does catch some
+  measured cost rather than a clearly-favorable trade. It does catch some
   genuinely-risky new merchants a pure rate threshold would have missed
   (validating the sample-size argument the feature is based on), but not
   by enough margin on this population to call it an unambiguous win. As
   with the thresholds above, this scores the *methodology* and the
-  *feature's own internal logic*, not a claim about whether 30 days is
+  *feature's own internal logic* rather than a claim about whether 30 days is
   the right real-world cutoff — see
   [`threshold-calibration.md`](../technical/tests/threshold-calibration.md#what-else-was-considered-and-what-wasnt-added-here)
   for which other Phase 1 risk signals (MCC categories, dispute
@@ -167,14 +169,15 @@ built is explicitly a mechanism demonstration, not a calibrated one:
   what the dispute-rate signal alone would say, only a bad one raises it.
   See `test/risk-tiering.e2e-spec.ts` for the full escalation matrix.
 - **Dispute *reason*-code awareness — ✅ resolved (Phase 1), and now
-  calibrated against the same synthetic population, not just
+  calibrated against the same synthetic population, beyond just
   plausibility-argued.** `RiskTieringService` now weights each `LOST`
   dispute by reason code instead of counting them identically
   (`src/modules/payment/domain/services/dispute-risk-weight.ts`):
   `fraudulent` counts at full weight, `product_not_received`/
   `subscription_canceled` at half, `duplicate` at a quarter — reusing the
   exact reason-code vocabulary `dispute-policy.ts`'s auto-contest table
-  already established, not a new taxonomy. Two merchants with the
+  already established, reusing it rather than inventing a new
+  taxonomy. Two merchants with the
   identical *count* of `LOST` disputes can now land in different tiers
   depending on why those disputes were lost — see
   `test/risk-tiering.e2e-spec.ts`'s reason-code test. The synthetic
@@ -192,7 +195,7 @@ built is explicitly a mechanism demonstration, not a calibrated one:
 
   A 14.6-point precision gain for a 4.4-point recall cost on this
   synthetic population — a real, measured case for reason-code
-  awareness, not just a plausible-sounding idea. As with every other
+  awareness, beyond just a plausible-sounding idea. As with every other
   exercise here, the *size* of the reason-code/true-risk correlation
   this models is itself an assumption that would need real data to
   confirm.
@@ -202,7 +205,7 @@ built is explicitly a mechanism demonstration, not a calibrated one:
   `ReserveService.topUpHeldReservesForMerchant()` now tops up every
   still-`HELD` (not yet released) reserve to the new, higher rate —
   computed against each hold's own original net amount
-  (`ReserveHold.netAmount`, added for this), not re-derived from the
+  (`ReserveHold.netAmount`, added for this) instead of re-derived from the
   hold's already-withheld slice. One-way by design: only escalation tops
   up; a de-escalation (the merchant's history improved) never claws back
   a reserve already withheld, and a hold already `RELEASED` before the
@@ -239,7 +242,7 @@ for the technical build history.
 What's still genuinely missing is a *real*, calibrated version of this —
 what was built is explicitly a mechanism demonstration, same posture as
 `RiskTieringService`'s reserve tiers:
-- **Illustrative, not calibrated against real data — but, same as the
+- **Illustrative rather than calibrated against real data — though, same as the
   risk-tiering thresholds above, an actual calibration pass has been run
   against a synthetic stand-in.**
   `scripts/calibration/generate-synthetic-history.ts` also generates
@@ -250,8 +253,8 @@ what was built is explicitly a mechanism demonstration, same posture as
   `scripts/calibration/calibrate-thresholds.ts` computes, per $2 amount
   bucket, the expected value of contesting (`win rate × amount − an
   assumed $8 operational cost per contest`) and finds the amount where
-  that turns non-negative — the real economic break-even point, not a
-  guess. On the fixed-seed synthetic run: **break-even at $16**, against
+  that turns non-negative — a genuine computed economic break-even
+  point rather than a guess. On the fixed-seed synthetic run: **break-even at $16**, against
   the current hardcoded `DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS` of
   **$15** — within a dollar, on this synthetic population. Not a claim
   that $15 is *correct* (the win rates and $8 cost are illustrative
@@ -294,7 +297,7 @@ What genuinely remains:
   lifecycle," this is now answered (the platform does, by locking the
   charge-time rate and reusing it verbatim for that payment's captures/
   refunds/dispute losses) — but that's a mechanical consequence of a
-  refund-netting fix, not a considered hedging policy.
+  refund-netting fix rather than a considered hedging policy.
 - **VAT/tax handling — ✅ partially resolved (Phase 1).** Real tax
   *calculation* (rates, returns, nexus determination) is still out of
   scope for this system and arguably always will be — but the "the
@@ -305,7 +308,8 @@ What genuinely remains:
   when) for every cross-border charge, at the same call sites and under
   the same condition as `settlementConversion`. See
   [`fx-conversion.md`](./fx-conversion.md#cross-border-tax-record-phase-1)
-  — explicitly an audit record, not a tax-nexus determination.
+  — explicitly an audit record, stopping short of a tax-nexus
+  determination.
 
 ---
 
@@ -325,7 +329,8 @@ for the mechanism.
 Every payment in this system was previously attributed only to a
 `Merchant` — a business entity operating in its own interest, whose
 employees are presumed authorized to act for it (RBAC governs *what*
-they can do, not whether they're allowed to represent the merchant at
+they can do, separately from whether they're allowed to represent the
+merchant at
 all). An autonomous agent acting on behalf of a human principal breaks
 that assumption: the agent isn't the principal, doesn't have the
 principal's full authority, and the principal typically wants to grant a
@@ -336,7 +341,7 @@ to an employee/RBAC role. That's the relationship a `Delegation` models.
 ### Human-approval hold for above-threshold purchases
 
 The business framing this section originally described — "ask me first
-for anything above $200" — is now a real mechanism, not just a policy
+for anything above $200" — is now a real mechanism, beyond just a policy
 number: `SpendPolicy.requireApprovalAboveAmount` sits strictly below
 `perTransactionLimit`. A charge under that threshold auto-executes
 exactly as before; a charge above it (but still within the hard
@@ -367,10 +372,11 @@ have auto-executed in.
   snapshots them onto the `Dispute` record at creation time (so
   `GET /admin/disputes` can actually answer "was this an agent-initiated
   charge" — see [`disputes.md`](./disputes.md)). Deliberately scoped as
-  audit-trail plumbing only, not a liability-decision policy engine.
+  audit-trail plumbing only, stopping short of a liability-decision
+  policy engine.
 
 - **A different risk posture for agent-initiated charges — ✅ two
-  signals resolved (Phase 1), not a full model.**
+  signals resolved (Phase 1) — still short of a full model.**
   `PaymentAggregate.calculateRiskScore()` still reasons about amount and
   card origin exactly as before for every charge — but now takes an
   optional `agentContext`, populated only for an agent-initiated one
@@ -380,13 +386,15 @@ have auto-executed in.
   already knows — e.g. a subscription-like recurring purchase — is
   normal, unlike the implicit "high frequency = suspicious" a human
   charge is treated with elsewhere; novelty relative to *this
-  delegation's own history* is what's actually risk-relevant, not raw
+  delegation's own history* is what's actually risk-relevant, rather
+  than raw
   velocity); (2) whether this charge alone consumes a large share
   (≥50%) of what's left in the delegation's rolling monthly budget,
   using `Delegation`/`SpendPolicy`'s existing `currentMonthSpent`/
   `monthlyLimit` — no new fields needed. Still not modeled: agent/
   principal-pairing history *across* merchants, or anything resembling a
-  real fraud model — these are two concrete, testable heuristics, not a
+  real fraud model — these are two concrete, testable heuristics rather
+  than a
   scoring system. See `test/agent-risk-scoring.e2e-spec.ts`.
   **A real, non-rare gap — now closed.** The budget-pressure signal (2)
   used to only be computed on `PaymentController.charge()`'s
@@ -402,7 +410,8 @@ have auto-executed in.
   instead of needing a frozen creation-time snapshot — arguably a better
   number than the immediate-execution path's own snapshot, since it
   reflects everything the delegation has actually spent in the days
-  between creating the approval and an operator deciding it, not a stale
+  between creating the approval and an operator deciding it, rather
+  than a stale
   read. Still legitimately absent in two edge cases (see that method's
   own docblock: the calendar month rolled over between creation and
   approval, or the numbers leave no room for a meaningful percentage) —
@@ -426,8 +435,8 @@ have auto-executed in.
 
   A real, measured 10-point precision lift over having no signal at all
   while still catching 95% of genuinely problematic charges — the two
-  heuristics do better than nothing on this synthetic population, not
-  just a plausible-sounding idea. Same caveat as everywhere else: the
+  heuristics do better than nothing on this synthetic population —
+  beyond just a plausible-sounding idea. Same caveat as everywhere else: the
   *size* of the assumed correlation between each signal and genuine
   anomaly has no real delegation/agent transaction history behind it in
   this repository.
@@ -435,4 +444,4 @@ have auto-executed in.
   Agent Payments Protocol, and various agent-to-agent authorization
   proposals are all still evolving; `Delegation`/`SpendPolicy` implement
   the underlying business mechanism these standards are converging
-  toward, not any one of their specific wire formats.
+  toward, independent of any one of their specific wire formats.

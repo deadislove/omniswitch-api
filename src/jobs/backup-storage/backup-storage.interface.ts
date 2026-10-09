@@ -14,7 +14,7 @@ export interface BackupStorage {
    * job's run summary and asserted on directly by
    * `data-retention-jobs.e2e-spec.ts`.
    *
-   * Must throw, not return a falsy or ambiguous value, if the write
+   * Must throw rather than return a falsy or ambiguous value, if the write
    * can't be confirmed — `run-deletion-job.ts` treats any thrown error
    * here as "do not delete anything this run" (see
    * `DELETION_BACKUP_REQUIRED`), so a silent partial failure here would

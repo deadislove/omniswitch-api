@@ -3,8 +3,8 @@
 Source: `outbox-admin.controller.ts`, `reconciliation-admin.controller.ts`,
 `legal-hold-admin.controller.ts`, `ambiguous-payment-admin.controller.ts`,
 `health.controller.ts`, `metrics.controller.ts`. These endpoints exist
-for operators and infrastructure, not for merchants integrating with
-the API.
+for operators and infrastructure, rather than for merchants integrating
+with the API.
 
 ---
 
@@ -12,7 +12,7 @@ the API.
 
 See [`system-design.md`](../system-design.md#4-other-core-flows-worth-knowing-before-you-touch-them)
 for the Outbox pattern this recovers from. A publish failure is
-deliberately **terminal** (`FAILED`, not auto-retried) — these
+deliberately **terminal** (`FAILED`, never auto-retried) — these
 endpoints are how an operator brings a dead-lettered event back to life
 after investigating why it failed.
 
@@ -99,8 +99,8 @@ state.
 Places a hold. If the payment is currently archived
 (`archive.payments`), this restores it to the live `payments` table as
 part of placing the hold — a record under active legal/regulatory
-scrutiny needs to be reachable through the normal payment query path,
-not left in cold storage.
+scrutiny needs to be reachable through the normal payment query path
+instead of sitting in cold storage.
 
 **Response `200`**: `{ id, legalHold: true, location: "live" | "restored-from-archive" }`
 
@@ -166,7 +166,7 @@ whatever the automated sweep above hasn't resolved (or when an operator
 needs to close one out immediately rather than wait for the sweep).
 `SUCCEEDED` books the same ledger entries a webhook confirmation would
 (fee/reserve/split resolution, a real ledger outbox entry) — this is
-recording a real charge as collected, not just flipping a status flag.
+recording a real charge as collected, beyond just flipping a status flag.
 `FAILED` records that no charge occurred; nothing is booked.
 
 **Body**: `{ outcome: 'SUCCEEDED'|'FAILED', pspTransactionId?: string, reason: string }`
@@ -190,8 +190,8 @@ ever records an actual human decision.
 
 ## Health (`/health`) — unversioned, no `/api` prefix
 
-Kubernetes probe contract — fixed paths owned by infrastructure, not
-this API's versioned surface.
+Kubernetes probe contract — fixed paths owned by infrastructure,
+separate from this API's versioned surface.
 
 - **Public**, no auth.
 
@@ -215,7 +215,7 @@ Prometheus scrape endpoint (`text/plain; version=0.0.4`).
 | `omniswitch_psp_avg_latency_ms` | `provider` | |
 | `omniswitch_ledger_outbox_pending_total` | — | Events awaiting relay |
 | `omniswitch_ledger_outbox_failed_total` | — | Dead-lettered events |
-| `omniswitch_payments_total` | `status`, `provider` | Payment volume — pull-computed from the `payments` table at scrape time, not an in-process counter (see [`system-design.md`](../system-design.md#5-cross-cutting-infrastructure-concerns) for why that distinction matters across replicas) |
+| `omniswitch_payments_total` | `status`, `provider` | Payment volume — pull-computed from the `payments` table at scrape time, rather than an in-process counter (see [`system-design.md`](../system-design.md#5-cross-cutting-infrastructure-concerns) for why that distinction matters across replicas) |
 
 Plus default Node.js/process metrics from `prom-client`'s
 `collectDefaultMetrics()` (heap, event loop lag, GC, CPU).

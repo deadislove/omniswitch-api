@@ -14,8 +14,8 @@ import { createHmac, timingSafeEqual } from 'crypto';
  * `X-Bank-Transfer-Signature: t=<unix seconds>,v1=<hex digest>`.
  * `scripts/mock-psp/server.js`'s `/ach/transfers` and `/wire/transfers`
  * async callback signs with this exact scheme (see `signBankTransferCallback`
- * in that file) so the mock exercises the real verification path, not a
- * bypassed one.
+ * in that file) so the mock exercises the real verification path
+ * instead of a bypassed one.
  */
 @Injectable()
 export class BankTransferWebhookGuard implements CanActivate {

@@ -1,10 +1,10 @@
 # Chaos Testing
 
 `scripts/chaos/` injects real failures into the docker-compose stack —
-stopping a real container mid-traffic, not mocking a dependency — to
+stopping a real container mid-traffic rather than mocking a dependency — to
 check whether the resilience mechanisms this codebase documents (the
 circuit breaker, fail-closed Redis-backed auth, connection-pool recovery)
-actually hold up, the same "verify against real infrastructure, not just
+actually hold up, the same "verify against real infrastructure, beyond just
 code review" standard the rest of this project's testing already applies.
 This is a different question from `load-testing.md`'s (sustained
 throughput under normal conditions) — chaos testing asks what happens
@@ -16,7 +16,7 @@ merchant for `psp-outage.sh`/`redis-outage.sh`/`postgres-primary-outage.sh`;
 an OPERATOR-role merchant additionally for `psp-outage.sh`, to read
 `GET /payments/routing/health`). See each script's own header for its
 exact required environment variables. None of these run as part of
-`ci.yml` — deliberately destructive against real containers, not
+`ci.yml` — deliberately destructive against real containers, rather than
 something to run unattended on every push. They do run on their own
 recurring schedule; see "Scheduled automation" below.
 
@@ -24,7 +24,7 @@ recurring schedule; see "Scheduled automation" below.
 
 Stops `mock-psp` (both `StripePSPAdapter` and `AdyenPSPAdapter` point at
 the same container in this stack, so this is the "every PSP is
-unreachable" case, not just one provider).
+unreachable" case, beyond just one provider).
 
 **What it proves**: sustained real failures trip `RedisCircuitBreakerService`
 open; a charge attempted against a tripped/degraded PSP resolves as a
@@ -37,7 +37,7 @@ the PSP comes back and the breaker's recovery window elapses.
 charge requests — `PaymentProcessorFactory.executeWithSmartRouting()`'s
 own same-provider retry on an ambiguous outcome means each script-level
 request can record more than one failure internally. A charge attempted
-against a fully-down PSP resolves as `AMBIGUOUS`, not `FAILED` — a
+against a fully-down PSP resolves as `AMBIGUOUS` rather than `FAILED` — a
 connection failure with literally no response is exactly the case
 `PaymentStatus.AMBIGUOUS` exists for (see that value object's own
 docblock), confirmed here against a real dropped connection rather than
@@ -52,14 +52,14 @@ retries the same token.
 **What it proves**: `security-and-compliance.md`'s documented trade-off —
 "Redis becomes a hard dependency for authentication... fails closed
 rather than open" — actually holds. A valid JWT must be *rejected* while
-Redis is down, not silently accepted because the revocation check
+Redis is down, instead of silently accepted because the revocation check
 couldn't run.
 
 **What running it actually found**: the fail-closed behavior is real (a
-valid token is rejected, not accepted), but it surfaces as a generic
+valid token is rejected rather than accepted), but it surfaces as a generic
 `500 Internal Server Error` rather than a purpose-built `503`/`401` with
 a clear error code — the Redis connection failure is an uncaught
-exception propagating out of the revocation check, not a deliberately
+exception propagating out of the revocation check, instead of a deliberately
 thrown, documented failure mode. The *security* property holds; the
 *operational* clarity doesn't — an on-call engineer seeing bare 500s
 across the board has to already know about this specific trade-off to
@@ -94,7 +94,7 @@ already reports `postgres-master` healthy again still fail (`500`) —
 the app's own connection pool needs a further handful of failed
 attempts (tens of seconds, in the run that produced this) to discard
 its stale connections and re-establish new ones before writes succeed
-again. Both gaps are about *how long* recovery takes, not whether it
+again. Both gaps are about *how long* recovery takes, rather than whether it
 happens — no request was ever silently lost or double-processed, and no
 restart of the `api` process was needed either time.
 
@@ -124,7 +124,7 @@ run inside the `api` container itself) rather than depending on a human
 having already run `README.md`'s manual seeding snippet, runs all three
 scenarios back to back, and fails the job if any scenario's own PASS/FAIL
 logic (see each script's final `exit 0`/`exit 1`) reports a failure —
-a real regression should show up as a failed scheduled run, not just a
+a real regression should show up as a failed scheduled run, beyond just a
 line in a log nobody opens.
 
 Each scenario's full stdout/stderr and a one-line-per-scenario

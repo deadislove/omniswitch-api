@@ -67,7 +67,8 @@ for the full internal flow.
 `actionUrl` is set, resolved later via webhook), `REQUIRES_CAPTURE`
 (manual capture), `FAILED`, or `AMBIGUOUS` (the PSP call itself timed
 out or every configured PSP failed — genuinely unknown whether the
-card was charged, not a decline; see
+card was charged, which is a different thing entirely from a decline;
+see
 [`risk-and-reserves.md`](./risk-and-reserves.md) for how this gets
 resolved).
 
@@ -104,8 +105,8 @@ useful for a frontend polling a 3DS challenge's resolution.
 ## `GET /payments/:id`
 
 Full payment detail, including refund/capture history, and the exact
-`metadata`/`statementDescriptor` sent at charge time (echoed back, not
-re-derived) — see `PaymentDetailResponseDto`.
+`metadata`/`statementDescriptor` sent at charge time (echoed back
+rather than re-derived) — see `PaymentDetailResponseDto`.
 
 - **Roles**: `MERCHANT`, `ADMIN`, `READONLY`
 - **Errors**: `403` belongs to a different merchant; `404` not found.
@@ -165,9 +166,9 @@ not found; `409` not in a cancellable status (e.g. already captured);
 ## `POST /payments/bulk-upload`
 
 `multipart/form-data` CSV upload (field name `file`, max 10MB) for batch
-payment processing. Rows are parsed and **queued**, not charged
-synchronously — a `201` means parsing succeeded, not that every row's
-payment succeeded.
+payment processing. Rows are parsed and **queued** rather than charged
+synchronously — a `201` means parsing succeeded, with no claim that
+every row's payment succeeded too.
 
 - **Roles**: `MERCHANT`, `ADMIN`
 - CSV columns: `amount`, `currency` (defaults `USD`), `order_id`,

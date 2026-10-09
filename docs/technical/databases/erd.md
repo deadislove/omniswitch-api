@@ -3,10 +3,10 @@
 ## No database-level foreign keys — read this before the diagram
 
 Every relationship below is enforced in application code (a service
-looks up the referenced row and 404s if it's missing), not by a
+looks up the referenced row and 404s if it's missing), rather than by a
 Postgres `FOREIGN KEY` constraint — grep `src/database/migrations/`
 and there isn't a single `REFERENCES` in any of them. This is
-consistent across every table, not an oversight on one of them, and
+consistent across every table rather than an oversight on one of them, and
 worth understanding rather than just noting:
 
 - **`payments`/`ledger_outbox` are range-partitioned** (see
@@ -17,13 +17,13 @@ worth understanding rather than just noting:
   among other constraints) — avoiding FKs into `payments` sidesteps
   that entirely rather than working around it per-partition.
 - **`merchant_id` and `payment_id` columns store the business-facing
-  id as a plain string/uuid**, not a typed FK column — e.g.
+  id as a plain string/uuid** instead of a typed FK column — e.g.
   `PaymentEntity.merchantId` stores `MerchantEntity.merchantId` (the
   business-facing id used in JWT claims, rate-limit keys, etc.), *not*
   `MerchantEntity.id` (the internal uuid primary key). A real FK would
   need to target whichever column actually carries the uniqueness
   constraint being referenced — `merchant_id` columns are consistent
-  about referencing the business id, not the internal PK, across every
+  about referencing the business id rather than the internal PK, across every
   table below.
 - **Archiving moves a `payments` row into a different schema entirely**
   (`archive.payments`) — a live FK from `disputes`/`reserve_holds` to
@@ -37,8 +37,8 @@ worth understanding rather than just noting:
 
 Every reference is still indexed (see each table's own `@Index()`
 decorators, referenced in [`schema.md`](./schema.md)) for lookup
-performance — the tradeoff here is referential integrity enforcement,
-not query performance.
+performance — the tradeoff here is referential integrity enforcement
+rather than query performance.
 
 ## Diagram
 
@@ -52,7 +52,9 @@ erDiagram
     merchants ||--o{ payouts : "merchant_id -> merchant_id"
     merchants ||--o{ delegations : "merchant_id -> merchant_id"
     merchants ||--o{ charge_approvals : "merchant_id -> merchant_id"
+    merchants ||--o{ webhook_deliveries : "merchant_id -> merchant_id"
     merchants ||--o{ merchants : "platform_merchant_id -> merchant_id (self, CONNECTED accounts)"
+    webhook_deliveries ||--o{ webhook_deliveries : "id -> replay_of_delivery_id (self, replay chain)"
 
     payments ||--o{ ledger_outbox : "id -> payment_id"
     payments ||--o{ disputes : "id -> payment_id"
@@ -134,11 +136,18 @@ erDiagram
         varchar psp_provider
         timestamptz ran_at
     }
+    webhook_deliveries {
+        uuid id PK
+        varchar merchant_id
+        varchar event_type
+        boolean success
+        uuid replay_of_delivery_id "nullable, self-ref"
+    }
 ```
 
 `reconciliation_runs` is intentionally drawn with no edges — it
 references payments only indirectly, through a `paymentId` field
-*inside* its `mismatches` JSONB array, not a real column. See
+*inside* its `mismatches` JSONB array, instead of a real column. See
 [`../reconciliation.md`](../reconciliation.md) for how that gets
 populated and read.
 
@@ -164,4 +173,4 @@ table, read its entity file directly (see the table in
 [`schema.md`](./schema.md) for the file path) — per this project's own
 documentation philosophy (see
 [`../../guide/api/README.md`](../../guide/api/README.md)), the code is
-the source of truth and this diagram is a map, not a copy.
+the source of truth, and this diagram is a map of it rather than a copy.

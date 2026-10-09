@@ -30,8 +30,8 @@ import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles, UserRole } from '../../shared/decorators/roles.decorator';
 import { MerchantEntity } from './merchant.entity';
 
-// Exported (not just used locally) so AmbiguousRiskAdminController — in
-// PaymentModule, not this one, since it depends on
+// Exported (not just used locally) so AmbiguousRiskAdminController — which lives in
+// PaymentModule rather than this one, since it depends on
 // AmbiguousRiskMonitoringService (PaymentRepositoryPort) and
 // MerchantModule must never depend on PaymentModule (the reverse already
 // holds; see architecture.md's module graph) — can reuse this exact
@@ -343,7 +343,7 @@ export class MerchantAdminController {
   @Patch(':merchantId/psp-entitlement')
   @ApiOperation({
     summary:
-      "Set which PSPs this merchant's charges may route through — takes effect on the next charge. A charge that explicitly requests a preferredProvider outside this list is rejected (422), not silently routed elsewhere.",
+      "Set which PSPs this merchant's charges may route through — takes effect on the next charge. A charge that explicitly requests a preferredProvider outside this list is rejected (422) rather than silently routed elsewhere.",
   })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })
@@ -360,7 +360,7 @@ export class MerchantAdminController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      "Submit (or re-submit) this merchant's KYC application — resolves synchronously against the mock provider (KYC_PROVIDER=mock, the default), or returns PENDING_REVIEW against a real one (KYC_PROVIDER=persona), with the final decision arriving later via POST /webhooks/kyc. Only meaningful for a CONNECTED merchant; gates payouts, not charges.",
+      "Submit (or re-submit) this merchant's KYC application — resolves synchronously against the mock provider (KYC_PROVIDER=mock, the default), or returns PENDING_REVIEW against a real one (KYC_PROVIDER=persona), with the final decision arriving later via POST /webhooks/kyc. Only meaningful for a CONNECTED merchant; gates payouts only, leaving charges unaffected.",
   })
   @ApiResponse({ status: 200, type: MerchantSummaryDto })
   @ApiResponse({ status: 404, description: 'Merchant not found' })

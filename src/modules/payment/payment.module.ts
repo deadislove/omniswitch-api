@@ -177,9 +177,9 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     // app's event bus in two: a listener via `app.get(EventEmitter2)`
     // (resolving to AppModule's instance) would never receive events
     // DisputeService emits (resolving to this module's instance) — 0
-    // received, not a timing flake. AppModule's registration already
+    // received, rather than a timing flake. AppModule's registration already
     // covers the whole app via @Global(); a second one here would be pure
-    // duplication that's actively harmful, not just redundant.
+    // duplication that's actively harmful, beyond just redundant.
   ],
   controllers: [
     PaymentController,
@@ -338,7 +338,7 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     SubscriptionNotificationListener,
 
     // AML-review notification channel adapters + dispatcher — called
-    // directly by AmlReviewMonitoringService, not via an @OnEvent
+    // directly by AmlReviewMonitoringService, instead of via an @OnEvent
     // listener (see AmlReviewNotificationDispatcherService's docblock
     // for why this event family doesn't need one).
     EmailAmlReviewNotificationAdapter,

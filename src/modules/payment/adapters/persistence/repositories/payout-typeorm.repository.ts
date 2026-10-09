@@ -94,7 +94,7 @@ export class PayoutTypeOrmRepository implements PayoutPort {
       .where('p.reserveReleased = false')
       .andWhere('p.reserveAmountMinorUnits > 0')
       // .toISOString() — releaseEligibleAt is timestamptz already, but the
-      // comparison param still needs to be an ISO string, not a raw JS
+      // comparison param still needs to be an ISO string rather than a raw JS
       // Date, for the same node-postgres serialization reason
       // findStale()/findByProviderAndDateRange() already document
       // elsewhere in this codebase.
@@ -271,7 +271,7 @@ export class PayoutTypeOrmRepository implements PayoutPort {
   // serializes concurrent sweeps against each other; it doesn't stop a
   // *later*, already-serialized sweep from reading a stale (pre-replication)
   // "no prior run" here and re-processing a window the previous sweep
-  // already paid out — a real duplicate Payout, not just a stale read.
+  // already paid out — a real duplicate Payout, beyond just a stale read.
   // Confirmed via a real e2e failure (marketplace-payouts.e2e-spec.ts)
   // that only reproduced under concurrent e2e load, never in isolation.
   async findLatestSweepRun(): Promise<PayoutSweepRun | null> {

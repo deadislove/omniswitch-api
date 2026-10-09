@@ -3,7 +3,7 @@ import { SpendPolicy } from '../value-objects/spend-policy.vo';
 
 export type DelegationStatus = 'ACTIVE' | 'REVOKED';
 
-/** Calendar-month bucket key (UTC) — e.g. "2026-08". Rolling over on this boundary, not "30 days since creation", matches how a real card's monthly spend limit resets. */
+/** Calendar-month bucket key (UTC) — e.g. "2026-08". Rolling over on this boundary rather than "30 days since creation" matches how a real card's monthly spend limit resets. */
 export function monthKeyOf(date: Date): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 }
@@ -12,7 +12,7 @@ export function monthKeyOf(date: Date): string {
  * Delegation Aggregate
  * A human principal (a merchant's own operator) authorizing an autonomous
  * agent to make purchases on the merchant's behalf — a narrower, revocable
- * slice of purchasing power, not the merchant's own full account access.
+ * slice of purchasing power rather than the merchant's own full account access.
  * See docs/business-domain/future-directions.md#agentic-payments for why
  * this is a genuinely different relationship than the RBAC roles
  * (`UserRole.MERCHANT`/`ADMIN`/...) that already exist, and

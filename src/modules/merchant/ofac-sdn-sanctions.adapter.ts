@@ -9,8 +9,8 @@ const DEFAULT_MATCH_THRESHOLD = 0.92;
 /**
  * OFAC SDN Sanctions Adapter
  * A real, self-hosted match against the US Treasury OFAC Specially
- * Designated Nationals (SDN) list — real, government-published data,
- * not a paid vendor's proprietary database. Chosen specifically so this
+ * Designated Nationals (SDN) list — real, government-published data
+ * rather than a paid vendor's proprietary database. Chosen specifically so this
  * adapter is buildable and testable against genuine list data without
  * procuring a commercial screening contract; see
  * docs/technical/security-and-compliance.md#sanctionswatchlist-screening
@@ -21,14 +21,14 @@ const DEFAULT_MATCH_THRESHOLD = 0.92;
  *
  * `SanctionsListStore` holds the currently-active list (refreshed by
  * `SanctionsListRefreshService`, or the bundled snapshot if a refresh
- * has never succeeded) — this adapter only does the matching, not the
- * fetching, so the two concerns (network I/O vs. comparison logic) stay
+ * has never succeeded) — this adapter only does the matching, leaving the
+ * fetching to that service, so the two concerns (network I/O vs. comparison logic) stay
  * independently testable.
  *
  * Exact normalized-name matches are always `HIT` (score 1). Below that,
  * `SANCTIONS_MATCH_THRESHOLD` (default 0.92) separates `POTENTIAL_MATCH`
  * from `CLEAR` — see this codebase's own docs for why that threshold is
- * a deliberately simple, illustrative starting point, not a calibrated
+ * a deliberately simple, illustrative starting point, rather than a calibrated
  * figure a real deployment should trust without review.
  */
 @Injectable()

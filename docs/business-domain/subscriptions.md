@@ -11,7 +11,7 @@ verified) and
 [`future-directions.md`](./future-directions.md#recurring-billing--subscriptions)
 for what's still genuinely missing.
 
-## Why this is a separate domain object, not "a payment that repeats"
+## Why this is a separate domain object rather than "a payment that repeats"
 
 [`payment-lifecycle.md`](./payment-lifecycle.md) describes a single
 charge's lifecycle — created, processed, succeeded or failed, maybe
@@ -94,7 +94,7 @@ passed, it asks the aggregate what to do (`dueAction()`):
 
 On success, `recordSuccessfulCharge()` advances the period: the new
 `currentPeriodEnd` is the *old* `currentPeriodEnd` plus one interval —
-anchored to the schedule, not to whenever the charge actually happened.
+anchored to the schedule rather than to whenever the charge actually happened.
 This matters for dunning: a subscription that failed on its due date and
 finally succeeds three days later on a retry still bills its *next*
 period on the original cadence, rather than the retry delay quietly
@@ -113,7 +113,7 @@ classifies *why* the charge failed via `classifyDeclineCode(errorCode)`:
   `refusalReasonCode` set (`5`, `6`, `14`, `20`, `22`, `25`, `26`, `31`,
   `50`) — the two PSPs return different decline-code vocabularies
   entirely, so neither set can be reused for the other. Retrying these
-  is actively harmful, not just futile — a real system that keeps
+  is actively harmful, beyond just futile — a real system that keeps
   representing a card reported stolen risks the acquirer flagging the
   merchant account itself. The subscription skips the retry schedule
   entirely and goes straight to `CANCELED` on the very first attempt,
@@ -130,8 +130,8 @@ classifies *why* the charge failed via `classifyDeclineCode(errorCode)`:
   `PAST_DUE` subscription until that time arrives. 1 initial attempt + 3
   retries — spread day 1, day 3, day 7 after each failure — before
   `failedAttempts` reaches `MAX_DUNNING_ATTEMPTS` (4) and the
-  subscription is canceled anyway (`dunning_exhausted`, not
-  `hard_decline`).
+  subscription is canceled anyway, tagged `dunning_exhausted` rather
+  than `hard_decline`.
 
 The decline code itself is threaded end-to-end from the PSP response:
 `PSPAdapterPort`'s charge result already carries an `errorCode` on a
@@ -153,8 +153,8 @@ exact pre-existing retry behavior for that case.
 
 Both `subscription.past_due` (on every failure that doesn't cancel) and
 `subscription.canceled` are emitted as real `EventEmitter2` events from
-`SubscriptionService` — not just a log line — the same "closes the
-*emission* gap, not the *someone's listening* gap" posture
+`SubscriptionService` — beyond just a log line — the same "closes the
+*emission* gap, distinct from the *someone's listening* gap" posture
 `DisputeService`'s `dispute.created`/`dispute.resolved` events already
 established. `SubscriptionNotificationListener` now subscribes both to
 a real per-merchant email/Slack/webhook delivery (Phase 1) — see
@@ -177,15 +177,15 @@ This is a real, working dunning policy, but still a simplified one —
 worth being explicit about what's still missing:
 - **The hard-decline code set is illustrative, per-PSP but not
   calibrated (Phase 1).** `HARD_DECLINE_CODES` is now keyed by
-  `PSPProvider` (`Record<PSPProvider, Set<string>>`), not one shared
-  set — `errorCode` reaching `classifyDeclineCode()` is each PSP
+  `PSPProvider` (`Record<PSPProvider, Set<string>>`) rather than one
+  shared set — `errorCode` reaching `classifyDeclineCode()` is each PSP
   adapter's raw, unnormalized decline code (Stripe's own `decline_code`
   strings vs Adyen's own numeric `refusalReasonCode` strings), and a
   single shared set only ever matched Stripe's vocabulary — every real
   Adyen hard decline silently fell through to `RETRYABLE`. Fixed by
   threading `pspProvider` through `recordFailedCharge()`/
   `classifyDeclineCode()` from the saga's own result. Each PSP's set is
-  still a small, reasonable-looking one, not validated against
+  still a small, reasonable-looking one — not validated against
   real-world decline-code taxonomies or every acquirer-specific
   variation (e.g. `do_not_honor`) — illustrative, same posture as the
   risk-tier thresholds or the dispute auto-decision reason-code table.
@@ -253,10 +253,10 @@ case); the sweep just advances the subscription without charging again.
 If not, it proceeds to charge normally. A retried *failed* attempt for
 the same period reuses the same row via `PaymentAggregate.create()` +
 `save()`'s upsert behavior — the same underlying `Payment` record
-represents every attempt at a given period's invoice, not a fresh one per
-try.
+represents every attempt at a given period's invoice instead of a
+fresh one per try.
 
-This was verified directly, not just reasoned about: `test/subscriptions.e2e-spec.ts`
+This was verified directly, beyond just reasoned about: `test/subscriptions.e2e-spec.ts`
 fabricates a `Payment` row with the exact deterministic id a due
 subscription's period would produce, marks it `SUCCEEDED` with a sentinel
 `pspTransactionId`, runs the sweep, and confirms both that the
@@ -339,6 +339,6 @@ math for `'month'`/`'year'` uses JavaScript's native
 `setUTCMonth()`/`setUTCFullYear()`, which overflows on a day that doesn't
 exist in the target month — a subscription anchored on the 31st will
 drift forward across any month shorter than 31 days (Jan 31 + 1 month
-becomes Mar 3, not Feb 28). Real billing systems clamp to the target
+lands on Mar 3 instead of Feb 28). Real billing systems clamp to the target
 month's last day instead; this implementation doesn't. See
 `addBillingInterval()` in `subscription.aggregate.ts`.

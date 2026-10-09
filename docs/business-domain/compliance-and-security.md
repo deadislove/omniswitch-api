@@ -2,7 +2,7 @@
 
 This describes *why* compliance and security requirements shaped several
 domain-model decisions in this system — written for someone reasoning
-about the business, not auditing the code. For the technical/audit-ready
+about the business rather than auditing the code. For the technical/audit-ready
 detail this document deliberately doesn't repeat, see:
 
 - [`../technical/security-and-compliance.md`](../technical/security-and-compliance.md) —
@@ -14,7 +14,7 @@ detail this document deliberately doesn't repeat, see:
   AML record-keeping: what's kept, for how long, and how to configure it
   for a real jurisdiction
 
-## Why this belongs in the domain model, not just the security layer
+## Why this belongs in the domain model, beyond just the security layer
 
 A payment gateway's core product *is* trust — an acquiring bank or card
 network can revoke a platform's ability to process cards at all over a
@@ -31,8 +31,8 @@ that connection explicit.
 The single biggest compliance-driven design decision in this system is
 that it **never receives a raw card number at all** — `cardToken`/
 `paymentMethodId` are opaque references produced by client-side
-tokenization (Stripe.js, Adyen Web Components), not something this
-backend ever unwraps. Architecturally this looks like "use the PSP's
+tokenization (Stripe.js, Adyen Web Components) — never something this
+backend unwraps. Architecturally this looks like "use the PSP's
 SDK"; from a business/compliance standpoint it's the decision that
 determines which PCI DSS Self-Assessment Questionnaire tier this
 platform can even claim — the lightest tiers (SAQ A / SAQ A-EP) are
@@ -47,7 +47,7 @@ frontend* also never touches raw card data — whether a specific
 integration lands on SAQ A vs. SAQ A-EP depends on how *that merchant's*
 frontend embeds the tokenization widget, a decision this backend can't
 make on their behalf. That's a real integration-contract implication,
-not just an internal engineering note.
+beyond just an internal engineering note.
 
 ## AML/KYC: why payouts are gated and charges aren't
 
@@ -59,8 +59,8 @@ deliberately **not** whether that merchant can be a split recipient and
 accumulate ledger credit in the first place. That split (mirroring real
 Stripe Connect's `charges_enabled`/`payouts_enabled` distinction) is
 itself a compliance-shaped decision: the regulatory obligation is about
-*moving money to* an unverified party, not about *crediting an internal
-ledger entry* to one — conflating the two would block legitimate platform
+*moving money to* an unverified party, a different thing entirely from
+*crediting an internal ledger entry* to one — conflating the two would block legitimate platform
 operation (a seller listing products, accumulating sales) over a
 requirement that only actually applies at the moment money would
 actually leave the platform. See
@@ -77,12 +77,11 @@ refuse to do business with at all." Sanctions/watchlist screening
 (`SanctionsScreeningPort`) answers the second question, and it's a
 distinct check for a reason that matters beyond neatness: it runs
 **before** KYC even applies, at merchant creation itself, for both
-`PLATFORM` and `CONNECTED` merchants — this is a legal screening
-obligation, not a marketplace-onboarding nicety scoped only to connected
-sellers.
+`PLATFORM` and `CONNECTED` merchants — a legal screening obligation
+applying to every merchant, connected or not.
 
-A confirmed match blocks onboarding outright, not just a downstream
-capability like payouts. This is deliberately *not* KYC-shaped: "create
+A confirmed match blocks onboarding outright — more than just a
+downstream capability like payouts. This is deliberately *not* KYC-shaped: "create
 the account but hold back one capability" (what KYC does — see
 [`marketplace-and-payouts.md#connected-account-kyc`](./marketplace-and-payouts.md#connected-account-kyc))
 is the right posture for a merchant that's merely unverified yet; it's
@@ -104,14 +103,13 @@ exactly one route, carries a hard spend ceiling enforced *before* a PSP
 is ever called, and is revocable in real time. Each of those specifically
 bounds what damage a compromised or misbehaving agent credential can do
 — the same reasoning a real business would apply before letting
-autonomous software hold *any* purchasing authority, not a technical
-nicety. **What this doesn't yet answer**: if an agent makes an incorrect
+autonomous software hold *any* purchasing authority, treated here as a
+liability safeguard rather than a technical nicety. **What this doesn't yet answer**: if an agent makes an incorrect
 purchase, who is actually liable for resolving it — the platform, the
 merchant, or whoever operates the agent? This is a genuinely unresolved
-question industry-wide, not something this project can settle
-unilaterally; the audit trail (`delegationId`/`initiatedBy` on every
+question industry-wide that this project can't settle unilaterally; the audit trail (`delegationId`/`initiatedBy` on every
 agent-initiated payment) is the building block a real liability
-framework would need, not an answer to the question itself.
+framework would need — it doesn't answer the question itself.
 
 ## Cross-border: what "compliance" doesn't cover here
 
@@ -141,12 +139,12 @@ Framed in business terms instead of mechanism terms:
 - **HMAC request signing** is what stops a leaked bearer token alone
   from being sufficient to move money — a second, separate secret has to
   also leak for a stolen JWT to be actionable. For agentic payments
-  specifically, this is scoped per-delegation, not shared with the
-  merchant's own secret — a compromised agent credential can't be used
+  specifically, this is scoped per-delegation rather than shared with
+  the merchant's own secret — a compromised agent credential can't be used
   to forge a request *as the merchant*.
 - **Envelope encryption for `hmac_secret`** means a database-only
   compromise (a leaked backup, an over-privileged read replica credential)
-  yields ciphertext, not a usable signing key — the actual signing
+  yields only ciphertext, never a usable signing key — the actual signing
   material only ever exists in plaintext briefly, in memory, at
   creation/rotation/verification time.
 
@@ -154,5 +152,5 @@ None of this is presented as "this system is secure" — see
 `security-and-compliance.md`'s own honest gap list (plaintext
 `JWT_SECRET`/DB credentials, dev-mode Vault) for what these mechanisms
 *don't* yet close. The point here is narrower: each mechanism above
-exists because of a specific business risk it closes, not because
-"security" is generically good practice.
+exists because it closes one specific business risk, independent of
+whether "security" is generically good practice.

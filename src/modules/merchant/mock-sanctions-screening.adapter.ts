@@ -6,7 +6,7 @@ import { SanctionsScreeningPort, SanctionsScreeningResult } from './sanctions-sc
  * Mock Sanctions Screening Adapter
  * Calls scripts/mock-psp/server.js's `/sanctions/screen` endpoint — same
  * "point at a local mock in tests/dev" pattern as MockKYCProviderAdapter,
- * not a real sanctions-list match. Deterministic by fixture marker in
+ * standing in for a real sanctions-list match. Deterministic by fixture marker in
  * `name` (case-insensitive): containing `SANCTIONED` -> `HIT`, containing
  * `POTENTIAL` -> `POTENTIAL_MATCH`, anything else -> `CLEAR`. The default
  * (`SANCTIONS_PROVIDER` unset or `mock`) so local dev/e2e don't need the

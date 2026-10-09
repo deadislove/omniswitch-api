@@ -10,7 +10,7 @@ runbook, this is the reference.
 
 Background jobs (`archiving-cronjob.yaml`, `deletion-cronjob.yaml`,
 `partition-maintenance-cronjob.yaml`, `drop-cutover-tables-job.yaml`)
-are covered by [`../jobs.md`](../jobs.md), not repeated here — that doc
+are covered by [`../jobs.md`](../jobs.md) rather than repeated here — that doc
 already goes deep on the job subsystem's own architecture, the
 `BackupStorage` factory pattern, and the `workload-type: batch-job` pod
 label these manifests all carry.
@@ -45,8 +45,8 @@ application should own or ship:
 
 | Dependency | Why it's not in `k8s/` |
 |---|---|
-| A default `StorageClass` | Cluster-wide provisioning concern, not application-specific |
-| `ingress-nginx` (the controller itself) | Typically one shared install per cluster, not per-application |
+| A default `StorageClass` | Cluster-wide provisioning concern rather than application-specific |
+| `ingress-nginx` (the controller itself) | Typically one shared install per cluster rather than per-application |
 | `cert-manager` + a `ClusterIssuer` | Same reasoning, plus the right issuer config (real ACME account, DNS) is environment-specific |
 
 See [`../deployment/prerequisites.md`](../deployment/prerequisites.md)
@@ -65,8 +65,11 @@ for how to actually install and wire up each of these three.
 | `hpa.yaml` | HorizontalPodAutoscaler | [`application.md`](./application.md) |
 | `configmap.yaml` | ConfigMap | [`application.md`](./application.md) |
 | `secret.yaml` | Secret | [`application.md`](./application.md) |
-| `external-secrets-example.yaml` | SecretStore, ExternalSecret (illustrative, not applied) | [`application.md`](./application.md) |
+| `external-secrets-example.yaml` | SecretStore, ExternalSecret (illustrative rather than applied) | [`application.md`](./application.md) |
 | `network-policy.yaml` | NetworkPolicy (x14) | [`networking.md`](./networking.md) |
 | `ingress.yaml` | Ingress | [`networking.md`](./networking.md) |
 | `ingress-nginx-security-headers-configmap.yaml` | ConfigMap | [`networking.md`](./networking.md) |
 | `archiving-cronjob.yaml`, `deletion-cronjob.yaml`, `partition-maintenance-cronjob.yaml`, `drop-cutover-tables-job.yaml` | CronJob (x3), Job | [`../jobs.md`](../jobs.md) |
+| `serviceaccount.yaml` | ServiceAccount | [`../deployment/prerequisites.md`](../deployment/prerequisites.md), [`../deployment/runbook.md`](../deployment/runbook.md) — cluster setup, not this app's own behavior |
+| `prometheus-rules.yaml` | PrometheusRule | [`../incident-response.md`](../incident-response.md), [`../security-and-compliance.md`](../security-and-compliance.md) — alerting policy, not infrastructure shape |
+| `log-shipping-example.yaml` | ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap, DaemonSet (illustrative, not applied) | [`../deployment/prerequisites.md`](../deployment/prerequisites.md) |

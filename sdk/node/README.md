@@ -113,7 +113,7 @@ app.post('/webhooks/omniswitch', express.raw({ type: 'application/json' }), (req
 
 Every non-2xx response throws `OmniSwitchApiError`, exposing the same
 stable `code` field the raw API returns (safe to branch on — `error`/
-`message` are for logging, not string-matching):
+`message` are for logging rather than meant for string-matching):
 
 ```ts
 import { OmniSwitchApiError } from '@deadislove/omniswitch-node';
@@ -138,7 +138,7 @@ try {
 - **MFA.** If the merchant credential you authenticate with has MFA
   enabled, `authenticate()` throws `MFA_NOT_SUPPORTED` rather than
   attempting the interactive challenge flow — MFA guards the human
-  dashboard login path, not a server-side integration credential.
+  dashboard login path — a different thing from a server-side integration credential.
 - **Other endpoints.** Only charge/refund/capture/cancel/get-payment are
   wrapped so far — the rest of the API (subscriptions, disputes,
   marketplace splits, admin operations) is real but not yet covered by
@@ -152,4 +152,4 @@ try {
   — the real end-to-end proof, run via the main repo's own e2e suite
   (`npm run test:e2e` from the repo root): this client's requests
   against a really-running app instance, verified by the real
-  `HmacSignatureGuard`/`IdempotencyInterceptor`, not a mock.
+  `HmacSignatureGuard`/`IdempotencyInterceptor` — the real thing instead of a stand-in.

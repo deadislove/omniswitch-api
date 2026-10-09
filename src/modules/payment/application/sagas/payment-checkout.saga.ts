@@ -45,7 +45,7 @@ export interface CheckoutSagaInput {
    * `PSPChargeRequest.metadata` both already existing to receive it.
    * Stored on `PaymentAggregate.metadata` and forwarded to the PSP request
    * (Stripe/Adyen both have a real `metadata` concept on their own charge
-   * objects — see each adapter's `charge()`), not just persisted locally.
+   * objects — see each adapter's `charge()`), beyond just persisted locally.
    */
   metadata?: Record<string, string>;
   binInfo?: BinInfo;
@@ -119,7 +119,7 @@ export interface CheckoutSagaResult {
  * webhook; it was stuck permanently. The PSP is now always called, and its
  * own response decides REQUIRES_ACTION vs. SUCCEEDED — matching how Stripe
  * and Adyen actually work (the PSP's real-time SCA/3DS2 engine makes this
- * call, not the merchant, pre-emptively, before ever attempting the charge).
+ * call rather than the merchant, pre-emptively, before ever attempting the charge).
  * `binCountry` is still forwarded as a hint (PSD2 requires a challenge for
  * European cards), but it informs the PSP's decision, it doesn't replace it.
  *
@@ -252,8 +252,8 @@ export class PaymentCheckoutSaga {
       // PaymentAggregate.finalizeSplitConversions() (called from whichever
       // path actually books this charge, below and in that service)
       // overwrites it with whatever rate was actually used — so a later
-      // refund always replays the rate the money actually moved at, not
-      // this request-time guess.
+      // refund always replays the rate the money actually moved at,
+      // rather than this request-time guess.
       payment.recordSplits(toPaymentSplits(chargeLedgerParams.splits));
     }
 
@@ -398,7 +398,7 @@ export class PaymentCheckoutSaga {
       // splits, see PaymentAggregate.finalizeSplitConversions()'s
       // docblock. Called unconditionally anyway so `payment.splits`'s FX
       // portion always reflects whatever resolve() call actually fed
-      // createChargeEntries(), not an assumption about which path ran.)
+      // createChargeEntries() — never an assumption about which path ran.)
       if (splits && splits.length > 0) {
         payment.finalizeSplitConversions(toPaymentSplits(splits));
       }
@@ -483,7 +483,7 @@ export class PaymentCheckoutSaga {
       };
     }
 
-    // PSP returned FAILED. finalProvider, not payment.pspProvider — the
+    // PSP returned FAILED. finalProvider instead of payment.pspProvider — the
     // latter is only ever set by startProcessing() at the *first*
     // attempt, and would be stale here if a fallback attempt (a
     // different provider) is what actually produced this decline.

@@ -4,8 +4,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Stage 1 of the payments/ledger_outbox partitioning migration.
  *
  * Creates NEW, empty, range-partitioned tables (`payments_partitioned`,
- * `ledger_outbox_partitioned`) — deliberately staging-named, not yet the
- * live `payments`/`ledger_outbox` tables. The actual backfill of
+ * `ledger_outbox_partitioned`) — deliberately staging-named rather than
+ * the live `payments`/`ledger_outbox` tables. The actual backfill of
  * existing rows and the atomic rename-swap into the live table names is
  * a separate, later migration (task #9): a straight `INSERT ... SELECT`
  * backfill at real data volume is a long-running, closely-supervised
@@ -22,10 +22,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Option 2's query audit).
  *
  * Initial partitions are computed relative to *whenever this migration
- * actually runs*, not a hardcoded calendar range — a fresh clone of this
- * repo, run months or years from now, must still get partitions that
- * cover the current month, not stale ones frozen at whenever this file
- * was written. 6 months back (backdated headroom for the eventual
+ * actually runs*, instead of a hardcoded calendar range — a fresh clone
+ * of this repo, run months or years from now, must still get
+ * partitions covering the current month, rather than stale ones frozen
+ * at whenever this file was written. 6 months back (backdated headroom for the eventual
  * backfill in task #9, and matching the archive-driven ~6-7 month live
  * window) through 2 months forward (buffer) = 9 partitions. A `DEFAULT`
  * partition catches anything outside that range so an INSERT never
@@ -41,14 +41,15 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Option 2's constraint-change table). `idempotency_key` moves from a
  * standalone UNIQUE to `(idempotency_key, created_at)` — safe, since an
  * idempotency key is only ever checked relative to when it was issued,
- * not globally-ever.
+ * never globally.
  *
  * Task 8c — query-audit sign-off (Option 2's "not partition-pruning-safe"
  * list: PaymentEntity's findById()/findByIdOnMaster()/
  * findByIdempotencyKey()/findByPspTransactionId()/countByStatusAndProvider(),
  * LedgerOutboxEntity's findPending()/markPublished()/markFailed()/findById()/
- * findFailed()/resetToPending()/countByStatus()). These are confirmed safe
- * to leave as-is post-partitioning, not a follow-up to fix: benchmarked
+ * findFailed()/resetToPending()/countByStatus()). These are already confirmed safe
+ * to leave as-is post-partitioning, rather than a follow-up still to fix:
+ * benchmarked
  * 2026-08-21 against 700k rows flat vs. the same rows across 7 monthly
  * partitions — id-keyed UPDATE delta ~0.005ms/op, status-keyed SELECT delta
  * ~0.0016ms/op, both negligible at this design's bounded partition count

@@ -10,7 +10,7 @@ lost) and
 [`future-directions.md`](./future-directions.md#dispute-resolution-workflow)
 for what's still genuinely missing.
 
-## Why this is a separate domain object, not a payment status
+## Why this is a separate domain object rather than a payment status
 
 A chargeback reported by a PSP could, in principle, just flip a payment's
 status to `DISPUTED` and stop there. That loses real information a
@@ -39,8 +39,9 @@ NEEDS_RESPONSE ──────► UNDER_REVIEW ──────► WON
   since neither PSP's webhook actually supplies a real deadline.
 - **`UNDER_REVIEW`**: evidence has been submitted — either an operator's
   own submission via `POST /admin/disputes/:id/evidence`, or an automatic
-  one the auto-decision policy already sent (see below). The PSP/card
-  network is now the one deciding, not this platform.
+  one the auto-decision policy already sent (see below). The decision
+  now belongs solely to the PSP/card network — this platform no longer
+  has a say.
 - **`WON`** / **`LOST`**: terminal, reached only by the PSP/card network's
   own decision arriving via webhook — never something this platform or a
   merchant decides directly. Reachable straight from `NEEDS_RESPONSE`
@@ -60,7 +61,8 @@ recommendation is `ACCEPT` regardless of reason — an economically cheap
 dispute usually isn't worth contesting no matter why it was filed, the
 same call a human operator would make first. `DisputeService.recordDispute()`
 now re-evaluates the merchant's current tier (via `RiskTieringService.
-evaluateMerchant()`, live, not a persisted value — see
+evaluateMerchant()`, computed live rather than read from a persisted
+value — see
 [`risk-and-fraud.md`](./risk-and-fraud.md)) right before applying this
 threshold:
 
@@ -78,7 +80,7 @@ from touching one), so the dispute policy falls back to the base
 threshold, same as an unclassified merchant. See
 [`future-directions.md`](./future-directions.md#dispute-resolution-workflow)
 for the real break-even calculation
-[`../technical/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
+[`../technical/tests/threshold-calibration.md`](../technical/tests/threshold-calibration.md)
 ran against synthetic data to check the base default against.
 
 **Reason code decides the rest — and a `LOW`-tier merchant gets one more
@@ -89,14 +91,14 @@ contestable reason than everyone else:**
 | `product_not_received` | `CONTEST` (templated) | Shipment/delivery records are the kind of evidence a template can point at generically. |
 | `duplicate` | `CONTEST` (templated) | "These are two distinct transactions" is checkable from records alone. |
 | `subscription_canceled` | `CONTEST` (templated) for `LOW`-tier merchants; `MANUAL_REVIEW` otherwise | Needs the actual cancellation-policy/timestamp comparison — templatable in principle, but only extended to merchants with a strong-enough track record to trust the template's default framing. |
-| `fraudulent` | `MANUAL_REVIEW`, at every tier | Deliberately **never** auto-contested regardless of risk tier — a card-not-present fraud claim needs real evidence (AVS/CVV match, 3DS proof, account history) and often turns on liability-shift rules a generic template can't speak to. This is an evidentiary limitation, not a risk-tier judgment call, so tier never changes it. |
+| `fraudulent` | `MANUAL_REVIEW`, at every tier | Deliberately **never** auto-contested regardless of risk tier — a card-not-present fraud claim needs real evidence (AVS/CVV match, 3DS proof, account history) and often turns on liability-shift rules a generic template can't speak to. This is an evidentiary limitation rather than a risk-tier judgment call, so tier never changes it. |
 | anything unrecognized | `MANUAL_REVIEW` | Default when this platform hasn't classified a reason code. |
 
 `CONTEST` is the one recommendation that actually *acts*: it immediately
 calls the PSP with the templated evidence string, moving the dispute
 straight to `UNDER_REVIEW` before an operator ever sees it —
-representment happens automatically, not just a recommendation logged for
-later. `ACCEPT`/`MANUAL_REVIEW` are advisory only; this platform has no
+representment happens automatically — more than just a recommendation
+logged for later. `ACCEPT`/`MANUAL_REVIEW` are advisory only; this platform has no
 PSP "accept/close" action to call, so `ACCEPT` just tells an operator not
 to bother. Every dispute — regardless of which way the auto-decision
 went — also carries `evidenceGuidance`, reason-code-specific guidance on
@@ -104,7 +106,7 @@ what evidence would actually be needed to win, so an operator overriding
 a `MANUAL_REVIEW` recommendation isn't starting from nothing. The
 `GET /admin/disputes` response also carries `merchantRiskTierAtDecision`
 — an audit-only snapshot of what tier was actually in effect at the
-moment this decision was made, not a live join, so a later tier change
+moment this decision was made, rather than a live join, so a later tier change
 never rewrites the historical record of what this dispute's decision was
 actually based on.
 
@@ -118,8 +120,8 @@ which remain out of scope for this platform's dispute policy today.
 
 `POST /admin/disputes/:id/evidence` (ADMIN/OPERATOR) calls the PSP and
 only moves the dispute to `UNDER_REVIEW` if the PSP actually accepts the
-submission — a failed PSP call leaves the dispute at `NEEDS_RESPONSE`,
-not silently marked as responded-to. A dispute the auto-decision policy
+submission — a failed PSP call leaves the dispute at `NEEDS_RESPONSE`
+rather than silently marking it as responded-to. A dispute the auto-decision policy
 already moved to `UNDER_REVIEW` (a `CONTEST` case) correctly rejects a
 second, human submission with `409` — the same one-shot constraint a
 human's own submission has against itself.
@@ -165,16 +167,16 @@ the only channel that needs no merchant-side setup beyond a URL) via
   by `scripts/mock-psp/server.js`'s `/v1/email/send` in dev/test.
 
 A merchant with no `disputeNotificationTarget` configured (every
-merchant created before this existed) is skipped silently, not sent to
-an empty destination — see
+merchant created before this existed) is skipped silently instead of
+sent to an empty destination — see
 `PATCH /admin/merchants/:id/dispute-notification-channel` to configure
 one. A delivery failure is logged, never allowed to break dispute
 processing itself.
 
 The actual HTTP-POST/HMAC-signing mechanics behind all three adapters
 live in shared code
-(`src/modules/payment/adapters/notifications/notification-delivery.util.ts`),
-not copy-pasted per event family — `SubscriptionNotificationListener`
+(`src/shared/utils/notification-delivery.util.ts`)
+rather than copy-pasted per event family — `SubscriptionNotificationListener`
 (see [`subscriptions.md`](./subscriptions.md)) reuses the exact same
 delivery functions for `subscription.past_due`/`subscription.canceled`,
 via its own independent `subscriptionNotificationChannel`/
@@ -184,7 +186,7 @@ via its own independent `subscriptionNotificationChannel`/
 
 Every `Dispute` now snapshots `delegationId`/`initiatedBy` from the
 underlying `Payment` at `DisputeService.recordDispute()` time — read via
-`PaymentRepositoryPort.findByIdOnMaster()`, not the ambient
+`PaymentRepositoryPort.findByIdOnMaster()`, bypassing the ambient
 replica-routed connection, since a dispute can (in tests, and in
 principle in production) arrive moments after the very charge that
 created the payment record, which can lose the race against the

@@ -36,7 +36,7 @@ export interface PSPChargeRequest {
  * The PSP's own transaction-level fraud/risk signal — Stripe Radar's
  * `Charge.outcome`, Adyen's `fraudResult` — surfaced rather than
  * discarded. Deliberately a normalized *union* of two different real
- * vocabularies, not a lowest-common-denominator reduction: `riskLevel`
+ * vocabularies, rather than a lowest-common-denominator reduction: `riskLevel`
  * only ever comes from Stripe (Radar's own `normal`/`elevated`/`highest`
  * categorization); `riskScore` only ever comes from Adyen in practice
  * (`fraudResult.accountScore`) since Stripe's numeric `risk_score` is
@@ -44,7 +44,7 @@ export interface PSPChargeRequest {
  * to know a given Stripe account has — a PSP that doesn't populate a
  * field simply leaves it undefined rather than this adapter inventing a
  * value. See `PaymentAggregate.calculateRiskScore()` for how this feeds
- * into this platform's own risk tiering as a complementary signal, not
+ * into this platform's own risk tiering as a complementary signal rather than
  * a replacement for it — this system sits in front of Stripe/Adyen as
  * the actual card-network processor, so re-deriving card-present fraud
  * detection from scratch would be redundant with what the PSP already
@@ -193,8 +193,8 @@ export abstract class PSPAdapterPort {
   /**
    * Asks the PSP what actually happened to a request that was sent with
    * this idempotency key but never got a response back (see
-   * isAmbiguousOutcomeError()) — a read-only lookup, not a new charge
-   * attempt. Deliberately doesn't need the original payment method reference:
+   * isAmbiguousOutcomeError()) — a read-only lookup rather than a new
+   * charge attempt. Deliberately doesn't need the original payment method reference:
    * this system never persists cardToken/paymentMethodId past the
    * original request (PCI scope reduction), so any automated
    * resolution path has to work from the idempotency key alone.
@@ -228,7 +228,7 @@ export abstract class PSPAdapterPort {
   /**
    * Representment — submits evidence to contest a dispute at the PSP.
    * `pspDisputeId` is the PSP's own id for the dispute (Stripe: `dp_...`;
-   * Adyen: the chargeback notification's own pspReference), not the
+   * Adyen: the chargeback notification's own pspReference) — never the
    * original payment's transaction id.
    */
   abstract submitDisputeEvidence(pspDisputeId: string, evidence: string): Promise<PSPDisputeEvidenceResponse>;

@@ -204,7 +204,7 @@ describe('PaymentCheckoutSaga', () => {
       expect(result.usedFallback).toBe(false);
       expect(paymentRepository.save).toHaveBeenCalledTimes(1); // Step 1: PENDING intent, no ledger entry yet
       expect(paymentRepository.update).toHaveBeenCalledTimes(1); // PROCESSING
-      // SUCCEEDED is written via dataSource.transaction (atomic with the ledger entry), not paymentRepository.update
+      // SUCCEEDED is written via dataSource.transaction (atomic with the ledger entry) rather than paymentRepository.update
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
     });
 
@@ -231,8 +231,8 @@ describe('PaymentCheckoutSaga', () => {
       await saga.execute(input);
 
       // The ledger entry is written inside dataSource.transaction, which is
-      // only invoked once the charge is confirmed SUCCEEDED — not at Step 1
-      // (payment intent creation uses paymentRepository.save(), not a
+      // only invoked once the charge is confirmed SUCCEEDED — never at Step 1
+      // (payment intent creation uses paymentRepository.save() instead of a
       // transaction). The old behavior double-booked a PAYMENT_CHARGED
       // entry for manual-capture payments (once at authorization, once at
       // capture) — this regression test guards against that.
@@ -384,7 +384,7 @@ describe('PaymentCheckoutSaga', () => {
     // decide REQUIRES_ACTION, same as Stripe/Adyen actually behave. This
     // test would fail if that short-circuit ever came back: it asserts the
     // PSP was actually invoked and that the resulting pspTransactionId is
-    // the real one the (mocked) PSP returned, not a fabricated one.
+    // the real one the (mocked) PSP returned, as opposed to a fabricated one.
     it('should call the PSP and use its REQUIRES_ACTION response for a high-risk European card, not a pre-emptive redirect', async () => {
       const input = createSagaInput({
         amount: Money.of(15000, 'EUR'), // High value: crosses the >10,000 major-unit tier in calculateRiskScore()
@@ -427,7 +427,7 @@ describe('PaymentCheckoutSaga', () => {
     it('should still succeed a high-risk European card if the PSP does not actually challenge it', async () => {
       // A high risk score no longer guarantees REQUIRES_ACTION on its own —
       // only the PSP's real response does. This covers the other half of
-      // the regression: risk score must inform, not decide.
+      // the regression: risk score must inform, never decide.
       const input = createSagaInput({
         amount: Money.of(15000, 'EUR'),
         binInfo: createEuropeanBinInfo(),

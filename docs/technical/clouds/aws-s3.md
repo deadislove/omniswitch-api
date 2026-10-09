@@ -12,7 +12,7 @@ provider-specific detail below.
 |---|---|---|
 | `DELETION_BACKUP_STORAGE` | Yes | Must be exactly `s3` |
 | `DELETION_BACKUP_S3_BUCKET` | Yes | Bucket name, no `s3://` prefix |
-| `DELETION_BACKUP_S3_REGION` | Yes | e.g. `us-east-1` — the SDK client is constructed with this region explicitly, not inferred from the bucket |
+| `DELETION_BACKUP_S3_REGION` | Yes | e.g. `us-east-1` — the SDK client is constructed with this region explicitly rather than inferring it from the bucket |
 
 Both `DELETION_BACKUP_S3_BUCKET`/`DELETION_BACKUP_S3_REGION` go in
 `k8s/configmap.yaml` (or the local `.env.local`) — neither is a

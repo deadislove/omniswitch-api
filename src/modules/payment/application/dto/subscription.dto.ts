@@ -124,7 +124,7 @@ export class SubscriptionResponseDto {
   @ApiPropertyOptional({
     example: 'a1b2c3d4-...',
     description:
-      "The Plan this subscription was created from or last changed to, if any — provenance only, not a live reference (see Subscription aggregate's docblock)",
+      "The Plan this subscription was created from or last changed to, if any — provenance only, rather than a live reference (see Subscription aggregate's docblock)",
   })
   planId?: string;
 
@@ -169,7 +169,7 @@ export class SubscriptionResponseDto {
 
   @ApiPropertyOptional({
     description:
-      'When status is PAST_DUE, the next scheduled dunning retry (day 1/3/7 backoff, not the next daily sweep tick) — absent otherwise',
+      'When status is PAST_DUE, the next scheduled dunning retry (day 1/3/7 backoff rather than the next daily sweep tick) — absent otherwise',
   })
   nextRetryAt?: string;
 
@@ -224,7 +224,7 @@ export class ChangePlanResponseDto {
   @ApiPropertyOptional({
     example: 5.5,
     description:
-      "The credit issued for the unused portion of the current period, if this was a downgrade — applied against a future period's charge, not refunded now. Mutually exclusive with prorationCharged. Absent for a lateral move (no price change).",
+      "The credit issued for the unused portion of the current period, if this was a downgrade — applied against a future period's charge instead of refunded now. Mutually exclusive with prorationCharged. Absent for a lateral move (no price change).",
   })
   creditIssued?: number;
 }

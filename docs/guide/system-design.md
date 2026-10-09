@@ -28,12 +28,12 @@ come back to.
 | Secrets | HashiCorp Vault (Transit engine) | Envelope-encrypts `hmac_secret`/TOTP secrets at rest |
 | Auth | `@nestjs/passport` + `passport-jwt`, HS256 | Stateless JWT + a Redis-backed revocation list on top (see §5) |
 | Observability | `prom-client` (`/metrics`), Winston (structured JSON logs), `@nestjs/terminus` (`/health`) | |
-| PSPs | Hand-rolled REST clients for both Stripe and Adyen | Both talk to a local mock server in dev/test, not the real APIs. The `stripe` npm dependency is unused — `StripePSPAdapter` calls the Stripe REST API directly via `fetch()`, pinning `Stripe-Version` itself, the same pattern as the Adyen adapter |
+| PSPs | Hand-rolled REST clients for both Stripe and Adyen | Both talk to a local mock server in dev/test rather than the real APIs. The `stripe` npm dependency is unused — `StripePSPAdapter` calls the Stripe REST API directly via `fetch()`, pinning `Stripe-Version` itself, the same pattern as the Adyen adapter |
 | Testing | Jest (unit, mocked deps) + Jest/supertest (e2e, real Docker infra) | See §7 |
 
 Nothing here is exotic on purpose — this is meant to read like a
-production payment service's actual stack, not a showcase of unusual
-tech choices.
+production payment service's actual stack rather than a showcase of
+unusual tech choices.
 
 ## 2. Architectural style: Hexagonal (Ports & Adapters) + DDD
 
@@ -58,11 +58,11 @@ SubscriptionTypeOrmRepository }`) happens once, in the module file
 only ever depends on the abstract port.
 
 **Why this matters day to day**: if you're writing a unit test, you mock
-the port, not a database. If you're adding a new PSP, you implement
+the port instead of a database. If you're adding a new PSP, you implement
 `PSPAdapterPort` and nothing above it changes. If you're wondering "is
 this a business rule or plumbing," ask whether it belongs in `domain/`
 (rule) or `adapters/`/`application/services/` (plumbing) — that
-distinction is enforced by the folder structure, not just convention.
+distinction is enforced by the folder structure, beyond just convention.
 
 ### The module split
 
@@ -128,12 +128,12 @@ POST /payments/charge
               → PaymentCheckoutSaga.execute()
                   1. Create Payment intent (PENDING) — no ledger entry yet
                   2. ChargeLedgerParamsResolverService.resolve() — fee/FX/reserve/split params,
-                     validated now, before any money moves (an invalid split must fail here,
-                     not after a real charge already succeeded)
+                     validated now, before any money moves (an invalid split must fail here
+                     instead of after a real charge already succeeded)
                   3. Risk score computed (stored for audit; doesn't gate anything)
                   4. AcquirerRoutingService picks a PSP (BIN + amount + live health +
                      merchant's PSP entitlement — a preferredProvider outside it is
-                     rejected 422, not silently routed elsewhere)
+                     rejected 422 instead of silently routed elsewhere)
                   5. Adapter calls the PSP — a thrown error retries the other PSP;
                      a normal decline response does not
                   6. On success: Payment marked SUCCEEDED + ledger outbox entry written,
@@ -141,7 +141,7 @@ POST /payments/charge
               → [if AGENT and the charge failed] DelegationService.releaseReservation()
 ```
 
-The guard order in step 1 is load-bearing, not incidental — each guard
+The guard order in step 1 is load-bearing rather than incidental — each guard
 depends on state the previous one populated (`req.user`, then
 `req.user.merchantId`). If you add a new guard that reads `req.user`, it
 must go after `JwtAuthGuard` in the `@UseGuards()` array.
@@ -231,7 +231,7 @@ piece of state becomes available, and where the two failure branches
   elapses, separately rechecks KYC-blocked payouts as merchants get
   verified, separately initiates bank transfers for eligible net-amount
   payouts, and separately initiates bank transfers for eligible
-  *released-reserve* payouts. Five sweeps, not one, because each concern
+  *released-reserve* payouts. Five separate sweeps, because each concern
   (batching, reserve release, KYC, net-amount transfer, reserve
   transfer) can become eligible at a different time from the others.
 
@@ -251,7 +251,7 @@ serving the next request needs to see it — if yes, it needs a shared
 backing store.** See
 [`../technical/distributed-state.md`](../technical/distributed-state.md)
 for the debugging story behind this rule, and a real, still-open gap:
-`@Cron` jobs currently run *per replica*, not once per cluster.
+`@Cron` jobs currently run *per replica* instead of once per cluster.
 
 ### JWT authentication + revocation
 
@@ -265,8 +265,8 @@ timestamp is dead). Agentic-payment delegation tokens (`UserRole.AGENT`)
 are ordinary JWTs sharing this exact same mechanism — no separate
 revocation system was built for them. Trade-off you should know before
 relying on this: Redis becomes a hard dependency for *authentication*,
-not just idempotency, and the implementation fails **closed** (Redis
-down → auth fails, not "assume nothing's revoked"). Full detail:
+beyond just idempotency, and the implementation fails **closed** (Redis
+down → auth fails rather than "assume nothing's revoked"). Full detail:
 [`../technical/security-and-compliance.md`](../technical/security-and-compliance.md#jwt-revocation).
 
 ### Secrets
@@ -310,7 +310,7 @@ crash-recovery handles "our own process died mid-operation."
 **Adding a brand-new aggregate (a new domain concept, like `Delegation`
 was):** all of the above, plus — and this is the single most common
 mistake made building this codebase — **register the new TypeORM entity
-in three places**, not just the owning module:
+in three places**, beyond just the owning module:
 1. The module's own `TypeOrmModule.forFeature([...])`
    (`payment.module.ts` or `merchant.module.ts`).
 2. `app.module.ts`'s `entities: [...]` array (the runtime
@@ -333,12 +333,12 @@ in three places**, not just the owning module:
   never cleanly walk back from. This is why
   `ChargeLedgerParamsResolverService.resolve()` and
   `DelegationService.reserveSpendOrThrow()` both run *before* the saga's
-  PSP call, not after.
+  PSP call, never after.
 - Does two concurrent callers racing the same row matter (a scheduled
   sweep vs. a manual operator action, or two concurrent charges against
   the same spend-limited delegation)? Use an atomic conditional `UPDATE
   ... WHERE <preconditions>` (see `ReserveHoldPort.markReserveReleased()`
-  or `DelegationPort.tryReserveSpend()` for the pattern), not a
+  or `DelegationPort.tryReserveSpend()` for the pattern) instead of a
   read-then-write.
 
 **Before you consider anything done**: write a real e2e test against the
@@ -375,9 +375,9 @@ against the *same* shared Postgres/Redis, so `test/setup-env.ts` gives
 each Jest worker its own logical Redis DB and a larger DB connection
 pool to avoid concurrent workers racing each other's rate-limit
 bucket/circuit-breaker state or exhausting Postgres's connection limit.
-`"50%"`, not a fixed worker count — the actual flakiness this ran into
+`"50%"` rather than a fixed worker count — the actual flakiness this ran into
 turned out to be real host CPU scheduling contention (measured: load
-average over 20 on a 10-core machine mid-run), not a bug in the
+average over 20 on a 10-core machine mid-run), never a bug in the
 isolation layer, which diagnostic logging separately confirmed was
 correct. See `docs/technical/ci-cd.md`'s "Parallelizing e2e workers"
 section for the measured numbers and why adaptive sizing is the fix.
@@ -386,7 +386,7 @@ A handful of tests were historically **flaky at full-suite scale** — an
 outbox-relay timing race and an occasional rate-limit burst, each
 reconfirmed clean when run in isolation. (A third, a heap-threshold
 health-check failure, was a miscalibrated threshold rather than a real
-leak — see `ci-cd.md`'s writeup — and is fixed, not just flaky.) If you
+leak — see `ci-cd.md`'s writeup — and is fixed, beyond just flaky.) If you
 see a failure like this, re-run the specific file in isolation before
 assuming you broke something; see
 [`../technical/architecture.md#testing`](../technical/architecture.md#testing)
@@ -399,7 +399,7 @@ for more.
 | Service | Role |
 |---|---|
 | `postgres-master` / `postgres-replica` | Real streaming replication — `TypeOrmModule`'s `replication` config sends writes to master, reads to the replica |
-| `pgbouncer-master` / `pgbouncer-replica` | Transaction-mode connection pooling in front of each Postgres instance — at `hpa.yaml`'s `maxReplicas: 20` × `extra.max: 20` per pod, direct connections could reach 400 against a `max_connections=200` server. `api` connects to these, not to Postgres directly (migrations are the one exception — see `database-migrations.md`). See [`../technical/tests/load-testing.md`](../technical/tests/load-testing.md) (Finding #3) for load-test results |
+| `pgbouncer-master` / `pgbouncer-replica` | Transaction-mode connection pooling in front of each Postgres instance — at `hpa.yaml`'s `maxReplicas: 20` × `extra.max: 20` per pod, direct connections could reach 400 against a `max_connections=200` server. `api` connects to these instead of to Postgres directly (migrations are the one exception — see `database-migrations.md`). See [`../technical/tests/load-testing.md`](../technical/tests/load-testing.md) (Finding #3) for load-test results |
 | `redis` | Idempotency locks, rate-limit counters, circuit-breaker state, JWT revocation lists |
 | `vault` | Transit engine, envelope-encrypts secrets at rest (dev-mode — see §5) |
 | `mock-psp` | A Node HTTP server mimicking Stripe's and Adyen's real API shapes (`/v1/...`, `/adyen/...`) plus side endpoints for FX rates, KYC review, and bank transfers |
@@ -524,7 +524,7 @@ app's own code has no idea which one it's talking to.
 topology**: `k8s/archiving-cronjob.yaml` and `k8s/deletion-cronjob.yaml`
 — the data-retention jobs (see
 [`../compliance/data-retention.md`](../compliance/data-retention.md)).
-Each is a `CronJob`, not part of the `Deployment`/HPA — a scheduled,
+Each is a `CronJob` standing outside the `Deployment`/HPA — a scheduled,
 single-pod batch run (daily/weekly) using the same production image with
 a different container command, talking to `PgBouncer (master)` the same
 way every request-serving pod does. Neither job sits in the request

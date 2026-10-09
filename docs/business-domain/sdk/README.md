@@ -1,4 +1,4 @@
-# Why a first-party client, not just a documented API
+# Why a first-party client, beyond just a documented API
 
 This describes the business reasoning behind shipping a Node/TypeScript
 client (`sdk/node`) alongside the REST API, rather than treating
@@ -14,7 +14,7 @@ A payment gateway's request-signing and idempotency conventions exist
 for real reasons — they're not paperwork. But *knowing* the rules and
 *implementing them correctly under a deadline, by hand, once* are
 different things, and the gap between them has real business
-consequences, not just correctness ones:
+consequences, beyond just correctness ones:
 
 - **A merchant that signs requests incorrectly doesn't fail loudly and
   once — it fails confusingly, on some requests and not others**,
@@ -28,7 +28,7 @@ consequences, not just correctness ones:
 - **A merchant that mismanages idempotency keys under retry either
   double-charges a real customer or drops a charge that should have
   gone through.** Both are real-money incidents that show up as support
-  tickets and chargebacks, not engineering bugs someone quietly fixes —
+  tickets and chargebacks — not engineering bugs someone quietly fixes —
   and by the time it's visible, real customer trust and real
   reconciliation effort are already spent.
 - **A merchant that skips webhook signature verification entirely
@@ -42,7 +42,7 @@ None of these are hypothetical edge cases specific to careless
 integrators — they're the natural failure modes of "implement a
 security-relevant protocol correctly, once, under time pressure,
 without a second reviewer." A first-party client's job is to make
-implementing it *incorrectly* the harder path, not the easier one.
+implementing it *incorrectly* the harder path rather than the easier one.
 
 ## What this changes, and what it deliberately doesn't
 
@@ -58,7 +58,7 @@ testing-strategy section) — not every downstream integration team,
 independently, under whatever time pressure they happen to be under
 when they build it.
 
-**This is scoped honestly, not presented as full coverage.** The client
+**This is scoped honestly rather than presented as full coverage.** The client
 wraps the money-movement endpoints (charge, refund, capture, cancel,
 fetch-by-id) and outbound webhook verification — the specific surface
 where the three failure modes above actually live. It does not (yet)
@@ -68,7 +68,7 @@ calls directly, same as before this client existed. Claiming broader
 coverage than that would create exactly the kind of false confidence
 this document is arguing against.
 
-## Why this matters for adoption, not just correctness
+## Why this matters for adoption, beyond just correctness
 
 A client library is often the *actual* integration surface a developer
 touches — more so than the raw API reference — because it's what shows

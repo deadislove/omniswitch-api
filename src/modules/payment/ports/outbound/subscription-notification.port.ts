@@ -1,8 +1,8 @@
 /**
  * `SubscriptionNotificationDispatcherService`/adapters' payload shape —
  * mirrors `subscription.past_due`/`subscription.canceled` event fields
- * verbatim (`SubscriptionService.emitPastDueEvent()`/`emitCanceledEvent()`),
- * not a re-derivation. Same "real event already existed, nothing
+ * verbatim (`SubscriptionService.emitPastDueEvent()`/`emitCanceledEvent()`)
+ * rather than a re-derivation. Same "real event already existed, nothing
  * subscribed to it yet" gap `DisputeNotificationPort` closed for
  * dispute.created/dispute.resolved — see that port's docblock.
  */

@@ -62,7 +62,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
       );
     }
 
-    // Scoped by merchant, not just the raw key — this interceptor runs
+    // Scoped by merchant, beyond just the raw key — this interceptor runs
     // after JwtAuthGuard (see PaymentController's class-level @UseGuards
     // ordering), so req.user is already populated. Without this, a caller
     // who submits another merchant's *known* Idempotency-Key (leaked via

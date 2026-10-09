@@ -11,7 +11,7 @@ import {
  * Mock Bank Transfer Adapter
  * Calls scripts/mock-psp/server.js's `/bank/transfers` endpoint — same
  * "point at a local mock in tests/dev" pattern as every other adapter in
- * this codebase, not a real bank/ACH/wire rail. Resolves synchronously
+ * this codebase — not a real bank/ACH/wire rail. Resolves synchronously
  * (`status: 'SENT'`) — the default (`BANK_TRANSFER_PROVIDER` unset or
  * `mock`) so local dev/e2e don't need a webhook round trip. See
  * `AchBankTransferAdapter`/`WireBankTransferAdapter` for the two real,

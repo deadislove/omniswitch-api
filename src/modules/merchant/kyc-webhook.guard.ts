@@ -14,7 +14,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
  * `X-KYC-Signature: t=<unix seconds>,v1=<hex digest>`.
  * `scripts/mock-psp/server.js`'s `/persona/kyc-applications` async
  * callback signs with this exact scheme (see `signKycCallback` there) so
- * the mock exercises the real verification path, not a bypassed one.
+ * the mock exercises the real verification path rather than a bypassed one.
  */
 @Injectable()
 export class KycWebhookGuard implements CanActivate {

@@ -18,14 +18,14 @@ export abstract class DisputePort {
    * RiskTieringService to compute a trailing chargeback rate. Deliberately
    * a separate method rather than adding a date filter to findMany(),
    * which returns full domain objects capped at 50 for admin listing; a
-   * risk calculation needs the true count, not a page of it.
+   * risk calculation needs the true count, instead of a page of it.
    */
   abstract countByMerchantSince(merchantId: string, status: DisputeStatus, since: Date): Promise<number>;
 
   /**
    * Just the `reason` column (not full Dispute objects — RiskTieringService
-   * only needs to weight-and-sum these, same "true count, not a page of
-   * it" reasoning as countByMerchantSince()) for a merchant's disputes in
+   * only needs to weight-and-sum these, same "true count rather than a
+   * page of it" reasoning as countByMerchantSince()) for a merchant's disputes in
    * a given status created on or after `since`. Weighting itself happens
    * in the caller via dispute-risk-weight.ts — kept out of the repository
    * so the weight table has exactly one place to change.

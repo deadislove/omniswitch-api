@@ -2,7 +2,7 @@
 
 Operator runbook for `omniswitch-drop-cutover-tables`
 (`src/jobs/drop-cutover-tables.ts`). Unlike every other job in this
-folder, this is a **one-time operator action, not a recurring
+folder, this is a **one-time operator action rather than a recurring
 schedule** — there's no CronJob for it, only a one-time `Job`
 (`k8s/drop-cutover-tables-job.yaml`).
 
@@ -19,13 +19,13 @@ that never ages out is a backdoor around the deletion tier).
 
 This job drops those two tables, but only once
 `CUTOVER_OLD_TABLE_RETENTION_DAYS` (default 60) has elapsed since the
-cutover ran — tracked in a small `schema_cutover_log` table, not
-guessed from a file timestamp or similar.
+cutover ran — tracked in a small `schema_cutover_log` table, rather
+than guessed from a file timestamp or similar.
 
 ## Checking status without dropping anything
 
 Running the job when the window hasn't elapsed yet is always safe — it
-reports days remaining and exits `0`, not a failure:
+reports days remaining and exits `0` — not a failure:
 
 ```bash
 kubectl apply -f k8s/drop-cutover-tables-job.yaml

@@ -5,7 +5,7 @@ import Redis from 'ioredis';
 const JTI_PREFIX = 'revoked:jti:';
 const MERCHANT_PREFIX = 'revoked-before:';
 // Safety margin for the merchant-wide revocation marker's own TTL — it just
-// needs to outlive any token that could still be presented, not live forever.
+// needs to outlive any token that could still be presented, rather than live forever.
 const MERCHANT_REVOCATION_TTL_SECONDS = 7 * 24 * 3600;
 
 /**
@@ -66,7 +66,7 @@ export class TokenRevocationService implements OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     // Tolerate an already-closed connection — see RedisThrottlerStorage for
-    // why this is a "goal already met" case, not a real failure.
+    // why this is a "goal already met" case rather than a real failure.
     try {
       await this.client.quit();
     } catch (err: unknown) {

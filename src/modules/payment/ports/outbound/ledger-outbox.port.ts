@@ -71,7 +71,8 @@ export abstract class LedgerOutboxPort {
    * merchant's net MERCHANT-entry ledger balance for a payout window.
    * Deliberately not filtered to PUBLISHED-only: `status` only tracks
    * whether the outbox relay has told an external system about this
-   * event, not whether the money it represents is real — the write inside
+   * event; whether the money it represents is real is a separate
+   * question — the write inside
    * `saveWithPayment()`'s transaction is already the source of truth.
    */
   abstract findCreatedBetween(since: Date, until: Date): Promise<LedgerOutboxEvent[]>;

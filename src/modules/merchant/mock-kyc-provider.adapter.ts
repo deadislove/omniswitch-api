@@ -6,7 +6,7 @@ import { KYCProviderPort, KYCVerificationResult } from './kyc-provider.port';
  * Mock KYC Provider Adapter
  * Calls scripts/mock-psp/server.js's `/kyc/verify` endpoint — same
  * "point at a local mock in tests/dev" pattern as FXRateProviderAdapter/
- * the PSP adapters' configurable base URLs, not a real identity-verification
+ * the PSP adapters' configurable base URLs, rather than a real identity-verification
  * provider. Resolves synchronously (`APPROVED`/`REJECTED`, never
  * `PENDING`) — the default (`KYC_PROVIDER` unset or `mock`) so local
  * dev/e2e don't need a webhook round trip. See `PersonaKycProviderAdapter`

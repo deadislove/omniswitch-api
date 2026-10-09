@@ -56,7 +56,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   // DISPUTED is reachable from here too — a chargeback on a payment that's
   // already been partially refunded is a normal real-world sequence (a
   // partial refund for a shipping issue, the cardholder disputes the rest
-  // anyway), not an edge case to leave unmodeled. See
+  // anyway) — a real, modeled case rather than something left unhandled. See
   // PaymentAggregate.resolveDispute()'s own comment for how WON/LOST both
   // account for the refund history already present when the dispute
   // started, rather than assuming a dispute always starts from a clean
@@ -64,8 +64,8 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   [PaymentStatus.PARTIALLY_REFUNDED]: [PaymentStatus.REFUNDED, PaymentStatus.DISPUTED],
   // PARTIALLY_REFUNDED is a valid target here (not just SUCCEEDED) for the
   // same reason — winning a dispute that started from a partially-refunded
-  // payment should restore that same partially-refunded state, not
-  // silently erase the refund history by resetting to SUCCEEDED.
+  // payment should restore that same partially-refunded state instead of
+  // silently erasing the refund history by resetting to SUCCEEDED.
   [PaymentStatus.DISPUTED]: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED],
 };
 

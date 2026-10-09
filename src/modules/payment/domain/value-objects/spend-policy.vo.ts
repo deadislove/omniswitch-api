@@ -6,7 +6,7 @@ import { Money } from './money.vo';
  * delegation.aggregate.ts) — "up to $X per transaction, $Y per month,
  * only for [categories]" — the thing DEV_README.md's agentic-payments
  * section flagged as missing: `RolesGuard` only answers "can this
- * identity call this endpoint," not "should this specific charge be
+ * identity call this endpoint," never "should this specific charge be
  * allowed given everything this agent has already spent this month."
  *
  * Both limits are expressed in a single currency (the delegation's own

@@ -36,7 +36,7 @@ export abstract class PaymentRepositoryPort {
 
   /**
    * Scoped by merchantId as well as the raw key — the DB-level uniqueness
-   * constraint is `(merchant_id, idempotency_key, created_at)`, not just
+   * constraint is `(merchant_id, idempotency_key, created_at)`, beyond just
    * `idempotency_key`, precisely so two different merchants can use the
    * same idempotency key value without colliding. A single-argument
    * lookup would silently return an arbitrary match once that's true.
@@ -63,8 +63,8 @@ export abstract class PaymentRepositoryPort {
   /**
    * Payments charged via a specific PSP within a time window, across every
    * merchant — used by ReconciliationService, which compares against that
-   * PSP's own settlement report (a PSP-account-level concept, not scoped to
-   * one of our merchants the way findByMerchantId is).
+   * PSP's own settlement report (a PSP-account-level concept — unlike
+   * findByMerchantId, it isn't scoped to one of our merchants).
    */
   abstract findByProviderAndDateRange(
     pspProvider: PSPProvider,
@@ -75,7 +75,7 @@ export abstract class PaymentRepositoryPort {
   /**
    * Payment volume grouped by (status, pspProvider) across every merchant —
    * used by MetricsController's payment-volume gauge. Deliberately a
-   * pull-computed aggregate query, not an in-process counter incremented
+   * pull-computed aggregate query, rather than an in-process counter incremented
    * from PaymentCheckoutSaga's terminal-outcome branches: an in-process
    * `prom-client` Counter is per-pod state, the same shared-state mistake
    * this codebase already fixed for rate limiting (RedisThrottlerStorage)
@@ -107,7 +107,7 @@ export abstract class PaymentRepositoryPort {
    * PaymentCheckoutSaga.compensate_markAmbiguous()) created more than
    * `olderThanMinutes` ago. Across every merchant, like
    * findByProviderAndDateRange() — an operator resolving these works at
-   * the platform level, not scoped to one merchant. Used by
+   * the platform level, without being scoped to one merchant. Used by
    * AmbiguousPaymentService for both the admin-facing list endpoint and
    * the stale-alert sweep; `olderThanMinutes: 0` returns every currently
    * `AMBIGUOUS` payment regardless of age.
@@ -117,7 +117,7 @@ export abstract class PaymentRepositoryPort {
   /**
    * Count of this merchant's payments that were *ever* `AMBIGUOUS` since a
    * point in time — `status = 'AMBIGUOUS' OR ambiguousResolvedAt IS NOT NULL`,
-   * not just currently-`AMBIGUOUS`, since AmbiguousPaymentService's manual
+   * broader than just currently-`AMBIGUOUS`, since AmbiguousPaymentService's manual
    * resolution moves a payment out of `AMBIGUOUS` into `SUCCEEDED`/`FAILED`
    * without erasing the fact that it was, at some point, a real ambiguous
    * incident for this merchant. Used by AmbiguousRiskMonitoringService's
@@ -136,7 +136,7 @@ export abstract class PaymentRepositoryPort {
    * stretch without every single one of its charges being affected).
    * Shorter than `limit` if the merchant has fewer than `limit` payments
    * total — callers should treat that as "not enough history to trigger
-   * this check yet", not as a false streak.
+   * this check yet", never as a false streak.
    */
   abstract findRecentAmbiguousFlags(merchantId: string, limit: number): Promise<boolean[]>;
 

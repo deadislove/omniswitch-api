@@ -14,7 +14,7 @@ import {
  * The manual-replay half of the webhook delivery log — re-sends a
  * previously recorded delivery's exact `payload` to its exact
  * `targetUrl`, re-signed fresh (a new timestamp; the payload bytes
- * themselves are replayed verbatim, not reconstructed). Deliberately
+ * themselves are replayed verbatim rather than reconstructed). Deliberately
  * generic across all four notification families (dispute, subscription,
  * AML review, sanctions screening): replay only ever needs the stored
  * payload/target plus the merchant's *current* HMAC secret, none of
@@ -22,13 +22,13 @@ import {
  * `WebhookDeliveryLogService` itself lives in `shared/` rather than
  * being duplicated per family.
  *
- * Lives in `PaymentModule`, not `shared/`, specifically because it
+ * Lives in `PaymentModule` instead of `shared/`, specifically because it
  * needs `MerchantService` — `PaymentModule` already depends on
  * `MerchantModule` (the reverse never holds), so this is the one
  * module that can safely host a controller needing both the
  * cross-cutting delivery log and a live merchant lookup.
  *
- * Re-signs with the merchant's *current* HMAC secret, not whatever
+ * Re-signs with the merchant's *current* HMAC secret instead of whatever
  * secret was in effect at the original delivery time — if the merchant
  * rotated their key since, replaying with the old key would only ever
  * fail their own verification, which defeats the point of a replay
@@ -64,9 +64,9 @@ export class WebhookDeliveryReplayService {
 
     const secret = await this.vaultTransit.decrypt(merchant.hmacSecretCiphertext);
     const signatureHeader = signOmniSwitchPayload(secret, JSON.stringify(original.payload));
-    // Always point at the true original, not the row that was itself a
+    // Always point at the true original rather than the row that was itself a
     // replay — replaying a replay should still read as "one more attempt
-    // at delivering this same logical event," not a chain a caller has
+    // at delivering this same logical event," never a chain a caller has
     // to walk backward to find where it started.
     const replayOfDeliveryId = original.replayOfDeliveryId ?? original.id;
 

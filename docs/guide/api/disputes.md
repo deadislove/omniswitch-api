@@ -7,7 +7,7 @@ first.
 There is **no endpoint to create a dispute** — a `Dispute` only ever
 originates from a PSP webhook (`charge.dispute.created` / Adyen's
 `NOTIFICATION_OF_CHARGEBACK`), matching reality: a chargeback is
-initiated by the cardholder's bank, not by this system. See
+initiated by the cardholder's bank rather than by this system. See
 [`webhooks.md`](./webhooks.md).
 
 Every new dispute is auto-classified `ACCEPT`/`CONTEST`/`MANUAL_REVIEW`
@@ -60,7 +60,7 @@ at dispute-creation time — data capture only, this system doesn't
 decide liability based on whether a charge was agent-initiated.
 `merchantRiskTierAtDecision` is likewise a snapshot, of the charging
 merchant's risk tier at the exact moment `autoDecision` was computed —
-audit-only, not a live join; `null` means the merchant had no evaluable
+a static snapshot rather than a live join; `null` means the merchant had no evaluable
 tier at that moment (treated the same as `MEDIUM` for the decision
 itself).
 
@@ -85,7 +85,7 @@ calls the PSP for real.
 
 ## Resolution
 
-`WON`/`LOST` arrive via webhook, not an API call — see
+`WON`/`LOST` arrive via webhook rather than an API call — see
 [`webhooks.md`](./webhooks.md). A `LOST` dispute claws funds back
 through the same ledger path a refund uses, and (if the merchant is
 auto-managed) feeds `RiskTieringService`'s trailing lost-dispute-rate

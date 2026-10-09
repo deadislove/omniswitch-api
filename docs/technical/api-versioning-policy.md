@@ -25,7 +25,7 @@ existing route means:
    once published, it's committed to the same stability expectations as
    `v1` was.
 
-This is a breaking-change mechanism, not a general-purpose one — most
+This is a breaking-change mechanism, rather than a general-purpose one — most
 API evolution (new optional field, new endpoint) doesn't need a new
 version at all. Reach for `v2` only when a change would break existing
 callers if made in place (a field's meaning changes, a required
@@ -47,7 +47,7 @@ charge(...) { ... }
 `DeprecationHeaderInterceptor` (registered globally in `app.module.ts`,
 `src/shared/interceptors/deprecation-header.interceptor.ts`) reads this
 metadata on every request and adds three headers a well-behaved API
-client can act on programmatically, not just a human reading a
+client can act on programmatically, beyond just a human reading a
 changelog:
 
 - `Deprecation: true` — [draft-ietf-httpapi-deprecation-header](https://www.ietf.org/archive/id/draft-ietf-httpapi-deprecation-header-latest.html),
@@ -55,11 +55,11 @@ changelog:
 - `Sunset: <HTTP-date>` — [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594),
   the date the route stops working.
 - `Link: <url>; rel="deprecation"` — points at a real migration guide,
-  not just "see the changelog."
+  beyond just "see the changelog."
 
 Verified in `deprecation-header.interceptor.spec.ts`: headers are set
 exactly on a route carrying `@Deprecated()` and absent on every other
-route — a unit test, not an e2e one, since no real route in this
+route — a unit test rather than an e2e one, since no real route in this
 codebase is deprecated today and one shouldn't be added just to
 exercise this mechanism.
 
@@ -67,7 +67,7 @@ exercise this mechanism.
 
 | Step | Requirement |
 |---|---|
-| **Announce** | `@Deprecated()` added with a `sunsetDate` at least **6 months** out from the day it ships. Six months, not a shorter window, because this is a payment API — integrators often need their own change-management/compliance cycle before touching production payment code, not just a code change on their end. |
+| **Announce** | `@Deprecated()` added with a `sunsetDate` at least **6 months** out from the day it ships. Six months rather than a shorter window, because this is a payment API — integrators often need their own change-management/compliance cycle before touching production payment code, beyond just a code change on their end. |
 | **Migration guide** | `migrationGuideUrl` must resolve to a real, complete guide *before* `@Deprecated()` merges — not a placeholder to fill in later. A caller hitting the deprecated route should be able to follow that link and finish migrating without asking anyone a question. |
 | **Monitor real usage** | `DeprecationHeaderInterceptor` logs a warning (`Deprecated route called: ...`) on every hit — see "What this doesn't do" below for why that's a log line and not yet a metric. Before the sunset date, confirm real traffic against the route has actually dropped to zero (or every remaining caller is a known, contacted exception) — a caller silently still depending on a "deprecated" route is a real payment-processing outage waiting to happen if it's removed on schedule regardless. |
 | **Remove** | Only after the sunset date has passed *and* the usage check above is clean. Removing on schedule without checking real traffic defeats the purpose of having a monitoring step at all. |
@@ -85,7 +85,7 @@ exercise this mechanism.
 - **No automated enforcement of the sunset date** — nothing currently
   stops a deprecated route from continuing to work past its `Sunset`
   header date. Removal is a deliberate code change (delete the handler),
-  reviewed the same as any other change, not a runtime cutoff.
+  reviewed the same as any other change, instead of a runtime cutoff.
 - **Doesn't cover backward-incompatible *behavior* changes within the
   same version** — this mechanism is specifically for a versioned route
   being retired in favor of a newer one. A behavior change within `v1`

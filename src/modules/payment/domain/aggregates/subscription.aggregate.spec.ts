@@ -10,7 +10,7 @@ import { classifyDeclineCode } from './subscription.aggregate';
  * as hard for the other just because the string happens to collide (or,
  * for Adyen's purely-numeric codes, never could collide with Stripe's
  * semantic ones in practice — but the classifier must still key strictly
- * off the *given* provider, not fall back to checking every table).
+ * off the *given* provider rather than falling back to checking every table).
  */
 describe('classifyDeclineCode() — per-PSP decline-code vocabulary', () => {
   it('classifies a real Stripe hard-decline code as HARD_DECLINE under STRIPE', () => {

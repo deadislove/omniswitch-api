@@ -2,8 +2,8 @@
  * Same three-value vocabulary as `KYCVerificationStatus` — `PENDING` only
  * ever comes from a real, async-reviewing provider
  * (`PersonaKybProviderAdapter`), never the synchronous mock. See that
- * type's own docblock; this is KYB's structural mirror, not a
- * coincidence — most real providers (Persona, Middesk, Alloy) offer
+ * type's own docblock; this is KYB's structural mirror by design rather
+ * than coincidence — most real providers (Persona, Middesk, Alloy) offer
  * business verification through the same or an adjacent API to identity
  * verification, so the shape this codebase already has for KYC extends
  * cleanly rather than needing a parallel design.

@@ -18,7 +18,7 @@ then re-authenticate automatically.
 
 Not published as a real Go module anywhere — lives in this repo only,
 same posture as `sdk/node`. The `module` path in `go.mod` is a
-placeholder for local use, not a real importable location.
+placeholder for local use rather than a real importable location.
 
 ## Build (within this repo)
 

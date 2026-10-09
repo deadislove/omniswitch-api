@@ -58,7 +58,7 @@ export interface SettlementConversion {
 }
 
 /**
- * A cross-border audit record, not a tax calculation — see
+ * A cross-border audit record, distinct from a tax calculation — see
  * `src/modules/payment/domain/services/tax-record.ts`'s docblock for why
  * `jurisdictionBasis` is pinned to `'card-issuing-country'` (the only
  * signal already available at charge time, and a deliberately simplified
@@ -76,11 +76,11 @@ export interface TaxRecord {
  * Domain-owned mirror of `PSPRiskSignal` (ports/outbound/psp-adapter.port.ts)
  * — structurally identical, kept as a separate type because the domain
  * layer doesn't depend on the ports layer (the reverse already holds:
- * `PSPProvider` is defined here and *ports* import it, not the other way
+ * `PSPProvider` is defined here and *ports* import it, never the other way
  * around). `PaymentMapper`/`PaymentCheckoutSaga` translate between the
  * two at the boundary. See `markSucceeded()`/`requiresCapture()`/
  * `markFailed()`'s shared docblock on why this is stored *alongside*
- * `riskScore`, not blended into it.
+ * `riskScore` rather than blended into it.
  */
 export interface PspRiskSignal {
   riskLevel?: 'normal' | 'elevated' | 'highest';
@@ -92,8 +92,8 @@ export interface PaymentSplit {
   amount: Money;
   // Present when this recipient had their own settlementCurrency at
   // charge time — independent of this payment's own top-level
-  // `settlementConversion` (see that field's docblock). Replayed, not
-  // recomputed, on refund — see LedgerOutboxEvent.createRefundEntries().
+  // `settlementConversion` (see that field's docblock). Replayed rather than
+  // recomputed on refund — see LedgerOutboxEvent.createRefundEntries().
   settlementConversion?: SettlementConversion;
 }
 
@@ -299,7 +299,7 @@ export class PaymentAggregate {
 
   /**
    * Records one capture against a REQUIRES_CAPTURE/PARTIALLY_CAPTURED
-   * authorization. `amount` is the increment being captured *now*, not a
+   * authorization. `amount` is the increment being captured *now*, never a
    * running total — multiple calls are expected for split
    * shipment/partial-fulfillment billing. Only transitions to SUCCEEDED
    * once the sum of all captures reaches the full authorized amount;
@@ -363,10 +363,10 @@ export class PaymentAggregate {
    * `PaymentCheckoutSaga`'s returned `riskScore`, asserted on directly
    * in `agent-risk-scoring.e2e-spec.ts`/`charge-approval.e2e-spec.ts`)
    * without those callers asking for that. This field is the honest
-   * "recorded for visibility, not yet a decisioning input" posture this
+   * "recorded for visibility, with no decisioning role yet" posture this
    * codebase already uses for `ambiguousRiskFlagged` — a real
    * integration into risk tiering or the approval threshold is future
-   * work, not silently smuggled into this plumbing pass.
+   * work that this plumbing pass deliberately doesn't attempt.
    */
   markSucceeded(
     pspTransactionId: string,
@@ -418,7 +418,7 @@ export class PaymentAggregate {
 
   /**
    * Records who resolved an AMBIGUOUS payment and why — a manual admin
-   * override of financial state (see AmbiguousPaymentService), not a
+   * override of financial state (see AmbiguousPaymentService) rather than a
    * status transition itself, so this is called alongside
    * markSucceeded()/markFailed() rather than instead of them. Deliberately
    * separate fields from failureReason/failureCode above: those are
@@ -489,7 +489,7 @@ export class PaymentAggregate {
    * Records a chargeback/dispute reported by the PSP via webhook.
    * Valid from SUCCEEDED or PARTIALLY_REFUNDED (a payment can't be disputed
    * before it charged, but a partial refund doesn't prevent a chargeback on
-   * what's left — a normal real-world sequence, not an edge case).
+   * what's left — a normal real-world sequence rather than an edge case).
    */
   markDisputed(reason?: string): void {
     assertValidTransition(this._status, PaymentStatus.DISPUTED);
@@ -519,15 +519,15 @@ export class PaymentAggregate {
     // LOST: economically identical to a full, merchant-uninitiated refund —
     // the card network claws the funds back regardless of what the merchant
     // wants. Recorded via the same RefundRecord/refunds[] mechanism a normal
-    // refund uses (not a separate code path) so totalRefunded/
+    // reuses the same refund machinery (no separate code path) so totalRefunded/
     // remainingRefundable stay accurate no matter why the money left.
     //
-    // Amount is `remainingRefundable`, not the full `_amount` — a dispute
+    // Amount is `remainingRefundable` rather than the full `_amount` — a dispute
     // that started from a PARTIALLY_REFUNDED payment already has some of
     // `_amount` accounted for in `_refunds`; pushing the full amount again
     // here would double-count the already-refunded portion. For a dispute
     // that started from SUCCEEDED (nothing refunded yet), remainingRefundable
-    // equals the full amount anyway, so this is a strict generalization, not
+    // equals the full amount anyway, so this is a strict generalization rather than
     // a behavior change for that case.
     assertValidTransition(this._status, PaymentStatus.REFUNDED);
     this._refunds.push({
@@ -547,7 +547,7 @@ export class PaymentAggregate {
    * settlementConversion. Deliberately recorded once and never overwritten
    * on a later capture of the same payment: a partial-capture payment's
    * settlement currency doesn't change between captures, and even if it
-   * did, refunds/dispute losses need one consistent rate to replay, not
+   * did, refunds/dispute losses need one consistent rate to replay instead of
    * whatever the merchant's settlement currency happens to be *right now*.
    *
    * This is what lets refund()/a lost dispute convert their clawback
@@ -579,7 +579,7 @@ export class PaymentAggregate {
    * first time (charge or capture) it had any — same "record once, never
    * overwritten" posture as recordSettlementConversion() above, and for
    * the same reason: a refund or lost dispute needs to replay the
-   * *original* split ratios, not whatever this payment's splits happen to
+   * *original* split ratios, never whatever this payment's splits happen to
    * be reasoned about later (there's no way to change them after the
    * charge anyway, but future-proofing the invariant costs nothing). See
    * LedgerOutboxEvent.createRefundEntries()'s splits param for how a
@@ -631,7 +631,7 @@ export class PaymentAggregate {
    * (e.g. a subscription-like recurring purchase) is normal for an agent
    * in a way it wouldn't be for a walk-up human customer; what's actually
    * risk-relevant is novelty and budget pressure *relative to this
-   * delegation's own history*, not absolute call volume:
+   * delegation's own history*, rather than absolute call volume:
    * - `isFirstChargeToMerchant`: this delegation has never charged this
    *   merchant before — no track record to judge "is this normal for
    *   this pairing" against yet.
@@ -735,7 +735,7 @@ export class PaymentAggregate {
     return this._failureCode;
   }
   /**
-   * Derived, not persisted — re-runs classifyDeclineCode() against
+   * Derived rather than persisted — re-runs classifyDeclineCode() against
    * whatever is currently stored, same "derive on read" posture
    * Subscription.canceledByHardDecline uses for the same underlying
    * classification, rather than caching a value that could drift from

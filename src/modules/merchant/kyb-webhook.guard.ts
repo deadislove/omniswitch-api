@@ -5,7 +5,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 /**
  * KYB Webhook Signature Guard
  * Identical scheme to `KycWebhookGuard` — deliberately a distinct secret
- * (`KYB_WEBHOOK_SECRET`) and header (`X-KYB-Signature`), not a shared one
+ * (`KYB_WEBHOOK_SECRET`) and header (`X-KYB-Signature`) instead of a shared one
  * with KYC: a KYB decision callback signed with the KYC secret (or vice
  * versa) should never verify, so a misconfigured or compromised secret
  * for one can't be replayed against the other's webhook endpoint.

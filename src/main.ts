@@ -84,7 +84,7 @@ async function bootstrap() {
   // HealthController/MetricsController's VERSION_NEUTRAL — since
   // k8s/deployment.yaml's probe paths and Prometheus scrape annotation are
   // fixed, unversioned contracts (/health/live, /health/ready, /metrics),
-  // not part of this API's own versioned surface.
+  // separate from this API's own versioned surface.
   app.setGlobalPrefix('api', {
     exclude: [
       { path: 'health', method: RequestMethod.GET },

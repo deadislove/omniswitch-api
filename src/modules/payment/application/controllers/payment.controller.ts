@@ -58,7 +58,7 @@ import * as csv from 'csv-parser';
 import { Readable } from 'stream';
 
 // @Throttle's arguments are evaluated once, at class-definition time (a
-// plain decorator, not DI-resolved) — this can't go through ConfigService,
+// plain decorator rather than something DI-resolved) — this can't go through ConfigService,
 // which only exists once Nest's runtime container is up. Reading directly
 // from process.env keeps the production default (100/min) unchanged while
 // letting e2e (test/setup-env.ts) and load-test (docker-compose.yml) runs
@@ -110,7 +110,7 @@ export class PaymentController {
   /** Merchants may only act on their own payments; ADMIN/OPERATOR may act on any. */
   private assertOwnership(payment: PaymentAggregate, req: any): void {
     if (req.user?.roles?.includes(UserRole.MERCHANT) && payment.metadata.merchantId !== req.user.merchantId) {
-      // ForbiddenException, not BadRequestException — the latter always
+      // ForbiddenException rather than BadRequestException — the latter always
       // sends HTTP 400 regardless of the statusCode field inside its body,
       // so a client checking the actual response status (not just the
       // JSON payload) would never see a cross-merchant access attempt as
@@ -210,7 +210,7 @@ export class PaymentController {
     // above — this never changes what's captured or how the merchant is
     // paid out, purely informational). Computed best-effort and never
     // blocks the real charge — a failed FX lookup here just means the
-    // response omits presentmentAmount, not that the charge fails.
+    // response omits presentmentAmount — it doesn't mean the charge fails.
     // Deliberately not persisted (see docs/business-domain/
     // ledger-and-settlement.md's Cross-Border Settlement section) — there
     // is no audit trail reconstructing "what rate did we show this
@@ -230,7 +230,7 @@ export class PaymentController {
     }
 
     // An AGENT-authenticated caller (see delegation.aggregate.ts) is
-    // charging under a spend policy, not the merchant's own unrestricted
+    // charging under a spend policy rather than the merchant's own unrestricted
     // authority — reserve the amount against it *before* the saga ever
     // calls a PSP, the same "validate/reserve before money moves, there's
     // no undo for a completed charge" principle
@@ -658,7 +658,7 @@ export class PaymentController {
     status: 201,
     type: BulkUploadResponseDto,
     description:
-      'Rows are queued, not charged synchronously — a 201 here means parsing succeeded, not that every payment succeeded',
+      'Rows are queued rather than charged synchronously — a 201 here means parsing succeeded, which does not imply every payment succeeded',
   })
   @ApiResponse({ status: 400, description: 'No file was attached' })
   async bulkUpload(@UploadedFile() file: Express.Multer.File, @Req() req: any): Promise<BulkUploadResponseDto> {

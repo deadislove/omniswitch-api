@@ -14,8 +14,8 @@ import { AdyenPSPAdapter } from './adyen/adyen-psp.adapter';
  * True when `err` was thrown by a PSP adapter's makeRequest() after
  * getting no response at all (a timeout or lower-level network failure)
  * rather than an explicit decline — see StripePSPAdapter/AdyenPSPAdapter's
- * makeRequest(). A plain shape check, not `instanceof`, since the error is
- * a tagged plain Error (Object.assign), not a dedicated error class.
+ * makeRequest(). A plain shape check rather than `instanceof`, since the error is
+ * a tagged plain Error (Object.assign) rather than a dedicated error class.
  */
 export function isAmbiguousOutcomeError(err: unknown): boolean {
   return Boolean(err && typeof err === 'object' && (err as { isAmbiguousOutcome?: boolean }).isAmbiguousOutcome);
@@ -25,10 +25,10 @@ export function isAmbiguousOutcomeError(err: unknown): boolean {
  * True when `err` was thrown because the PSP responded with its own 5xx
  * server error — a response WAS received (unlike isAmbiguousOutcomeError,
  * this is not "we don't know what happened"), but it reflects a problem
- * in the PSP's own infrastructure, not a business decision about this
+ * in the PSP's own infrastructure rather than a business decision about this
  * charge. Contrast a 4xx (e.g. a declined card): that's the PSP's
  * deliberate, final answer and must never be retried. HTTP status code
- * semantics (RFC 9110) are the PSP's own classification here, not a
+ * semantics (RFC 9110) are the PSP's own classification here, never a
  * guess — 5xx always means "the server failed to process a seemingly
  * valid request," never "the request was rejected." Both PSP adapters'
  * makeRequest() already attach statusCode to the error they throw on a

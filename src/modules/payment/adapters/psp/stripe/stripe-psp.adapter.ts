@@ -57,8 +57,8 @@ export class StripePSPAdapter extends PSPAdapterPort {
     // Caps how many concurrent outbound calls to Stripe this pod will have
     // in flight at once — see makeRequest() below, a bulkhead against one
     // degrading dependency exhausting this pod's own connection pool.
-    // In-memory/per-pod, not Redis-backed: this protects this pod's own
-    // connection pool/event loop capacity, not a cross-replica quota.
+    // In-memory/per-pod rather than Redis-backed: this protects only this
+    // pod's own connection pool/event loop capacity, never a cross-replica quota.
     // Read directly from process.env (not
     // configService.get, which doesn't coerce numeric strings) — same
     // reasoning and pattern as PaymentController's CHARGE_RATE_LIMIT_MAX.
@@ -170,7 +170,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
   }
 
   /**
-   * Real Stripe nests Radar's outcome under the underlying Charge, not
+   * Real Stripe nests Radar's outcome under the underlying Charge rather than
    * the PaymentIntent itself: `PaymentIntent.charges.data[0].outcome`
    * (`{risk_level, risk_score, ...}`) — see
    * docs.stripe.com/api/charges/object#charge_object-outcome. `risk_score`
@@ -395,7 +395,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
   async fetchSettlementTransactions(since: Date, until: Date): Promise<PSPSettlementTransaction[]> {
     const query = new URLSearchParams({
       'created[gte]': Math.floor(since.getTime() / 1000).toString(),
-      // ceil, not floor — Stripe's `created[lte]` is whole-second
+      // ceil rather than floor — Stripe's `created[lte]` is whole-second
       // resolution, so flooring `until` truncates its own fractional
       // second and silently excludes a real transaction that landed
       // later in that same second (found live: a fast e2e test's charge
@@ -443,7 +443,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
   async submitDisputeEvidence(pspDisputeId: string, evidence: string): Promise<PSPDisputeEvidenceResponse> {
     try {
       // Real Stripe: POST /v1/disputes/:id with evidence[...] fields and
-      // submit=true. This mock only needs a single free-text field, not
+      // submit=true. This mock only needs a single free-text field instead of
       // Stripe's full evidence taxonomy (receipt, shipping docs, etc.).
       const params = new URLSearchParams({
         'evidence[uncategorized_text]': evidence,
@@ -502,7 +502,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
       // lower-level network failure (DNS, connection refused, TLS
       // handshake) — before any response was ever received. Unlike the
       // !response.ok branch below, this means whether Stripe actually
-      // processed the request is genuinely unknown, not "no": tagged so a
+      // processed the request is genuinely unknown rather than "no": tagged so a
       // caller (PaymentCheckoutSaga) can treat it as a distinct, ambiguous
       // outcome instead of the same kind of failure as an explicit decline.
       throw Object.assign(

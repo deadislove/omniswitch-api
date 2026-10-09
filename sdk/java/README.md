@@ -17,8 +17,8 @@ obtains a JWT; later calls reuse it until shortly before its expiry,
 then re-authenticate automatically.
 
 Published to this repository's own GitHub Packages Maven registry
-(`https://maven.pkg.github.com/deadislove/omniswitch-api`), not Maven
-Central — see
+(`https://maven.pkg.github.com/deadislove/omniswitch-api`), separate
+from Maven Central — see
 [ADR-0007](../../docs/adr/0007-github-packages-publishing.md) for why.
 
 ```xml

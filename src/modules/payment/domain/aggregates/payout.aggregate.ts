@@ -212,7 +212,8 @@ export class Payout {
    * `PENDING_CONFIRMATION`, once a real rail's async webhook confirms
    * settlement (`PayoutService.confirmTransfer()`) — both paths land in
    * the same terminal `INITIATED` state. Deliberately only ever covers
-   * `netAmount`, not any *later*-released reserve — see this aggregate's
+   * `netAmount` — any *later*-released reserve is explicitly out of scope
+   * here, see this aggregate's
    * file-level docblock and
    * docs/business-domain/marketplace-and-payouts.md for why that's a
    * real, documented gap rather than something this method silently gets
@@ -234,7 +235,7 @@ export class Payout {
     this._transferError = undefined;
   }
 
-  /** The bank/PSP declined the transfer — recorded, not thrown, so a sweep can move on to the next payout (see PayoutService.initiateEligibleTransfers()'s per-item try/catch). Also used from PENDING_CONFIRMATION when a real rail's async webhook reports settlement failure. */
+  /** The bank/PSP declined the transfer — recorded rather than thrown, so a sweep can move on to the next payout (see PayoutService.initiateEligibleTransfers()'s per-item try/catch). Also used from PENDING_CONFIRMATION when a real rail's async webhook reports settlement failure. */
   recordTransferFailed(error: string): void {
     this._transferStatus = 'FAILED';
     this._transferError = error;

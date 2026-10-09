@@ -60,7 +60,7 @@ export class WebhookProcessingService {
       case 'charge.dispute.created':
         // obj.id is the Dispute's own id (dp_xxx) — kept separately from the
         // PaymentIntent id (obj.payment_intent) so a later charge.dispute.closed
-        // event (which only carries the dispute id, not the PaymentIntent id)
+        // event (which only carries the dispute id rather than the PaymentIntent id)
         // can still find this dispute record.
         await this.markDisputed('STRIPE', obj?.payment_intent ?? obj.id, obj.id, obj?.reason);
         break;
@@ -277,7 +277,7 @@ export class WebhookProcessingService {
       return;
     }
 
-    // remainingRefundable, not the full payment.amount — economically,
+    // remainingRefundable rather than the full payment.amount — economically,
     // what's actually still at risk in this dispute is whatever hasn't
     // already been refunded. This also matters for consistency: a LOST
     // resolution books a ledger refund entry for this exact amount

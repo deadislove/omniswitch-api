@@ -64,7 +64,7 @@ jobs:
         working-directory: sdk/java
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -97,7 +97,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
       - run: dotnet test sdk/dotnet/test/OmniSwitch.Sdk.Tests.csproj

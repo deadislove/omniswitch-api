@@ -21,8 +21,8 @@ const ISSUER = 'OmniSwitch';
  *
  * The TOTP secret is envelope-encrypted via the same VaultTransitService
  * `hmacSecretCiphertext` uses (Vault Transit encryption doesn't care what
- * plaintext it's given — reusing the key is a deliberate simplification,
- * not a naming accident). Backup codes are bcrypt-hashed, same posture as
+ * plaintext it's given — reusing the key is a deliberate simplification
+ * rather than a naming accident). Backup codes are bcrypt-hashed, same posture as
  * `apiKeySecretHash` — this app never has the plaintext of an unused
  * backup code once enrollment finishes.
  */
@@ -103,7 +103,7 @@ export class MfaService {
    * (trading a pending token for a full one) and disableMfa() (proving you
    * still control the second factor before turning it off). A backup code
    * is single-use: consumed (removed from the stored hash list) on
-   * success, not just checked.
+   * success rather than merely checked.
    */
   async verifyCode(merchantId: string, code: string): Promise<void> {
     const merchant = await this.getOrThrow(merchantId);
@@ -146,7 +146,7 @@ export class MfaService {
     await this.verifyCode(merchantId, code);
     const merchant = await this.getOrThrow(merchantId);
     merchant.mfaEnabled = false;
-    // null, not undefined — TypeORM's save() silently skips an undefined
+    // null rather than undefined — TypeORM's save() silently skips an undefined
     // property instead of writing SQL NULL, which would leave the old
     // encrypted secret sitting in the database despite "disable" appearing
     // to succeed (same pattern as MerchantService.updateSettlementCurrency()).
@@ -162,7 +162,7 @@ export class MfaService {
   /**
    * otplib v13's verify() throws (e.g. TokenLengthError) on malformed
    * input instead of just returning an invalid result — callers here
-   * pass user-typed input that may well be a backup code, not a TOTP
+   * pass user-typed input that may well be a backup code rather than a TOTP
    * token, so any throw just means "not a valid TOTP code", same as a
    * false verify() result.
    */
@@ -187,7 +187,7 @@ export class MfaService {
     return { plaintextCodes, hashes };
   }
 
-  // Forced onto master, not the ambient replica-routed connection (see
+  // Forced onto master, rather than the ambient replica-routed connection (see
   // app.module.ts's `replication` config) — every caller of getOrThrow()
   // here (generateEnrollment, confirmEnrollment, verifyCode, disableMfa)
   // reads a merchant row that a *previous* call in the same real-world
@@ -195,7 +195,7 @@ export class MfaService {
   // written. That sequence has no artificial time compression the way
   // e.g. subscription dunning retries do — a user enrolling MFA and
   // immediately entering the code is completely normal — so the ~1s
-  // replica lag is a genuine production race, not just a test artifact:
+  // replica lag is a genuine production race rather than merely a test artifact:
   // without forcing master, test/mfa.e2e-spec.ts's enroll → confirm
   // sequence fails with a false 409 "no enrollment in progress" in CI —
   // see docs/technical/ci-cd.md.

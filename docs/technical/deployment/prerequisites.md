@@ -1,7 +1,7 @@
 # Deployment Prerequisites and Maintenance Guide
 
 `k8s/` is a coherent, deployable set — every manifest in it has a
-backing Deployment/Service/PVC, not just a reference to a Service name
+backing Deployment/Service/PVC, rather than just a reference to a Service name
 that nothing defines. See [`../k8s/`](../k8s/) for what each manifest
 actually does; this document is the operational side — what has to
 exist before those manifests will work, in what order to apply them,
@@ -21,7 +21,7 @@ cluster-wide infrastructure this application's manifests assume a
 deployer has already installed — the same way `k8s/pgbouncer.yaml`
 depends on `k8s/postgres.yaml`'s Services, but ingress-nginx and
 cert-manager are different in kind: they're shared platform controllers
-typically installed once per cluster, not something a single
+typically installed once per cluster, rather than something a single
 application's manifest set should own.
 
 ### 1. A default `StorageClass`
@@ -116,11 +116,18 @@ self-heals via each Deployment's own retry/readiness behavior, but the
 dependency order that actually matters if deploying by hand or debugging
 a partial rollout:
 
-1. `configmap.yaml`, `secret.yaml` — everything else reads from these.
+1. `configmap.yaml`, `secret.yaml`, `serviceaccount.yaml` — foundational,
+   no dependency on each other. `deployment.yaml` fails to schedule
+   without `serviceaccount.yaml`'s `omniswitch-api-sa` already existing
+   (`serviceAccountName: omniswitch-api-sa`); the app itself makes no
+   Kubernetes API calls, so this ServiceAccount intentionally carries no
+   Role/RoleBinding — it exists only so the pod runs under its own
+   identity rather than the namespace's `default` one, which is what a
+   future cloud IAM binding (IRSA/Workload Identity) would attach to.
 2. `postgres.yaml`, `redis.yaml`, `vault.yaml` — the data-layer backends.
    `postgres.yaml`'s replica specifically needs `postgres-master`
    reachable to complete its `pg_basebackup` bootstrap on first start.
-3. `network-policy.yaml` — apply before or alongside the above, not
+3. `network-policy.yaml` — apply before or alongside the above, never
    after; a `default-deny-all` policy applied *after* pods are already
    talking to each other doesn't reliably retroactively break existing
    connections on every CNI. Apply it early and let the explicit allow
@@ -159,7 +166,7 @@ behavior it affects is actually exercised.
 | Ingress traffic to `omniswitch-api` refused, no error | `ingress-nginx` namespace missing the `app.kubernetes.io/name=ingress-nginx` label `network-policy.yaml`'s `namespaceSelector` needs | This document, section 2 above |
 | Ingress responses missing all 5 security headers, no error | `ingress-nginx` installed without `controller.config.add-headers` wired to `k8s/ingress-nginx-security-headers-configmap.yaml` | This document, section 2 above; [`../k8s/networking.md`](../k8s/networking.md) |
 
-## Verifying a deployment actually works, not just that it applied cleanly
+## Verifying a deployment actually works, beyond just applying cleanly
 
 `scripts/network-policy-verify.sh` proves both that unauthorized traffic
 is refused and that the app's own required traffic is allowed, which a

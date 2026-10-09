@@ -20,7 +20,7 @@ needed a real Kubernetes cluster instead, since Docker Compose has no
 - Resource-constrained to match `k8s/deployment.yaml`'s **limits**
   (`docker update --cpus=1 --memory=512m`) so `docker stats` readings are
   directly comparable to what one pod is actually capped at in the cluster
-  manifest, not whatever the host machine happens to have free.
+  manifest, rather than whatever the host machine happens to have free.
 - Artillery scripts, merchant/payment fixture seeders, and processors live
   in `scripts/load-test/`. To reproduce:
   ```bash
@@ -48,7 +48,7 @@ needed a real Kubernetes cluster instead, since Docker Compose has no
   the next.
 
   **`RATE_LIMIT_MAX`/`RATE_LIMIT_BURST_MAX` must be raised for the
-  read-capacity run too, not just for merchant/payment seeding** — this
+  read-capacity run too, beyond just for merchant/payment seeding** — this
   was missing from these steps until 2026-08-22 and produces a
   misleading result if skipped. `GET /payments/:id` carries no
   route-level `@Throttle` override, but it's still covered by the
@@ -61,7 +61,7 @@ needed a real Kubernetes cluster instead, since Docker Compose has no
   constraint within the first second — the resulting near-total `429`
   rate looks like a capacity problem but is actually just the global
   limiter doing its job. Finding #2 exists to measure the app's own
-  read-path ceiling, not re-measure the global rate limiter (already
+  read-path ceiling, rather than re-measure the global rate limiter (already
   covered by Finding #1's reasoning) — so, same as the merchant-seeding
   step already did, restart `api` with `RATE_LIMIT_MAX`/
   `RATE_LIMIT_BURST_MAX` set high (e.g. `100000`) before running
@@ -83,7 +83,7 @@ single merchant's 100 req/min budget is the very first thing hit.
 **Run 2 — 20 merchants, default limits.** Spreading load across 20
 distinct merchants (a more realistic multi-tenant shape anyway) barely
 moved the needle: 6700 requests, still 5554 `429`s. The reason: the
-*global* `ThrottlerGuard` (`APP_GUARD` in `AppModule`) is IP-scoped, not
+*global* `ThrottlerGuard` (`APP_GUARD` in `AppModule`) is IP-scoped rather than
 merchant-scoped, and every request in this test — regardless of which
 merchant JWT it carries — originates from the same machine. Spreading
 traffic across merchant identities does nothing against a guard keyed on
@@ -198,7 +198,7 @@ reliable read of the tail:
 Run 1 (right after the container was (re)built and DB/JIT were still
 cold) has a visibly heavier tail than Runs 2-3 — p50/p95 are identical
 across all three, so this reads as a warm-up/host-scheduling artifact,
-not a per-request cost that changed. Runs 2-3 match or beat the original
+rather than a per-request cost that changed. Runs 2-3 match or beat the original
 pre-upgrade baseline (p50 3ms / p95 7.9ms / p99 25.8ms / max 218ms) on
 every metric. 50,700 requests total across the three runs, zero
 failures. **Conclusion: no throughput or latency regression from the
@@ -261,7 +261,7 @@ Run 1) — this pass rebuilt the image and the database from nothing
 immediately beforehand, colder than a typical re-run. Runs 2-3, once
 warm, are tight and consistent with each other. **Conclusion: no
 regression in success rate; once warm, latency is as good as or better
-than every prior date in this section.** CPU (measured precisely, not
+than every prior date in this section.** CPU (measured precisely rather than
 sampled) is covered below.
 
 **Re-run 2026-08-24**, same rebuilt environment and same methodology
@@ -285,7 +285,7 @@ wall-clock duration — not `docker stats` sampling:
 
 50,700 requests total, zero failures. Memory spot-checked once after
 all three runs: **61.85MiB** (≈12% of the 512Mi limit) — consistent
-with the 2026-08-21 low-memory finding, not the higher ~104-127MiB
+with the 2026-08-21 low-memory finding, well under the higher ~104-127MiB
 range seen on cold/earlier passes. No Run 1 cold-start tail this time
 (p50/p95/p99 identical across all three runs, max latency actually
 *decreasing* run-over-run) — plausibly because the charge-path
@@ -297,7 +297,7 @@ from this round's per-merchant-PSP-entitlement work** — CPU (≈23%,
 ≈231-233m) sits between the 2026-08-21 outlier-low reading (≈1%,
 never reproduced since, still retracted) and the 2026-08-22 reading
 (≈26-27%), consistent with 2026-08-22's own conclusion that the
-2026-08-21 figure remains an anomaly, not the new baseline.
+2026-08-21 figure remains an anomaly rather than the new baseline.
 
 **Re-run 2026-08-30**, same environment/methodology as the 2026-08-30
 charge-path re-run above. CPU/memory measured via periodic `docker
@@ -326,14 +326,14 @@ than holding steady, and p95/p99 grew monotonically across the three
 runs (6/8.9/10.1ms and 12.1/18/21.1ms) rather than settling once warm
 the way 2026-08-22/08-24's runs did. Both patterns point the same
 direction — background load on the host increasing over the ~8 minutes
-these three runs took, not a per-request cost that changed — consistent
+these three runs took, rather than a per-request cost that changed — consistent
 with this project's own documented P0-3 gap (no dedicated,
 isolated performance-testing environment exists yet). Still comfortably
 within `k8s/deployment.yaml`'s 512Mi limit and well under its 1000m CPU
 limit even at the noisiest sampled point. **Conclusion: no regression in
 success rate; the elevated tail latency versus 2026-08-21/08-24's
-readings is explained by host contention, not by any change made this
-round.**
+readings is explained by host contention — not by any change made
+this round.**
 
 ## What this means for `k8s/hpa.yaml`
 
@@ -362,14 +362,14 @@ of serving this read load didn't materially change with the upgrade.
 
 **Re-measured 2026-08-21** (same dependency bumps + `uuid` removal as the
 latency re-run above; sampled continuously via `docker stats` for the
-duration of Run 3, not just spot-checked):
+duration of Run 3, beyond just spot-checked):
 
 | | Steady-state (150 req/s, warm) | Peak |
 |---|---|---|
 | CPU | ~0.4–1.8% of 1 core (≈4–18m), average ≈1% | ~23% of 1 core (≈230m), during warm-up/ramp only |
 | Memory | ~61–63MiB (≈12% of 512Mi limit) | ~104MiB (≈20% of 512Mi limit), during warm-up only |
 
-A real drop, not noise: steady-state CPU went from ≈33% average
+A real drop rather than noise: steady-state CPU went from ≈33% average
 (≈330m) to ≈1% (≈10m) — roughly a 30x reduction — and steady-state
 memory from ≈110–120MiB to ≈61–63MiB, roughly half. The peak in both
 metrics now occurs during the warm-up/ramp phase (cold JIT, connection
@@ -388,7 +388,7 @@ Reframed against the HPA's actual basis (the 250m/256Mi **requests**):
 - **CPU**: steady-state ≈140% of the 250m request, peak ≈250%. The HPA's
   70% target (175m) would trigger scale-out **well before** a single pod
   reaches anywhere near 150 req/s of read traffic — CPU is a genuinely
-  conservative, early trigger at this request size, not a loose one.
+  conservative, early trigger at this request size, rather than a loose one.
 - **Memory**: steady-state ≈43% of the 256Mi request, peak ≈50% — nowhere
   close to the 80% (205Mi) scale trigger even at sustained peak load.
   For this traffic shape, memory would essentially never be the thing
@@ -404,7 +404,7 @@ reproducible number behind it instead of an untested default.
 
 **Re-reframed 2026-08-21** against the same 250m/256Mi requests, using
 the re-measured numbers above: steady-state CPU is now ≈4% of the 250m
-request (≈10m/250m) and peak ≈92% (≈230m/250m, warm-up only, not
+request (≈10m/250m) and peak ≈92% (≈230m/250m, warm-up only, never
 sustained). The "HPA would scale out fairly eagerly" conclusion above no
 longer holds for this specific read workload — sustained 150 req/s alone
 wouldn't get a pod anywhere near the 70% CPU trigger now. This doesn't
@@ -430,11 +430,11 @@ to sampling-interval aliasing:
 
 Memory was spot-checked once after all three runs (~60MiB, idle) rather
 than sampled continuously per run — consistent with the ~60–84MiB range
-observed across every prior pass, not a precise per-run figure.
+observed across every prior pass, rather than a precise per-run figure.
 
 Run 1's CPU is elevated for the same cold-start reason its latency is
 (fresh image, fresh database); Runs 2-3 settle to a tight, consistent
-26–27%. **Conclusion: steady-state CPU is ≈26–27%, not the ≈1%
+26–27%. **Conclusion: steady-state CPU is ≈26–27%, well above the ≈1%
 2026-08-21 recorded** — that figure still could not be reproduced,
 even after eliminating both query logging and the earlier pass's
 Docker-resource-backlog confound as possible causes, and remains
@@ -465,7 +465,7 @@ but the same order of magnitude as 2026-08-22** — nothing this round's
 application changes did shifted this measurably; the small (≈3–4
 point) difference from 2026-08-22 reads as normal run-to-run/host
 variance (see this doc's repeated warnings about host-level
-contention confounding CPU readings), not a real regression or
+contention confounding CPU readings) rather than a real regression or
 improvement.
 
 Reframed against the HPA's actual basis: steady-state CPU (≈231–233m)
@@ -499,7 +499,7 @@ were running **unbounded** on the same host as `api`, `postgres-master`,
 `postgres-replica`, `redis`, `vault`, and `mock-psp`. `api`'s own cgroup
 was still capped at 1 CPU (matching `k8s/deployment.yaml`'s limits), but
 two more actively-proxying containers competing for the same physical
-cores plausibly explains elevated numbers on their own — a confound, not
+cores plausibly explains elevated numbers on their own — a confound rather than
 evidence PgBouncer itself costs anything at the protocol level. (Same
 class of mistake as the earlier `uuid`/`crypto.randomUUID()` numbers
 above — different session, same lesson: a resource cap on the container
@@ -521,11 +521,11 @@ actually matches what a real cluster would enforce per pod):
 | Memory peak | ~104MiB | **~112.8MiB** |
 
 **Conclusion**: once PgBouncer is resource-isolated the way it actually
-would be in the cluster (its own pod, its own `resources.limits`, not
+would be in the cluster (its own pod, its own `resources.limits`, rather than
 competing unbounded with everything else), read-path latency and success
 rate match or beat the no-pooler baseline. The uncapped runs' elevated
-numbers were host-level container contention on the test machine, not a
-PgBouncer-inherent cost — worth remembering if this gets re-tested on a
+numbers were host-level container contention on the test machine,
+rather than a PgBouncer-inherent cost — worth remembering if this gets re-tested on a
 different machine and looks slow again: check what else is running
 unbounded before concluding the pooler is the problem. CPU peak did go
 up (~24% → ~36%) — plausibly the extra network hop's real, if modest,
@@ -576,7 +576,7 @@ cost anything" needed a different environment: a local `kind` cluster
 running Calico as the CNI (kind's own default CNI doesn't enforce
 `NetworkPolicy` at all — a policy applied against it would silently
 no-op), with real `postgres`/`redis`/`hashicorp/vault`/`mock-psp`
-workloads and the actual production Docker image, not the fake
+workloads and the actual production Docker image, instead of the fake
 TCP-listener stand-ins `scripts/network-policy-verify.sh` normally uses
 for pure policy-correctness checks.
 
@@ -678,7 +678,7 @@ Same question as Findings #5 and #6, now for `omniswitch-api → vault`
 once `k8s/vault.yaml` gave that rule something real to connect to. This
 specifically exercises `decrypt`, since that's what `HmacSignatureGuard`
 calls on every HMAC-signed request (charge, refund, capture, cancel,
-dispute-evidence) — the actual hot-path call, not just a health check.
+dispute-evidence) — the actual hot-path call, beyond just a health check.
 
 **Method**: a `curlimages/curl` pod labeled `app: omniswitch-api` ran one
 Transit `encrypt` call to get a ciphertext, then looped 300 `decrypt`
@@ -712,12 +712,12 @@ charge path that this app's `NetworkPolicy` actually gates.
   doesn't exercise the actual multi-pod scenario PgBouncer (Finding #3)
   was added for — 20 pods × 20 connections against one
   `max_connections=200` server. That scenario needs a real multi-replica
-  test (HPA scaled out, not a single container), not yet done here.
-- **Single instance only** — this is one pod's ceiling, not a
+  test (HPA scaled out rather than a single container) — not yet done here.
+- **Single instance only** — this is one pod's ceiling rather than a
   multi-replica HPA simulation. Cross-replica behavior (Redis-backed
   circuit breaker/rate-limiter/idempotency state under real concurrent
   pods) is covered separately in
-  [`distributed-state.md`](../distributed-state.md), not re-tested here.
+  [`distributed-state.md`](../distributed-state.md) — not re-tested here.
 - **mock-psp has no artificial latency** — these numbers reflect this
-  app's own overhead (auth, DB, Redis) plus a near-instant PSP round trip,
+  app's own overhead (auth, DB, Redis) plus a near-instant PSP round trip —
   not what a real Stripe/Adyen call would add on top.

@@ -1,0 +1,64 @@
+# Phase 4 DR drill — a same-host stand-in for disaster-recovery.md's
+# "secondary region" Postgres. NOT part of the normal docker-compose.yml
+# stack — bring up explicitly with:
+#   docker compose -f docker-compose.yml -f docker-compose.dr-drill.yml up -d postgres-secondary
+# Streams from the real postgres-master using the exact same mechanism
+# postgres-replica already uses (pg_basebackup + standby.signal +
+# primary_conninfo) — see docker-compose.yml's postgres-replica service.
+# The one thing this cannot simulate: real cross-region network latency —
+# this replica is on the same Docker network as the primary, so
+# replication lag here is near-zero, unlike a real secondary region.
+#
+# Proven working end to end on 2026-09-27 — real streaming replication,
+# a real `pg_promote()`, a real application repoint (config only, zero
+# code changes) serving a real charge against the promoted node, and a
+# concrete reproduction of the split-brain risk disaster-recovery.md's
+# "Known gaps" already documents. Full methodology, real numbers, and
+# every problem hit + fixed along the way:
+# docs/spec/report/20260927-phase4-dr-drill-local-simulation.md
+services:
+  postgres-secondary:
+    image: postgres:16-alpine
+    container_name: omniswitch-postgres-secondary
+    ports:
+      - "15434:5432"
+    environment:
+      POSTGRES_USER: omniswitch
+      POSTGRES_PASSWORD: omniswitch_secret
+      POSTGRES_DB: omniswitch_payments
+      PGUSER: replicator
+      PGPASSWORD: replication_secret
+      POSTGRES_MASTER_HOST: postgres-master
+    command: >
+      bash -c "
+        set -e
+        if [ -z \"$(ls -A /var/lib/postgresql/data 2>/dev/null)\" ]; then
+          until pg_basebackup -h postgres-master -D /var/lib/postgresql/data -U replicator -vP -w --wal-method=stream; do
+            echo 'Waiting for master to be ready...'
+            sleep 2
+          done
+          touch /var/lib/postgresql/data/standby.signal
+          echo \"primary_conninfo = 'host=postgres-master port=5432 user=replicator password=replication_secret'\" >> /var/lib/postgresql/data/postgresql.auto.conf
+          chmod 0700 /var/lib/postgresql/data
+          chown -R postgres:postgres /var/lib/postgresql/data
+        fi
+        exec gosu postgres postgres -c max_connections=200
+      "
+    volumes:
+      - postgres-secondary-data:/var/lib/postgresql/data
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omniswitch -d omniswitch_payments"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  postgres-secondary-data:
+
+networks:
+  omniswitch-net:
+    external: true
+    name: omniswitch-api_omniswitch-net

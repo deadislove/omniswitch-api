@@ -59,7 +59,7 @@ export class ReserveHoldTypeOrmRepository implements ReserveHoldPort {
     return entities.map((e) => this.toDomain(e));
   }
 
-  /** Uncapped, same "true set, not a page of it" reasoning as findReleaseEligible() — a tier-escalation top-up sweep must not silently miss holds past whatever page size findMany() would cap at. */
+  /** Uncapped, same "true set rather than a page of it" reasoning as findReleaseEligible() — a tier-escalation top-up sweep must not silently miss holds past whatever page size findMany() would cap at. */
   async findHeldByMerchant(merchantId: string): Promise<ReserveHold[]> {
     const entities = await this.repo.find({
       where: { merchantId, status: 'HELD' },

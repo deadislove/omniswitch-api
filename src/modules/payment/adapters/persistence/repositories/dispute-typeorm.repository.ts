@@ -44,7 +44,7 @@ export class DisputeTypeOrmRepository implements DisputePort {
     return entity ? this.toDomain(entity) : null;
   }
 
-  // Forced onto master, not the ambient replica-routed connection (see
+  // Forced onto master instead of the ambient replica-routed connection (see
   // app.module.ts's `replication` config) — GET /admin/disputes is
   // routinely called right after a webhook just wrote a new dispute (an
   // operator opening the list after being notified, or — as
@@ -72,7 +72,7 @@ export class DisputeTypeOrmRepository implements DisputePort {
   }
 
   async countByMerchantSince(merchantId: string, status: DisputeStatus, since: Date): Promise<number> {
-    // .toISOString(), not a raw Date bound via MoreThanOrEqual() — `disputes.created_at`
+    // .toISOString(), never a raw Date bound via MoreThanOrEqual() — `disputes.created_at`
     // is a naive TIMESTAMP (no tz) column; node-postgres serializes a raw
     // Date parameter using this process's local timezone offset for such a
     // column, silently shifting the comparison. See

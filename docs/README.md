@@ -7,15 +7,15 @@ answer different questions for different readers.
 
 **New to this project? Start here.** A structured onboarding path — the
 business domain guide, the system design doc, and the full API
-reference — meant to be read start to finish, not dipped into. Everything
+reference — meant to be read start to finish rather than dipped into. Everything
 below (`technical/`, `business-domain/`) is the deeper reference this
 guide points into once you're working on a specific area.
 
 Also in this folder: [`guide/jobs/`](./guide/jobs/) — an operator
 runbook for the background jobs (archiving, deletion, partition
 maintenance, cutover cleanup), separate from the onboarding reading
-order above since it's day-2-operations reference, not something a new
-engineer needs before their first PR.
+order above since it's day-2-operations reference, something a new
+engineer won't need before their first PR.
 
 ## [`technical/`](./technical/)
 
@@ -45,7 +45,7 @@ methodology. Read this if you're changing code.
 - [`security-and-compliance.md`](./technical/security-and-compliance.md) —
   JWT revocation design and an honest PCI DSS scope/gap assessment
 - [`compliance-certification-roadmap.md`](./technical/compliance-certification-roadmap.md) —
-  the SOC 2 / PCI DSS certification path, not a certification itself
+  the SOC 2 / PCI DSS certification path — not a certification itself
 - [`secret-management.md`](./technical/secret-management.md) —
   Vault-backed envelope encryption for the one secret this app mints
   itself
@@ -54,7 +54,7 @@ methodology. Read this if you're changing code.
 - [`incident-response.md`](./technical/incident-response.md) —
   runbook for the alerts defined in `monitoring/alert.rules.yml`
 - [`disaster-recovery.md`](./technical/disaster-recovery.md) —
-  multi-region/cross-AZ strategy (documented, not verified against
+  multi-region/cross-AZ strategy (documented, still unverified against
   real infrastructure)
 - [`k8s/`](./technical/k8s/) — what's actually in `k8s/` and why it's
   shaped the way it is
@@ -96,7 +96,7 @@ to payments domain concepts generally.
   risk tiering and ambiguous-payment (PSP-reliability) monitoring
 - [`compliance-and-security.md`](./business-domain/compliance-and-security.md) —
   why PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
-  delegation scope are business decisions, not just engineering choices
+  delegation scope are business decisions, beyond just engineering choices
 - [`subscriptions.md`](./business-domain/subscriptions.md) — the
   subscription state machine, how billing/dunning/crash-recovery/plan
   catalog & proration/trial-verification work, and what's still
@@ -122,15 +122,15 @@ the retention periods for a specific jurisdiction without touching code.
   policy (live → archive → delete), the two `k8s CronJob`s that enforce
   it, the full environment-variable configuration reference, and an
   honest list of what this doesn't cover (this is a reference
-  implementation with sensible defaults, not a substitute for
+  implementation with sensible defaults, rather than a substitute for
   jurisdiction-specific legal/compliance review)
 
 ## [`adr/`](./adr/)
 
 Architecture Decision Records — *why* a specific technical decision was
 made (alternatives considered, the trade-off accepted, the real bug it
-fixed if there was one), not a description of the current system
+fixed if there was one), rather than a description of the current system
 (that's `technical/architecture.md`). Written once, at the time of the
 decision; a reversed decision gets a new ADR marking the old one
-`Superseded`, not a rewrite. See [`adr/README.md`](./adr/README.md)
+`Superseded`, never a rewrite. See [`adr/README.md`](./adr/README.md)
 for the full index and format.

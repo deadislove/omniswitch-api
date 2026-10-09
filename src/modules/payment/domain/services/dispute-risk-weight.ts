@@ -8,7 +8,7 @@
  * RiskTieringService's tier thresholds and dispute-policy.ts's
  * auto-accept threshold — not calibrated against real chargeback data.
  * Reuses the exact reason-code vocabulary dispute-policy.ts already
- * uses in production (EVIDENCE_GUIDANCE's keys), not a new taxonomy.
+ * uses in production (EVIDENCE_GUIDANCE's keys) rather than inventing a new taxonomy.
  *
  * An unlisted reason code defaults to full weight (1) — the conservative
  * choice: treating an unrecognized reason as low-risk by default could

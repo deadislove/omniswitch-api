@@ -38,7 +38,7 @@ sdk/node/
 Kept as a self-contained package with its own `package.json`/
 `tsconfig.json`/`jest.config.js` rather than folded into the main
 application's own build — it has a different runtime target (a
-published npm package eventually, not a deployed service) and a much
+published npm package eventually, rather than a deployed service) and a much
 smaller dependency surface, and mixing the two build graphs would mean
 every change to either one risks breaking the other's compile.
 
@@ -92,7 +92,7 @@ operation.
 
 ## Auth and token lifecycle
 
-`authenticate()` calls `POST /auth/token` lazily — on first use, not at
+`authenticate()` calls `POST /auth/token` lazily — on first use, rather than at
 construction time — and caches the resulting JWT along with its
 expiry. A cached token is reused until 30 seconds before its own
 `expiresIn` elapses, at which point the next call transparently
@@ -108,7 +108,7 @@ back from `POST /auth/token` (`mfaRequired: true`) — `authenticate()`
 treats this as a hard failure (`OmniSwitchApiError` with code
 `MFA_NOT_SUPPORTED`) rather than returning a token every subsequent
 call would then fail against anyway. See ADR-0005 for why that's a
-deliberate scope limit, not a gap.
+deliberate scope limit rather than a gap.
 
 ## Webhook signature verification
 
@@ -168,7 +168,7 @@ Published to this repository's own GitHub Packages npm registry
 (`npm install @deadislove/omniswitch-node`, with a `.npmrc` pointing
 `@deadislove` at `https://npm.pkg.github.com`) — see
 [ADR-0007](../../adr/0007-github-packages-publishing.md) for why that's
-GitHub Packages specifically, not the public npm registry. Building
+GitHub Packages specifically, rather than the public npm registry. Building
 from source as above is still how `sdk-package.yml`/`sdk-publish.yml`
 themselves produce it, and how to work on the SDK itself.
 
@@ -187,4 +187,4 @@ five:
    [`../../../test/sdk-node-client.e2e-spec.ts`](../../../test/sdk-node-client.e2e-spec.ts)
    exercising the new method against the real running app — the whole
    point of that file is that every wrapped endpoint gets proven
-   against real guards, not just a mock.
+   against real guards, beyond just a mock.

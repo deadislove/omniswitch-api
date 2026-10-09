@@ -14,7 +14,7 @@ export interface DisputeNotificationPayload {
   disputeId: string;
   paymentId: string;
   merchantId: string;
-  /** Major units — mirrors the `dispute.created`/`dispute.resolved` event fields verbatim (`dispute.amount.amount`), not a re-derivation. */
+  /** Major units — mirrors the `dispute.created`/`dispute.resolved` event fields verbatim (`dispute.amount.amount`) instead of re-deriving them. */
   amount: number;
   currency: string;
   /** Present on 'dispute.created' — the reason code the PSP reported. */
@@ -39,9 +39,9 @@ export interface DisputeNotificationPayload {
  * (`EmailDisputeNotificationAdapter`/`SlackDisputeNotificationAdapter`/
  * `WebhookDisputeNotificationAdapter`), one per `MerchantEntity.disputeNotificationChannel`
  * value, dispatched per-merchant by `DisputeNotificationDispatcherService`
- * — not a single-adapter port like `BankTransferPort`/`KYCProviderPort`,
- * since which concrete adapter answers this interface varies by
- * merchant, not by deployment.
+ * — unlike a single-adapter port such as `BankTransferPort`/`KYCProviderPort`,
+ * since which concrete adapter answers this interface varies per
+ * merchant rather than per deployment.
  */
 export abstract class DisputeNotificationPort {
   abstract send(target: string, payload: DisputeNotificationPayload): Promise<void>;

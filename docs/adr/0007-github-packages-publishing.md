@@ -11,7 +11,7 @@ distinct, not-yet-made decision — every client SDK lived in this
 repository only, built from source. `sdk-package.yml` (a separate,
 earlier addition) builds and packages all six SDKs on every push to
 `main`, but only as disposable GitHub Actions workflow artifacts (90-day
-retention, not installable via any package manager) — deliberately
+retention, installable through no package manager) — deliberately
 short of an actual publish, so a build failure would surface immediately
 without committing to a registry presence.
 
@@ -30,7 +30,7 @@ never to the public npm registry, Maven Central, or NuGet.org. A new
 workflow, `sdk-publish.yml`, does this; `sdk-package.yml` is unchanged
 and keeps building disposable artifacts on every push.
 
-**Why only three, not all six**: GitHub Packages has no native registry
+**Why only three of the six**: GitHub Packages has no native registry
 format for Python (PyPI-compatible) or Rust (crates.io-compatible) —
 publishing those would mean the public PyPI/crates.io instead, a
 materially bigger commitment (a truly public, third-party-hosted
@@ -39,7 +39,7 @@ registry publish step at all — `go get` resolves directly against a
 tagged git commit, so `sdk/go` is already "published" in the way Go
 modules work, the moment a tag exists.
 
-**Trigger: a `sdk-v*` tag, not every push to `main`.** Unlike
+**Trigger: a `sdk-v*` tag, rather than every push to `main`.** Unlike
 `sdk-package.yml`'s disposable artifacts, a package version is a
 one-way action on every registry involved here — GitHub Packages (like
 npm, Maven Central, and NuGet.org) refuses to let a version be
@@ -48,8 +48,8 @@ commit after the first attempts to re-publish the same unchanged
 version and fails. A maintainer bumps the version in each package's own
 manifest (`package.json`/`pom.xml`/`OmniSwitch.Sdk.csproj`) when ready
 to cut a release, then pushes a `sdk-v*` tag (e.g. `sdk-v0.1.0`) to
-trigger the actual publish — an explicit, deliberate act, not an
-automatic side effect of merging to `main`.
+trigger the actual publish — an explicit, deliberate act rather than
+an automatic side effect of merging to `main`.
 
 **`@omniswitch/node` renamed to `@deadislove/omniswitch-node`.** GitHub
 Packages' npm registry requires a scoped package's namespace to match
@@ -59,7 +59,7 @@ publish time. `sdk/java`'s Maven coordinates (`io.omniswitch:omniswitch-sdk`)
 and `sdk/dotnet`'s NuGet package id (`OmniSwitch.Sdk`) have no
 equivalent constraint — GitHub Packages associates those with a
 repository via `pom.xml`'s `<distributionManagement>` and the publish-
-time NuGet source URL respectively, not via a naming convention — so
+time NuGet source URL respectively, instead of a naming convention — so
 neither needed to change.
 
 **Credentials**: each job uses the workflow-run's own `secrets.GITHUB_TOKEN`
@@ -75,8 +75,8 @@ stored as a secret.
 `dotnet add package OmniSwitch.Sdk --source https://nuget.pkg.github.com/deadislove/index.json`
 all become real for anyone with read access to this repository (GitHub
 Packages inherits the repository's own visibility/permission model —
-this is a public repository, so these are publicly installable, not
-gated behind an org membership).
+this is a public repository, so these are publicly installable
+without any org-membership gate).
 
 **What this costs**: three registries' worth of "don't break a published
 version" discipline now applies. A mistake shipped in `sdk-v0.1.0`
@@ -86,7 +86,8 @@ process a maintainer has to remember and do correctly; nothing in this
 repository automates deciding *when* a version bump is warranted.
 
 **Python, Rust, and Go remain workflow-artifact-only** (`sdk-package.yml`)
-or tag-only (`sdk/go`) — not a gap introduced by this ADR, but worth
+or tag-only (`sdk/go`) — a pre-existing gap rather than one introduced
+by this ADR, but worth
 restating so "some SDKs are on GitHub Packages" isn't read as "all SDKs
 are equally distributable today."
 

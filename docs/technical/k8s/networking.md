@@ -3,7 +3,7 @@
 ## `network-policy.yaml`: default-deny plus 14 explicit allows
 
 This is ordinary least-privilege pod-to-pod traffic control for the
-`payments` namespace, not full PCI DSS Requirement 1 CDE segmentation —
+`payments` namespace, short of full PCI DSS Requirement 1 CDE segmentation —
 this system's whole design intent is to never hold a raw PAN in the
 first place, so there is no CDE to isolate. See
 [`../security-and-compliance.md`](../security-and-compliance.md)'s
@@ -58,7 +58,7 @@ allowing that traffic — the packets left the source pod and were
 dropped on arrival at the destination.
 
 `allow-ingress-to-pgbouncer` accepts two independent sources (`from`
-list entries are OR'd, not ANDed): `omniswitch-api` and any
+list entries are OR'd rather than ANDed): `omniswitch-api` and any
 `workload-type: batch-job` pod (the archiving/deletion/
 partition-maintenance/drop-cutover-tables jobs, which also go through
 PgBouncer rather than connecting to Postgres directly).
@@ -81,7 +81,7 @@ rule protects.
 
 Selected by the shared `workload-type: batch-job` label every job's pod
 template carries (read directly from each `*-cronjob.yaml`/
-`*-job.yaml` manifest, not guessed), rather than each job's own distinct
+`*-job.yaml` manifest instead of guessed), rather than each job's own distinct
 `app:` label — a future fifth job only needs this one label to be
 covered automatically.
 
@@ -92,7 +92,7 @@ namespace gets automatically from Kubernetes itself), assuming
 Prometheus runs in a namespace literally named `monitoring` — see "What's
 assumed" below.
 
-### What's assumed, not confirmed against a real manifest
+### What's assumed, rather than confirmed against a real manifest
 
 `ingress-nginx` (rule 3) and Prometheus (rule 13) are the two sources
 this file has no manifest in this repo to check its label/namespace
@@ -114,7 +114,7 @@ real — see
   `NetworkPolicy` than the rules above — Stripe/Adyen don't publish
   fixed IP ranges a plain `ipBlock` could pin, so this needs either a
   DNS-aware egress mechanism (e.g. Cilium) or an explicit egress proxy.
-  Left as an open decision, not guessed at.
+  Left as an open decision rather than guessed at.
 - **Egress from the batch-job pods to a cloud `BackupStorage`
   endpoint** (S3/GCS/Azure), when `DELETION_BACKUP_STORAGE` isn't
   `"local"` (the default, which needs no network egress at all).
@@ -138,14 +138,14 @@ what a real one needs (a real ACME account/email, a DNS-01 or HTTP-01
 solver) versus a self-signed stand-in for local testing that exercises
 the same cert-manager mechanism under the same name.
 
-### Security headers live in `ingress-nginx-security-headers-configmap.yaml`, not here
+### Security headers actually live in `ingress-nginx-security-headers-configmap.yaml`
 
 This Ingress does **not** set its 5 security headers
 (`X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`,
 `Referrer-Policy`, `Strict-Transport-Security`,
 `Content-Security-Policy`) via a per-Ingress
 `nginx.ingress.kubernetes.io/configuration-snippet` annotation, and this
-was a real, confirmed deployment blocker, not a stylistic choice: a
+was a real, confirmed deployment blocker rather than a stylistic choice: a
 default-configured modern `ingress-nginx` install rejects that
 annotation outright at admission time
 (`allowSnippetAnnotations: false` has been the chart default since
@@ -161,7 +161,7 @@ The fix: these 5 headers are set via `ingress-nginx`'s controller-level
 `ingress-nginx-security-headers-configmap.yaml` is the `ConfigMap`
 holding the header values, deployed to the `ingress-nginx` namespace
 (not `payments`, unlike every other manifest here) because it wires
-into the controller's own config, not into anything this app's
+into the controller's own config, rather than into anything this app's
 Deployment/Service reads directly. This only takes effect if whoever
 installs `ingress-nginx` sets
 `controller.config.add-headers=ingress-nginx/omniswitch-security-headers`
@@ -173,10 +173,10 @@ sends the security headers.
 
 This is coarser-grained than a per-Ingress annotation would have been —
 `add-headers` applies to every route this `ingress-nginx` install
-serves, not just `omniswitch-api-ingress` — but this repo's own
+serves, beyond just `omniswitch-api-ingress` — but this repo's own
 `ingress-nginx` is assumed dedicated to this one application rather than
-shared multi-tenant, so that broader scope is the correct one here, not
-a compromise.
+shared multi-tenant, so that broader scope is the correct one here —
+not a compromise.
 
 Against a real Helm-installed `ingress-nginx` + `cert-manager`: a
 self-signed `ClusterIssuer` under the real `letsencrypt-prod` name

@@ -22,7 +22,7 @@ import {
  * has ever called a real ACH provider with real credentials.
  *
  * **Real-shape fix (previously a confirmed, cited gap): the webhook path
- * is now genuinely Dwolla-shaped, not a generic illustration.** Real
+ * is now genuinely Dwolla-shaped rather than a generic illustration.** Real
  * Dwolla webhooks are lightweight event notifications (`{id, topic:
  * 'customer_transfer_completed'|'customer_transfer_failed', resourceId,
  * _links: {resource: {href}}}`) with no settlement detail inline — a
@@ -30,8 +30,8 @@ import {
  * anything more (developers.dwolla.com/docs/webhook-events).
  * `WebhookController.bankTransferWebhook()` now parses exactly that
  * envelope and, on a failure notification, calls `getTransferStatus()`
- * below to fetch the reason — the real two-call pattern, not an inline
- * shortcut. This adapter stays a swappable, provider-agnostic "ACH rail"
+ * below to fetch the reason — genuinely two calls, with no inline
+ * shortcut taken. This adapter stays a swappable, provider-agnostic "ACH rail"
  * behind `BankTransferPort` (not committed to being Dwolla specifically
  * the way `PersonaKycProviderAdapter` is committed to being Persona), but
  * the *shape* of its async flow now matches what a real one requires.

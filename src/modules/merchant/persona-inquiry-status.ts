@@ -3,7 +3,7 @@ import { KYCVerificationStatus } from './kyc-provider.port';
 /**
  * Persona's real Inquiry status vocabulary — confirmed against Persona's
  * own published docs (docs.withpersona.com/model-lifecycle,
- * docs.withpersona.com/inquiries), not guessed: `created | started |
+ * docs.withpersona.com/inquiries) rather than guessed: `created | started |
  * pending | completed | approved | declined | needs_review | expired |
  * failed`. Notably richer than this codebase's own 3-value
  * `KYCVerificationStatus`, and `completed` is **not** a decision —

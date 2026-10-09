@@ -8,15 +8,15 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * backfills them with every existing row, then atomically swaps table
  * names so the partitioned tables become the live `payments`/
  * `ledger_outbox` that the app's entities already point at — no entity
- * or repository code change needed, since TypeORM maps by table name,
- * not by which physical table happens to hold it.
+ * or repository code change needed, since TypeORM maps by table name
+ * rather than by which physical table happens to hold it.
  *
- * The old (flat) tables are renamed to `_old`, not dropped — kept as a
+ * The old (flat) tables are renamed to `_old` instead of dropped — kept as a
  * safety net for a verification period after cutover, consistent with
  * this project's "no deletion without a separate, explicit decision"
  * stance (see Option 3's archiving policy for the same principle applied
- * elsewhere). Dropping them is a deliberate follow-up, not part of this
- * migration.
+ * elsewhere). Dropping them is left as a deliberate follow-up, outside this
+ * migration's scope.
  *
  * `TRUNCATE` on the partitioned tables at the start of `up()` (cascades
  * to every partition) makes this migration safe to `revert`+`run` again
@@ -25,11 +25,11 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * first run (the old table' data doesn't change, `down()` doesn't clear
  * the partitioned tables either), hitting the primary key constraint.
  *
- * At this project's current data volume (thousands of rows, not
+ * At this project's current data volume (thousands of rows, well under
  * 100M+), a single `INSERT ... SELECT` is fine. At real production
  * scale this step needs batching (e.g. paginated by primary key range)
  * and would be a genuinely long-running, closely-supervised operation —
- * this migration is the reference shape of that runbook, not a
+ * this migration is the reference shape of that runbook rather than a
  * batching implementation.
  */
 export class BackfillAndSwapPartitionedPaymentsAndLedgerOutbox1787333739819 implements MigrationInterface {

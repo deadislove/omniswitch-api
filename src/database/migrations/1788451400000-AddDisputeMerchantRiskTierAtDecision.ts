@@ -8,7 +8,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * value (only the derived reserveBps/reserveHoldDays), so there is no
  * surviving signal to reconstruct what tier was actually in effect for a
  * dispute recorded before this column existed — those rows get NULL,
- * which correctly reads as "not tracked at the time," not "MEDIUM."
+ * which correctly reads as "not tracked at the time," distinct from "MEDIUM."
  */
 export class AddDisputeMerchantRiskTierAtDecision1788451400000 implements MigrationInterface {
   name = 'AddDisputeMerchantRiskTierAtDecision1788451400000';

@@ -339,7 +339,7 @@ export class UpdatePspEntitlementDto {
     enum: VALID_PSP_PROVIDERS,
     isArray: true,
     description:
-      "PSPs this merchant's charges may route through. Must be non-empty. Omitting a PSP here does not affect its liveness for other merchants — this is a per-merchant allowlist, not a global kill switch (use the routing health endpoint / circuit breaker for that).",
+      "PSPs this merchant's charges may route through. Must be non-empty. Omitting a PSP here does not affect its liveness for other merchants — this is a per-merchant allowlist rather than a global kill switch (use the routing health endpoint / circuit breaker for that).",
   })
   @IsArray()
   @ArrayNotEmpty()

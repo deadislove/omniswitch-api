@@ -12,7 +12,7 @@ budget and cadence for both programs. See
 [`../business-domain/compliance-and-security.md`](../business-domain/compliance-and-security.md)
 for why these requirements shaped specific domain-model decisions
 (tokenization, the KYC payout gate, delegation scope) — written for
-reasoning about the business, not auditing the code.
+reasoning about the business rather than auditing the code.
 
 ---
 
@@ -57,16 +57,16 @@ token. `POST /delegations/:id/revoke` calls the exact same
 already calls — no second revocation list, no agent-specific mechanism.
 This is deliberate: a `Delegation` being revocable in real time is a
 correctness requirement (a human needs to be able to cut off an
-autonomous agent's purchasing authority immediately, not after up to an
-hour of remaining token lifetime), and this codebase already had exactly
+autonomous agent's purchasing authority immediately, instead of
+waiting out up to an hour of remaining token lifetime), and this codebase already had exactly
 that property for merchant sessions. Everything in the "Trade-offs"
 section below (Redis as a hard auth dependency, fail-closed on a Redis
 outage, no durability guarantee beyond Redis's own persistence) applies
 identically to an agent token — it is checked in the same
-`JwtStrategy.validate()` call, not a separate code path.
+`JwtStrategy.validate()` call rather than a separate code path.
 
 An agent token is also covered by the *merchant-wide* revocation list
-(`revoked-before:{merchantId}`), not just its own `jti` — `JwtStrategy.validate()`'s
+(`revoked-before:{merchantId}`), beyond just its own `jti` — `JwtStrategy.validate()`'s
 `isMerchantTokenRevoked()` check runs unconditionally against any JWT's
 `merchantId`/`iat` claims, and a delegation JWT carries the underlying
 merchant's `merchantId` the same as a merchant's own login token does.
@@ -74,7 +74,7 @@ So deactivating a merchant, rotating its credentials, or an admin's
 "log out everywhere" also invalidates every outstanding delegation it
 had issued, with no delegation-specific handling needed — one
 consequence of building `Delegation` tokens as ordinary JWTs sharing the
-same claims shape and validation path, not a parallel credential system.
+same claims shape and validation path — there's no parallel credential system.
 One real gap this does leave open: only the *token* is functionally
 dead once a merchant is deactivated — the `Delegation` row's own
 `status` column is untouched, so `GET /delegations/:id` would still
@@ -85,7 +85,7 @@ misleading read for an operator relying on `status` alone.
 
 ### Trade-offs (read this before assuming this is production-ready as-is)
 
-**Redis becomes a hard dependency for authentication, not just idempotency.**
+**Redis becomes a hard dependency for authentication, beyond just idempotency.**
 Before this change, a Redis outage degraded idempotency guarantees and
 caching. Now it also blocks every authenticated request, because
 `JwtStrategy.validate()` can't determine revocation status without it. The
@@ -93,7 +93,7 @@ implementation fails *closed* (Redis unreachable → the revocation check
 throws → auth fails) rather than *open* (Redis unreachable → assume nothing
 is revoked → let the request through). Fail-closed is the safer default for
 a payment API, but it does mean a Redis outage is now an availability
-incident for the entire API, not just for payment-idempotency paths. If that
+incident for the entire API, beyond just payment-idempotency paths. If that
 trade-off isn't acceptable, the usual fixes are a local in-memory cache of
 revocation state with async refresh, or a circuit breaker that fails open
 after N consecutive Redis errors — neither is implemented here.
@@ -108,7 +108,7 @@ system has no way to distinguish "never revoked" from "revocation record
 lost." This is the classic trade-off of a denylist backed by best-effort
 storage rather than a durable one.
 
-**Merchant-wide revocation is coarse, not per-session.** There's no concept
+**Merchant-wide revocation is coarse rather than per-session.** There's no concept
 of "revoke session #3 but keep session #1 and #2 alive." Deactivation,
 rotation, and "log out everywhere" all revoke *every* token issued before
 the action, indiscriminately. That's the right behavior for the use cases
@@ -150,8 +150,8 @@ this scale, but worth knowing if Redis memory ever becomes a constraint.
 
 ## PCI DSS Compliance
 
-**This is a scope-and-gap assessment based on reading the code, not a formal
-PCI DSS assessment.** Only a QSA (Qualified Security Assessor) engagement or
+**This is a scope-and-gap assessment based on reading the code. It is
+not a formal PCI DSS assessment.** Only a QSA (Qualified Security Assessor) engagement or
 a formally completed SAQ (Self-Assessment Questionnaire), backed by
 quarterly ASV scans and annual penetration testing, can actually declare a
 system PCI DSS compliant. Nothing below should be represented as compliance
@@ -173,8 +173,8 @@ Number (PAN), expiry date, or CVV:
   rejects any `cardToken` / `paymentMethodId` value that passes a Luhn check
   at PAN-length (12–19 digits), as a defense-in-depth backstop in case a
   client integration accidentally sends a real card number instead of a
-  token. This is a safety net, not what makes the flow PCI-compliant — the
-  tokenization itself is what does that.
+  token. This is a safety net; the tokenization itself is what makes the
+  flow PCI-compliant.
 
 This puts the *intended* integration model in the **SAQ A / SAQ A-EP**
 family — the lightest PCI DSS self-assessment tiers, reserved for merchants
@@ -196,14 +196,15 @@ you.
 | Req 8.2 — unique IDs for each user | Every merchant has its own API Key ID/Secret and JWT identity; no shared credentials |
 | Req 8 — session/credential lifecycle | JWT revocation (this document, above), API key rotation, HMAC key rotation all implemented and take effect immediately |
 | Req 10 — logging | Structured JSON logging (Winston) with correlation IDs on every request |
-| Req 3.6 — cryptographic key management | `hmac_secret` is envelope-encrypted via Vault's Transit engine before it ever reaches Postgres — the app only ever has plaintext in memory, briefly, at creation/rotation/verification time. A DB compromise alone yields ciphertext, not usable keys. See [`secret-management.md`](./secret-management.md) for the design and — importantly — what this *doesn't* cover (dev-mode Vault is not production-ready as-is; `JWT_SECRET`/DB credentials/K8s-level secrets are still plain env vars). |
+| Req 3.6 — cryptographic key management | `hmac_secret` is envelope-encrypted via Vault's Transit engine before it ever reaches Postgres — the app only ever has plaintext in memory, briefly, at creation/rotation/verification time. A DB compromise alone yields ciphertext; the keys themselves stay unusable. See [`secret-management.md`](./secret-management.md) for the design and — importantly — what this *doesn't* cover (dev-mode Vault is not production-ready as-is; `JWT_SECRET`/DB credentials/K8s-level secrets are still plain env vars). |
 | Req 8.4.2 — multi-factor authentication | TOTP-based MFA: `POST /auth/mfa/enroll`/`confirm`/`verify`/`disable`, enforced at login once enabled — `JwtAuthGuard` rejects a post-login-but-pre-MFA token on every route except the verify step itself. Opt-in for `MERCHANT`/`OPERATOR`/`READONLY`; **mandatory for `ADMIN`** — `RolesGuard` rejects any request from an `ADMIN`-role caller whose merchant doesn't have `mfaEnabled`, on every route gated by `@Roles(...)`. Verified end to end in `test/mfa.e2e-spec.ts`. See the MFA section directly below for what this *doesn't* close. |
-| Req 1 — network segmentation (defense-in-depth, not full CDE isolation) | `k8s/network-policy.yaml` default-denies all ingress/egress in the `payments` namespace, with explicit allows for the app's real traffic paths. Verified against a real `NetworkPolicy`-enforcing CNI via `scripts/network-policy-verify.sh`, not just reviewed by eye. See the section directly below for what this does and doesn't cover. |
+| Req 1 — network segmentation (defense-in-depth, short of full CDE isolation) | `k8s/network-policy.yaml` default-denies all ingress/egress in the `payments` namespace, with explicit allows for the app's real traffic paths. Verified against a real `NetworkPolicy`-enforcing CNI via `scripts/network-policy-verify.sh`, beyond just reviewed by eye. See the section directly below for what this does and doesn't cover. |
 
 ### MFA — what's covered and what isn't
 
 The mechanism (TOTP secret enrollment/confirmation, one-time backup codes,
-an enforced-once-enabled login gate) is real, not a stub — see
+an enforced-once-enabled login gate) is real, functioning code rather
+than a stub — see
 `src/modules/merchant/mfa.service.ts` and `DEV_README.md`'s MFA entry for
 the full design and verification. `RolesGuard` additionally requires it
 for any caller whose token carries the `ADMIN` role: on every route
@@ -211,7 +212,8 @@ decorated with `@Roles(...)`, once normal role membership passes, a
 caller holding `ADMIN` is looked up via `MerchantService` and rejected
 (`403`, `MFA_REQUIRED_FOR_ADMIN`) unless `mfaEnabled` is `true` — even on
 a route whose `@Roles(...)` also allows `OPERATOR`/`READONLY`, since the
-check is keyed off the caller's own role, not the route's permitted set.
+check is keyed off the caller's own role rather than the route's
+permitted set.
 This closes the gap this section used to describe. What's still **not**
 covered: this enforces MFA at the API layer only — it doesn't put the
 admin surface behind a separate network-isolated bastion/VPN, and an
@@ -271,7 +273,7 @@ breaks — and effective — an unauthorized pod is actually refused):
 | Requirement | Gap |
 |---|---|
 | ~~**Req 8.4.2 — mandatory MFA for admin access**~~ | **Closed** — `RolesGuard` rejects `ADMIN`-role callers without `mfaEnabled` on every `@Roles(...)`-gated route. Putting the admin surface behind a separate network-isolated bastion/VPN (defense-in-depth beyond the API-layer check) remains a separate, still-open hardening option. |
-| **Req 10.5 — log integrity** | **Partially closed.** [`k8s/log-shipping-example.yaml`](../../k8s/log-shipping-example.yaml) shows a Fluent Bit DaemonSet tailing this app's structured JSON stdout (see `logger.config.ts`) and forwarding it off-node — illustrative only, not applied by any deploy path or verified against a real backend (this repo has no SIEM/Loki/Elasticsearch cluster to test against). Centralization is solved by that shape; *tamper-evidence* still depends entirely on the backend it's pointed at (object-lock/WORM storage, an append-only index) — nothing in this repo provides that property itself. The two local `logs/*.log` files `logger.config.ts` also writes are an unrelated, local-disk-only convenience (lost on pod restart, never shipped) — not this gap's answer either. |
+| **Req 10.5 — log integrity** | **Partially closed.** [`k8s/log-shipping-example.yaml`](../../k8s/log-shipping-example.yaml) shows a Fluent Bit DaemonSet tailing this app's structured JSON stdout (see `logger.config.ts`) and forwarding it off-node — illustrative only: no deploy path applies it yet, and it's unverified against a real backend (this repo has no SIEM/Loki/Elasticsearch cluster to test against). Centralization is solved by that shape; *tamper-evidence* still depends entirely on the backend it's pointed at (object-lock/WORM storage, an append-only index) — nothing in this repo provides that property itself. The two local `logs/*.log` files `logger.config.ts` also writes are an unrelated, local-disk-only convenience (lost on pod restart, never shipped) — they don't answer this gap either. |
 | **Req 11.3 / 11.4 — vulnerability scanning & penetration testing** | PCI DSS requires quarterly scans by an **Approved Scanning Vendor (ASV)** and periodic penetration testing by a qualified third party. Nothing in this repository — including its own code review process — satisfies that requirement. It has to be procured separately, from a party that is not the system's own developer. |
 | **Req 12 — governance** | [`docs/technical/incident-response.md`](./incident-response.md) covers the technical half — what each Prometheus alert means and which admin endpoint addresses it — but is not a substitute for a formal incident response plan, security policy documents, or a vendor management program for Stripe/Adyen/AWS/etc. Those remain organizational artifacts a codebase can't contain on its own. |
 
@@ -282,7 +284,7 @@ SAQ:
 
 1. **Nail down the frontend tokenization integration first.** Whether you
    land on SAQ A or SAQ A-EP is decided by how the card entry form is
-   embedded, not by this backend. Confirm that before scoping anything else.
+   embedded — this backend has no say in it. Confirm that before scoping anything else.
 2. ~~Move `hmac_secret` out of a plain DB column.~~ **Done** — envelope-encrypted
    via Vault Transit, see [`secret-management.md`](./secret-management.md).
    Production still needs a real Vault deployment (not dev-mode) and a real
@@ -301,7 +303,7 @@ SAQ:
    against — before relying on it for any compliance-relevant audit trail.
 5. **Engage a QSA or complete the appropriate SAQ**, and budget for
    recurring ASV scans (quarterly) and penetration testing (at least
-   annually) — these are ongoing obligations, not one-time setup work.
+   annually) — these are ongoing obligations rather than one-time setup work.
 6. Everything else in the [Gaps](#gaps--whats-missing-before-this-could-actually-pass-an-assessment)
    table (governance documents, incident response plan, vendor management)
    can follow once the technical gaps above are closed — they're required
@@ -340,7 +342,7 @@ the same `useFactory` idiom `KYCProviderPort`/`KYC_PROVIDER` and
   — local dev/test default, same posture as `MockKYCProviderAdapter`.
 - **`OfacSdnSanctionsAdapter`** — matches against a real, public list:
   the US Treasury OFAC Specially Designated Nationals (SDN) list. Real,
-  government-published data, not a paid vendor's proprietary database —
+  government-published data rather than a paid vendor's proprietary database —
   chosen specifically so this adapter is buildable and testable against
   genuine list data without procuring a commercial screening contract
   (ComplyAdvantage, Refinitiv World-Check, etc. remain valid future
@@ -351,7 +353,7 @@ the same `useFactory` idiom `KYCProviderPort`/`KYC_PROVIDER` and
 
 `SanctionsListRefreshService` (`@Cron(CronExpression.EVERY_WEEK)` — a
 fixed schedule, the same idiom every other sweep in this codebase uses,
-not a configurable cron string) fetches the current SDN list
+rather than a configurable cron string) fetches the current SDN list
 from `SANCTIONS_LIST_SOURCE_URL` (the official Treasury CSV endpoint)
 when configured. **This requires outbound network egress from wherever
 this service runs** — not every deployment environment allows that by
@@ -362,8 +364,8 @@ falls back to a bundled static snapshot — enough to exercise real
 matching logic in an environment with no internet egress at all (local
 dev, CI, an air-gapped deployment), but **not a substitute for a live
 refresh in production** — a real deployment needs `SANCTIONS_LIST_SOURCE_URL`
-configured and its egress path actually verified, not just the
-mechanism present in code.
+configured and its egress path actually verified — the mechanism
+being present in code isn't enough on its own.
 
 ### Matching
 
@@ -373,7 +375,7 @@ Exact, normalized (uppercase, punctuation-stripped) name matches are
 above `SANCTIONS_MATCH_THRESHOLD` (default `0.92`) is `POTENTIAL_MATCH`,
 below it is `CLEAR`. This threshold, like `RISK_TIER_HIGH_THRESHOLD`
 elsewhere in this codebase, is a deliberately simple, illustrative
-starting point, not a calibrated figure — a real deployment should tune
+starting point rather than a calibrated figure — a real deployment should tune
 it against its own false-positive/false-negative tolerance, and treat
 every `POTENTIAL_MATCH` as requiring human review rather than trusting
 the threshold alone in either direction.
@@ -390,13 +392,13 @@ sanctions-compliance program, verify the refresh job runs successfully
 against the live Treasury endpoint in the target deployment environment,
 and have the match threshold reviewed by whoever owns this platform's
 actual compliance obligations — this document describes a real,
-workable mechanism, not a substitute for that review.
+workable mechanism; it doesn't substitute for that review.
 
 ### Data retention
 
 Match records (`sanctionsMatchDetails` and the audit trail on
-`PATCH /admin/merchants/:id/sanctions-review`) are compliance evidence,
-not incidental logs — see
+`PATCH /admin/merchants/:id/sanctions-review`) count as compliance
+evidence in their own right, rather than incidental logs — see
 [`../compliance/data-retention.md`](../compliance/data-retention.md)
 for how long AML-adjacent records are kept and how to configure that
 for a real jurisdiction; the same retention posture applies here.
@@ -441,8 +443,8 @@ Bearer's dataflow analysis is looking at, so it can't observe it), but it
 is real, independently-justified defense-in-depth: it catches an
 accidentally-misconfigured `http://` endpoint (credentials and payment
 data leaving in plaintext) and rejects non-http(s) schemes
-(`file://`, `gopher://`, ...) outright. This was verified empirically,
-not assumed: the same Bearer scan was re-run after adding the check, and
+(`file://`, `gopher://`, ...) outright. This was verified empirically
+rather than assumed: the same Bearer scan was re-run after adding the check, and
 the finding persisted unchanged, confirming the taint-tracking limitation
 described above rather than a gap in the validation logic.
 

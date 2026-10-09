@@ -100,12 +100,12 @@ export abstract class PayoutPort {
 
   /**
    * Every Payout eligible for a *reserve* transfer: reserve released,
-   * reserve amount > 0, not KYC-blocked, reserve transfer not already
-   * INITIATED or PENDING_CONFIRMATION. Independent of the netAmount
+   * reserve amount > 0, the payout isn't KYC-blocked, and its reserve
+   * transfer isn't already INITIATED or PENDING_CONFIRMATION. Independent of the netAmount
    * transfer's own status — a reserve released before, during, or long
    * after the netAmount transfer is equally eligible the moment
    * `reserveReleased` is true, since this is always a separate transfer
-   * action, not a merge into whatever already happened to netAmount.
+   * action, never a merge into whatever already happened to netAmount.
    */
   abstract findReserveTransferEligible(): Promise<Payout[]>;
 

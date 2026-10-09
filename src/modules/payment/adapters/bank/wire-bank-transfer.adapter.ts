@@ -12,12 +12,12 @@ import {
  * Same shape as `AchBankTransferAdapter` — `POST /transfers` accepted
  * synchronously (`pending`), final `settled`/`failed` learned later via
  * a lightweight webhook notification plus a follow-up `GET` — but a
- * distinct rail (wire transfers clear same-day, not over ACH's multi-day
- * cycle, and use a different provider API in reality). Kept as its own
+ * distinct rail (wire transfers clear same-day instead of over ACH's
+ * multi-day cycle, and use a different provider API in reality). Kept as its own
  * adapter rather than a `railType` flag on `AchBankTransferAdapter`
  * because a real wire integration (Fedwire/SWIFT-shaped) and a real ACH
  * integration (NACHA-shaped) are genuinely different provider APIs with
- * different required fields, not the same request shape wearing a
+ * different required fields — not the same request shape wearing a
  * different label. Selected via `BANK_TRANSFER_PROVIDER=wire`.
  *
  * Same real-shape fix as `AchBankTransferAdapter`'s own docblock

@@ -1,6 +1,6 @@
 # Compliance Certification Roadmap: SOC 2 & PCI DSS
 
-**Status: planning document, not a certification.** Nothing in this
+**Status: planning document, well short of a certification.** Nothing in this
 repository is SOC 2 or PCI DSS certified — both require a third-party
 auditor, real evidence collected over a real observation period, and
 (for PCI DSS) a QSA or a completed SAQ. This document maps what this
@@ -35,15 +35,15 @@ organization selects based on relevance. For a payment gateway:
 | Criterion | Applicable? | Why |
 |---|---|---|
 | **Security** (mandatory) | Yes | Access control, encryption, vulnerability management — directly what this repo's own security posture is about. |
-| **Availability** | Yes | A payment gateway going down stops merchants from taking money — this is a real, customer-relevant promise, not an optional add-on. |
+| **Availability** | Yes | A payment gateway going down stops merchants from taking money — this is a real, customer-relevant promise rather than an optional add-on. |
 | **Processing Integrity** | Yes | "The charge you asked for is the charge that happened, exactly once, for the right amount" is the core promise of this entire system (idempotency, the Saga, the ledger). |
 | **Confidentiality** | Yes | Merchant business data (transaction volume, customer lists via `customer_id`) is confidential business information independent of cardholder data specifically. |
-| **Privacy** | Depends on scope | Only if this system directly handles end-consumer PII beyond what's needed for payment processing (it currently stores minimal PII — `customer_id` is caller-supplied, not this system's own PII collection). Skip unless the product scope grows to justify it. |
+| **Privacy** | Depends on scope | Only if this system directly handles end-consumer PII beyond what's needed for payment processing (it currently stores minimal PII — `customer_id` is caller-supplied, collected by the caller rather than this system). Skip unless the product scope grows to justify it. |
 
 ### What this codebase already has real evidence for
 
 Mapped to Security/Availability/Processing Integrity/Confidentiality —
-this is evidence a real audit could point at, not a claim of compliance:
+this is evidence a real audit could point at — not a claim of compliance:
 
 - **Access control**: RBAC (`RolesGuard`), MFA mandatory for `ADMIN`
   (`security-and-compliance.md`), JWT revocation with fail-closed Redis
@@ -65,7 +65,7 @@ this is evidence a real audit could point at, not a claim of compliance:
   testing section).
 - **Monitoring**: Prometheus + Alertmanager against real metrics
   (`incident-response.md`), reconciliation as an active drift-detection
-  mechanism, not just logging.
+  mechanism, beyond just logging.
 
 ### What's structurally missing — and can't come from code alone
 
@@ -86,7 +86,7 @@ ones — these aren't things this repository, as code, can satisfy:
 - **People/process controls**: background checks, security awareness
   training, a defined vendor-risk-management process for third parties
   (Stripe, Adyen, the cloud provider) — organizational facts about a
-  real company, not something a codebase has.
+  real company, well outside what a codebase can have.
 - **A real, current architecture the auditor can actually test** —
   everything in this repo's own "Known Limitations" sections
   (plaintext `JWT_SECRET`, dev-mode Vault, no real multi-region DR) needs
@@ -121,21 +121,21 @@ obligations neither this repo nor its own code review can satisfy.
 
 ## ASV scanning & penetration testing: budget and cadence
 
-Both are **recurring obligations**, not one-time setup — budget them as
-an annual operating cost, not a project line item that ends once paid
-once.
+Both are **recurring obligations** rather than one-time setup —
+budget them as an annual operating cost instead of a project line item
+that ends once paid.
 
 | Item | Cadence | Rough cost (USD, small-to-mid scope) | Notes |
 |---|---|---|---|
-| ASV vulnerability scan | Quarterly (PCI DSS requirement — every 90 days) | $1,500–$6,000/year for a small external footprint | Must be a PCI SSC-**Approved** Scanning Vendor specifically — a generic vulnerability scanner/report doesn't satisfy Req 11.3.2. Cost scales with the number of externally-facing IPs/domains in scope, not application complexity. |
-| Penetration test | Annually, minimum — **also** required after any *significant* infrastructure/application change (a new external-facing service, a major architecture change) | $8,000–$30,000+ per engagement | Scope (network + application layers both, per PCI DSS Req 11.4) and depth (a checklist scan vs. a real manual assessment) drive cost more than company size. A payment API's authentication/authorization/business-logic surface (this repo's HMAC signing, idempotency, delegation spend policies) needs a tester who reads the app, not just runs a scanner. |
-| SOC 2 Type II audit | Annually (report refresh) | $15,000–$60,000+ per year | Scope (which Trust Service Criteria selected above) and control maturity drive cost — more automated evidence collection (vs. manual screenshots) lowers audit *hours*, not the underlying scope. |
+| ASV vulnerability scan | Quarterly (PCI DSS requirement — every 90 days) | $1,500–$6,000/year for a small external footprint | Must be a PCI SSC-**Approved** Scanning Vendor specifically — a generic vulnerability scanner/report doesn't satisfy Req 11.3.2. Cost scales with the number of externally-facing IPs/domains in scope rather than application complexity. |
+| Penetration test | Annually, minimum — **also** required after any *significant* infrastructure/application change (a new external-facing service, a major architecture change) | $8,000–$30,000+ per engagement | Scope (network + application layers both, per PCI DSS Req 11.4) and depth (a checklist scan vs. a real manual assessment) drive cost more than company size. A payment API's authentication/authorization/business-logic surface (this repo's HMAC signing, idempotency, delegation spend policies) needs a tester who reads the app, beyond just running a scanner. |
+| SOC 2 Type II audit | Annually (report refresh) | $15,000–$60,000+ per year | Scope (which Trust Service Criteria selected above) and control maturity drive cost — more automated evidence collection (vs. manual screenshots) lowers audit *hours* rather than the underlying scope. |
 
 **Total rough annual recurring compliance spend once both programs are
 running**: on the order of **$25,000–$100,000+/year**, before any
 consulting/preparation cost to close the technical gaps first. Get
 quotes from actual vendors before budgeting a real number — the ranges
-above are for planning-stage sizing, not a quote.
+above are for planning-stage sizing rather than a quote.
 
 **What doesn't wait for a full QSA/SOC 2 engagement**: an ASV scan and a
 first penetration test can both be scheduled *now*, independent of

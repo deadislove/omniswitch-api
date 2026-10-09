@@ -133,7 +133,7 @@ export class DelegationController {
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   @ApiOperation({
     summary:
-      "Revoke a delegation — takes effect immediately: the agent's JWT is rejected on its very next request, not just once it naturally expires",
+      "Revoke a delegation — takes effect immediately: the agent's JWT is rejected on its very next request rather than waiting for it to naturally expire",
   })
   @ApiResponse({ status: 200, type: DelegationResponseDto })
   @ApiResponse({ status: 403, description: 'This delegation belongs to a different merchant' })

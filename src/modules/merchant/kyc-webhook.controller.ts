@@ -7,8 +7,8 @@ import { mapPersonaInquiryStatus } from './persona-inquiry-status';
 /**
  * KYC Webhook Controller
  * Receives a real KYC provider's async review decision
- * (`PersonaKycProviderAdapter`'s counterpart) — kept in `MerchantModule`,
- * not alongside the PSP/bank-transfer webhooks in `PaymentModule`'s
+ * (`PersonaKycProviderAdapter`'s counterpart) — kept in `MerchantModule`
+ * rather than alongside the PSP/bank-transfer webhooks in `PaymentModule`'s
  * `WebhookController`, since KYC review is a `MerchantModule` concern
  * (`MerchantEntity.kycStatus`) and `MerchantModule` must never depend on
  * `PaymentModule` (the reverse already holds — see
@@ -20,7 +20,7 @@ import { mapPersonaInquiryStatus } from './persona-inquiry-status';
  * (docs.withpersona.com/events, docs.withpersona.com/webhooks) — a real
  * Persona webhook is an *event* (`data.attributes.name`, e.g.
  * `inquiry.approved`), with the actual Inquiry nested underneath it
- * (`data.attributes.payload.data`), not a flat `{applicationId, status}`
+ * (`data.attributes.payload.data`), instead of a flat `{applicationId, status}`
  * body an earlier revision of this controller assumed. See
  * `PersonaKycProviderAdapter`'s docblock for the same fidelity note
  * applied to the synchronous creation response.

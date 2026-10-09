@@ -78,7 +78,7 @@ import { DeprecationHeaderInterceptor } from './shared/interceptors/deprecation-
         ],
         // Schema is owned by TypeORM migrations (src/database/migrations/,
         // run via `npm run migration:run` / the Docker image's startup
-        // command) in every environment, not just production — dev and
+        // command) in every environment, beyond just production — dev and
         // test used to silently diverge from prod by relying on
         // synchronize, which is exactly how schema drift goes unnoticed
         // until a deploy. See docs/technical/database-migrations.md.

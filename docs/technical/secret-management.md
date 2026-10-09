@@ -78,7 +78,7 @@ Vault genuinely isn't usable.
 `docker-compose.yml`'s `vault` service runs `hashicorp/vault` in `-dev`
 mode: in-memory storage, auto-unseal, a fixed root token
 (`omniswitch-dev-root-token`). This is enough to prove the *pattern* works
-end to end against a real Vault API — not a stub, not a mock — which is
+end to end against a real Vault API — neither a stub nor a mock — which is
 the whole point for a reference project. It is not close to
 production-ready:
 
@@ -87,11 +87,11 @@ production-ready:
   wipes the transit engine and its key entirely, because dev-mode storage
   is in-memory. Every ciphertext encrypted before that restart becomes
   permanently undecryptable: re-querying Vault for a pre-restart
-  ciphertext returns `"no handler for route \"transit/decrypt/hmac-secrets\""`,
-  not a "wrong key" error — the whole engine mount is gone. A real
+  ciphertext returns `"no handler for route \"transit/decrypt/hmac-secrets\""`
+  rather than a "wrong key" error — the whole engine mount is gone. A real
   deployment uses a persistent storage backend (Raft/integrated storage,
   Consul) where a restart doesn't lose keys.
-- **A static root token, not a real auth method.** Production Vault would
+- **A static root token, standing in for a real auth method.** Production Vault would
   use AppRole or Kubernetes auth with short-lived tokens and a policy that
   grants this app `encrypt`/`decrypt` on exactly one key — nothing else.
   The dev-mode root token can do anything to anything in this Vault
@@ -104,7 +104,7 @@ production-ready:
 ## Migration path for K8s-level secrets and production Vault
 
 Both gaps in "What this does *not* cover" above are real, and this
-section is deliberately documentation/example-only, not executable code
+section is deliberately documentation/example-only, rather than executable code
 this project claims to have verified — there's no real cloud account,
 Vault cluster, or Sealed Secrets controller in this repo's Docker Compose
 setup to test either path against real infrastructure. Writing
@@ -137,13 +137,33 @@ permanently orphan every existing ciphertext; (2) replace the static
 root token with AppRole or Kubernetes auth, and a policy scoped to
 exactly `encrypt`/`decrypt` on the `hmac-secrets` Transit key — there's
 only one Transit key today (`VaultTransitService`'s hardcoded
-`TRANSIT_KEY_NAME`), reused for both HMAC secrets and TOTP secrets, not
-a separate `totp-secrets` key. `VaultTransitService` itself wouldn't
-need to change, since it
-already just holds a token and calls the Transit API, not caring how
-that token was obtained. Neither of these is a code change in this
-application; both are Vault/cluster configuration this repo's
-docker-compose-based dev environment was never meant to model.
+`TRANSIT_KEY_NAME`), reused for both HMAC secrets and TOTP secrets instead of
+a separate `totp-secrets` key.
+
+**Correction — this *is* a code change, done.** This section previously
+claimed `VaultTransitService` "wouldn't need to change" to move to
+AppRole. That was wrong: a real AppRole token is short-lived and must be
+renewed before it expires, and the service originally read `VAULT_TOKEN`
+once at construction and held it for the process's lifetime — adopting
+AppRole with a realistic TTL would have silently broken every
+encrypt/decrypt call once the token expired. `VaultTransitService` now
+supports both modes via `VAULT_AUTH_METHOD` (`static-token`, the
+unchanged default, or `approle`), with a background renewal loop at 2/3
+of the token's lease and a second, generic-error safety net
+(`COMPARISON_ERROR`-style isolation doesn't apply here, but the same
+"one failure doesn't take down the service" posture does — see
+`renewSelf()`'s own comment). `scripts/vault/bootstrap-approle.sh`
+provisions the AppRole and a policy scoped to exactly
+`encrypt`/`decrypt` on `hmac-secrets` against this repo's own dev-mode
+Vault — genuinely runnable and verified here, beyond just documented:
+confirmed end to end against the real running container (login,
+encrypt, decrypt, and a real `renew-self` call all succeed with the
+scoped token), and confirmed the policy actually denies what it should
+(`/v1/sys/mounts`, reading `hmac-secrets` key metadata, and
+`encrypt`/`decrypt` on any other key all return 403). What's still
+unverified is the storage-backend swap (in-memory → Raft) and a real
+HA/leader-failover scenario — those still need a real multi-node cluster
+this repo's Docker Compose setup was never meant to model.
 
 ## A real infra bug this surfaced: no `.dockerignore`
 
@@ -203,8 +223,8 @@ different flavor of "`localhost` doesn't mean what you think it means."
 `src/database/migrations/*-EncryptHmacSecret.ts` — a plain
 `ALTER TABLE merchants RENAME COLUMN hmac_secret TO hmac_secret_ciphertext`.
 No data-preserving backfill: this is a reference project without production
-data, and the column's *meaning* changed (plaintext → ciphertext), not just
+data, and the column's *meaning* changed (plaintext → ciphertext) — beyond just
 its name, so any pre-existing values wouldn't have been valid ciphertext
 anyway. A real migration of an existing production table would need an
 online re-encryption pass (read plaintext, encrypt, write ciphertext, verify,
-then drop the plaintext column), not a rename.
+then drop the plaintext column) — a real migration rather than a rename.

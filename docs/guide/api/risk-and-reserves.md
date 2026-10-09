@@ -60,7 +60,7 @@ recomputes the trailing lost-dispute rate and adjusts `reserveBps`/
 ```
 
 `skipped` covers merchants without enough settled-charge volume in the
-trailing window to evaluate meaningfully, not an error state.
+trailing window to evaluate meaningfully — not an error state in its own right.
 
 There's no endpoint to read a merchant's current tier directly — it's
 just whatever `reserveBps`/`reserveHoldDays`/`riskTierAutoManaged`

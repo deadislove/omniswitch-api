@@ -12,10 +12,10 @@
  *
  * `getNodeAutoInstrumentations()` (the `auto-instrumentations-node`
  * meta-package) is what actually covers `pg` (TypeORM's driver), `ioredis`,
- * and Express/Nest's own HTTP layer — but critically also `undici`, not
+ * and Express/Nest's own HTTP layer — but critically also `undici`, beyond
  * just Node's older `http`/`https` core modules. `StripePSPAdapter`/
  * `AdyenPSPAdapter` call out to their PSP via the global `fetch()`, which
- * is backed by `undici`, not `http` — an instrumentation list that only
+ * is backed by `undici` rather than `http` — an instrumentation list that only
  * covered `http`/`https` would trace everything in this app except the one
  * thing most worth tracing (the actual PSP call latency this system's own
  * circuit breaker/smart routing decisions are based on).

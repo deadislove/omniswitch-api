@@ -7,7 +7,7 @@ suite (`src/**/*.spec.ts`, mocked dependencies) or the e2e suite's
 day-to-day use (`test/*.e2e-spec.ts`, covered in
 [`../architecture.md`](../architecture.md#testing) and
 [`../ci-cd.md`](../ci-cd.md)). Start here if you're trying to answer
-"how do we know this actually works," not "how do I write a test."
+"how do we know this actually works," rather than "how do I write a test."
 
 - [`load-testing.md`](./load-testing.md) — real throughput/latency
   baseline against the actual Docker image (Postgres/Redis/mock-psp,
@@ -17,8 +17,13 @@ day-to-day use (`test/*.e2e-spec.ts`, covered in
   mid-traffic (PSP, Redis, Postgres primary) to check whether the
   documented resilience mechanisms actually hold up
 - [`contract-testing.md`](./contract-testing.md) — verifies the
-  Stripe/Adyen adapters against the real sandbox APIs, not
+  Stripe/Adyen adapters against the real sandbox APIs instead of
   `mock-psp`, to catch drift a hand-maintained mock can't
+- [`real-provider-credential-test-plan.md`](./real-provider-credential-test-plan.md) —
+  what's left beyond contract testing: KYC/KYB (Persona) and ACH/wire
+  transfer, plus real webhook delivery and reconciliation against a real
+  settlement report; includes a real code gap found while writing it
+  (Persona/ACH/wire adapters have no auth mechanism implemented yet)
 - [`threshold-calibration.md`](./threshold-calibration.md) — the
   methodology (and a real run against seeded synthetic data) behind
   `RiskTieringService`'s and `DisputeService`'s threshold values,

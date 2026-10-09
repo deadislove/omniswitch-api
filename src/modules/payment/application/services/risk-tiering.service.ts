@@ -47,8 +47,8 @@ interface TierPolicy {
 }
 
 // Deliberately simple, round thresholds — an illustration of the
-// mechanism ("chargeback rate drives reserve rate"), not a calibrated
-// underwriting model. MCC code and account tenure now feed in as
+// mechanism ("chargeback rate drives reserve rate") rather than a
+// calibrated underwriting model. MCC code and account tenure now feed in as
 // escalation-only modifiers (see escalate() and evaluateMerchant()
 // below); dispute *reason* codes (fraud vs. "product not as described"
 // carry very different signal) still don't — see
@@ -67,7 +67,8 @@ const TIER_POLICIES: Record<RiskTier, TierPolicy> = {
 // like. Defaults match the illustrative thresholds this file always
 // used — overridable per-deployment (RISK_TIER_HIGH_THRESHOLD/
 // RISK_TIER_MEDIUM_THRESHOLD, read in the constructor below) without a
-// code change, not "calibrated" on their own; see this file's own
+// code change — that doesn't make them "calibrated" on their own; see
+// this file's own
 // docblock on TIER_POLICIES for why these are still illustrative.
 const DEFAULT_HIGH_RISK_THRESHOLD = 0.01; // >1% lost-dispute rate
 const DEFAULT_MEDIUM_RISK_THRESHOLD = 0.005; // >0.5% lost-dispute rate
@@ -98,7 +99,7 @@ function escalate(tier: RiskTier): RiskTier {
  * recomputes a trailing lost-dispute rate per merchant and adjusts the
  * reserve policy automatically — in both directions: a merchant whose
  * chargeback rate climbs gets a higher reserve/longer hold, and one that
- * cleans up its dispute history tapers back down, not just escalates.
+ * cleans up its dispute history tapers back down too, beyond just escalating.
  *
  * Only touches merchants with riskTierAutoManaged = true — an operator's
  * manual PATCH .../reserve-policy call disables it for that merchant (see
@@ -166,15 +167,15 @@ export class RiskTieringService {
     // This class's own docblock says "only touches merchants with
     // riskTierAutoManaged = true" — until this check existed, that was
     // only actually enforced by runTieringSweep()'s upstream batch query
-    // (findActiveAutoManagedBatch()), not by this method itself. A caller
+    // (findActiveAutoManagedBatch()), instead of by this method itself. A caller
     // reaching this through the public evaluateMerchant(merchantId, now)
     // wrapper (Phase 2's DisputeService, reading a tier for the dispute
     // auto-decision policy) had no such upstream filter and would
     // silently recompute — and, via applyAutoRiskTier() below,
     // overwrite — a manually-overridden merchant's reserveBps/
     // reserveHoldDays just by evaluating them for an unrelated purpose.
-    // Enforcing the invariant here closes it for every caller, not just
-    // the sweep. `null` here means the same thing it means for
+    // Enforcing the invariant here closes it for every caller, beyond
+    // just the sweep. `null` here means the same thing it means for
     // insufficient sample size below: no confident auto-computed answer,
     // callers treat that as "no tier signal" (e.g. dispute-policy.ts
     // falls back to its MEDIUM-equivalent default).
@@ -194,7 +195,7 @@ export class RiskTieringService {
       this.disputePort.findReasonsByMerchantStatusSince(merchantId, 'LOST', since),
     ]);
     const settledCharges = settledCounts.reduce((sum, n) => sum + n, 0);
-    // Reason-weighted, not a raw count — a `fraudulent` loss and a
+    // Reason-weighted rather than a raw count — a `fraudulent` loss and a
     // `duplicate` loss carry very different risk signal about the
     // merchant itself. See dispute-risk-weight.ts.
     const lostDisputes = lostDisputeReasons.reduce((sum, reason) => sum + getDisputeRiskWeight(reason), 0);
@@ -270,7 +271,7 @@ export class RiskTieringService {
    * SubscriptionService's billing sweep).
    *
    * Batched (RISK_TIERING_SWEEP_BATCH_SIZE) + concurrent-within-a-batch
-   * (`Promise.allSettled`), not `merchantService.list()` fetched wholesale
+   * (`Promise.allSettled`) rather than `merchantService.list()` fetched wholesale
    * and evaluated one at a time — that was the original shape, and it
    * scales linearly with the *total* merchant count (fetches and iterates
    * every merchant ever created, active or not, auto-managed or not,

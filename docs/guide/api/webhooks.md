@@ -78,15 +78,15 @@ outcome resolves whichever `Payout` (net-amount or reserve) this
 - **Errors**: `401` missing/invalid signature.
 - **Body**: a real KYC provider's event envelope —
   `{ "data": { "attributes": { "name": string, "payload": { "data": { "id": string, "attributes": { "status": string } } } } } }`
-  — the review decision is nested under `data.attributes.payload.data`,
-  not a flat `{applicationId, status}` shape.
+  — the review decision is nested under `data.attributes.payload.data`
+  rather than a flat `{applicationId, status}` shape.
 
 Only a decisive event (an `id` present and a status that isn't
 `PENDING`) actually updates anything — resolves the merchant's
 `kycApplicationId` to `kycStatus: 'VERIFIED'` or `'REJECTED'`. Any other
 event (still under review, or one this system doesn't recognize) is
-logged and ignored, not an error, matching every other webhook
-receiver's redelivery-tolerant posture.
+logged and ignored rather than treated as an error, matching every
+other webhook receiver's redelivery-tolerant posture.
 
 ## `POST /webhooks/kyb`
 
@@ -105,8 +105,8 @@ Only a decisive event (an `id` present and a status that isn't
 `kybApplicationId` to `kybStatus: 'VERIFIED'` or `'REJECTED'` via
 `MerchantService.confirmKyb()`. A confirmation for an application that
 isn't currently `PENDING_REVIEW` (e.g. PSP redelivery after it's already
-resolved) is logged and ignored, not reapplied — same redelivery-tolerant
-posture as every other webhook receiver here.
+resolved) is logged and ignored instead of reapplied — same
+redelivery-tolerant posture as every other webhook receiver here.
 
 ## Admin: inspecting and replaying outbound webhook deliveries
 
@@ -119,7 +119,7 @@ provider callbacks.
 
 - **Guard**: `JwtAuthGuard` + `RolesGuard`, `ADMIN`/`OPERATOR` only —
   same visibility scope this codebase already uses for `GET
-  /admin/disputes`, not a new merchant-self-service pattern.
+  /admin/disputes`, rather than a new merchant-self-service pattern.
 
 | Endpoint | Effect |
 |---|---|
@@ -130,7 +130,7 @@ provider callbacks.
 Each record includes `success`, `statusCode` (`null` for a network
 error/timeout — there was never a response to read a status from),
 `errorMessage`, and `latencyMs`, regardless of outcome — a failed
-delivery is logged the same as a successful one, not silently dropped.
+delivery is logged the same as a successful one — never silently dropped.
 
 ## Testing webhooks locally
 

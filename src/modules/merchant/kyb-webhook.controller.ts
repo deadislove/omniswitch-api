@@ -12,7 +12,7 @@ import { mapPersonaInquiryStatus } from './persona-inquiry-status';
  * `MerchantEntity.kybStatus`; `MerchantModule` must never depend on
  * `PaymentModule`). Deliberately its own endpoint
  * (`POST /webhooks/kyb`, `KybWebhookGuard`'s own `X-KYB-Signature`/
- * `KYB_WEBHOOK_SECRET`), not reused from `POST /webhooks/kyc` — a KYC
+ * `KYB_WEBHOOK_SECRET`), kept entirely separate from `POST /webhooks/kyc` — a KYC
  * decision should never be able to resolve a KYB application or vice
  * versa, even in a misconfiguration.
  */

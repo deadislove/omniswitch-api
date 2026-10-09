@@ -13,7 +13,7 @@ export type SanctionsScreeningStatus = 'CLEAR' | 'POTENTIAL_MATCH' | 'HIT';
 
 export interface SanctionsScreeningResult {
   status: SanctionsScreeningStatus;
-  /** The matched list entry's display name, only set for POTENTIAL_MATCH/HIT — human-readable evidence for a reviewer, not a stable identifier. */
+  /** The matched list entry's display name, only set for POTENTIAL_MATCH/HIT — human-readable evidence for a reviewer, rather than a stable identifier. */
   matchedListEntry?: string;
   /** 0-1 fuzzy match confidence, only set for POTENTIAL_MATCH/HIT. Exact matches (HIT) are always 1. */
   score?: number;
@@ -27,7 +27,7 @@ export interface SanctionsScreeningResult {
  * to refuse to do business with at all." See
  * docs/business-domain/compliance-and-security.md#sanctionswatchlist-screening-who-this-platform-is-legally-required-to-refuse
  * for why that's a distinct, prior question — screened at merchant
- * creation itself, not gated behind a downstream capability the way KYC
+ * creation itself, instead of gated behind a downstream capability the way KYC
  * gates payouts.
  *
  * Two adapters — `MockSanctionsScreeningAdapter` (deterministic, fixture-

@@ -87,7 +87,7 @@ class DisputeSummaryDto {
     description:
       "DisputeService's policy recommendation, computed once at creation (see dispute-policy.ts): " +
       'ACCEPT/MANUAL_REVIEW are advisory only (this system has no PSP "accept" action to call); ' +
-      'CONTEST already auto-submitted templated evidence — status will be UNDER_REVIEW, not NEEDS_RESPONSE.',
+      'CONTEST already auto-submitted templated evidence — status will be UNDER_REVIEW rather than NEEDS_RESPONSE.',
   })
   autoDecision?: DisputeAutoDecision;
 

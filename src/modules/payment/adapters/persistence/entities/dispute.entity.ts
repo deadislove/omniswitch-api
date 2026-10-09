@@ -48,9 +48,9 @@ export class DisputeEntity {
 
   /**
    * Snapshotted from PaymentEntity.delegationId/initiatedBy at
-   * DisputeService.recordDispute() time — a snapshot, not a live join,
+   * DisputeService.recordDispute() time — a snapshot rather than a live join,
    * because "was this the result of an agent-initiated charge" is a
-   * question about the payment's state *at charge time*, not whatever a
+   * question about the payment's state *at charge time*, independent of whatever a
    * future migration/backfill might change it to later. `null` when the
    * underlying payment record couldn't be found (shouldn't happen — a
    * dispute is always reported against an existing SUCCEEDED payment —
