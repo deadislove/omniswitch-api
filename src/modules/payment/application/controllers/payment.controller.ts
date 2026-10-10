@@ -54,7 +54,7 @@ import { FXRateProviderPort } from '../../ports/outbound/fx-rate-provider.port';
 import { DelegationService } from '../services/delegation.service';
 import { ChargeApprovalService } from '../services/charge-approval.service';
 import { buildCheckoutSagaInput } from '../services/build-checkout-saga-input';
-import * as csv from 'csv-parser';
+import csv from 'csv-parser';
 import { Readable } from 'stream';
 
 // @Throttle's arguments are evaluated once, at class-definition time (a

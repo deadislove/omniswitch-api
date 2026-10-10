@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { uuidv5 } from '../src/shared/utils/uuid';
-import * as request from 'supertest';
+import request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';

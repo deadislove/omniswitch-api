@@ -164,7 +164,9 @@ export class StripePSPAdapter extends PSPAdapterPort {
     } catch (error) {
       await this.circuitBreaker.recordFailure(this.provider);
       const latency = Date.now() - startTime;
-      this.logger.error(`Stripe charge failed after ${latency}ms: ${error.message}`);
+      this.logger.error(
+        `Stripe charge failed after ${latency}ms: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw error;
     }
   }
@@ -304,7 +306,9 @@ export class StripePSPAdapter extends PSPAdapterPort {
     } catch (error) {
       await this.circuitBreaker.recordFailure(this.provider);
       const latency = Date.now() - startTime;
-      this.logger.error(`Stripe payment method verification failed after ${latency}ms: ${error.message}`);
+      this.logger.error(
+        `Stripe payment method verification failed after ${latency}ms: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw error;
     }
   }

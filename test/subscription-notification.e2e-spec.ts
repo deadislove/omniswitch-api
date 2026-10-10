@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as http from 'http';
 import type { AddressInfo } from 'net';
 import { createHmac, randomUUID } from 'crypto';
-import * as request from 'supertest';
+import request from 'supertest';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';

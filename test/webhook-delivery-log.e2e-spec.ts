@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import * as http from 'http';
 import type { AddressInfo } from 'net';
-import * as request from 'supertest';
+import request from 'supertest';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, seedAdminMerchant, uniqueId } from './utils/seed';
 

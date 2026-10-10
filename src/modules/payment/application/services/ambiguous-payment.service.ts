@@ -242,7 +242,9 @@ export class AmbiguousPaymentService {
       try {
         await this.autoResolveOne(payment, result);
       } catch (error) {
-        this.logger.error(`Auto-resolution sweep failed for payment ${payment.id}: ${error.message}`);
+        this.logger.error(
+          `Auto-resolution sweep failed for payment ${payment.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 

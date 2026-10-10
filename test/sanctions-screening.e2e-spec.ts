@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { createTestApp } from './utils/test-app';
 import { seedMerchant, seedAdminMerchant, uniqueId } from './utils/seed';
 import { MerchantService } from '../src/modules/merchant/merchant.service';
