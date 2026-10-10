@@ -54,7 +54,7 @@ jobs:
       # needs `contents: read`, not a bot identity with write access.
       - name: Upload drill output
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: chaos-drill-output-${{ github.run_id }}
           path: chaos-drill-output/
