@@ -22,22 +22,28 @@ independently of all of these.
 
 ## `.github/workflows/ci.yml`
 
-Two jobs. `e2e` itself runs as a 2-way shard matrix
-(`strategy.matrix.shard: [1, 2]`), so three job instances run in
+Two jobs. `e2e` itself runs as a 3-way shard matrix
+(`strategy.matrix.shard: [1, 2, 3]`), so four job instances run in
 parallel in total.
 
 **`build-and-unit-test`**: `npm ci` → lint (blocking, see below) →
 `tsc --noEmit` → `npm run build` → `npm test` (unit tests, mocked
 dependencies).
 
-**`e2e`** (× 2 shards): each shard brings up its own, fully independent
+**`e2e`** (× 3 shards): each shard brings up its own, fully independent
 `postgres-master`, `postgres-replica`, `redis`, `vault`, `mock-psp` via
 `docker compose up -d --wait` (same services, same host-mapped ports
 `test/setup-env.ts` already assumes — see
 [`architecture.md`'s Testing section](./architecture.md#testing)), then
-runs `npm run test:e2e -- --shard=${{ matrix.shard }}/2` — Jest's own
-built-in sharding splits the spec files roughly in half automatically;
-there's no hand-maintained file list behind it. `api` itself is deliberately not started —
+runs `npm run test:e2e -- --shard=${{ matrix.shard }}/3` — Jest's own
+built-in sharding splits the spec files roughly into thirds, not a
+hand-maintained file list. Widened from 2 shards to 3 after
+host-CPU-contention-driven flakiness (see "Parallelizing e2e workers"
+below) kept surfacing as a different random spec file failing each
+run rather than the same one twice — fewer files per shard lowers
+peak CPU pressure per job, which is a mitigation for the contention
+itself, not a fix targeted at any specific test. `api` itself is
+deliberately not started —
 the e2e suite talks to a Nest app booted in-process by Jest/Supertest
 (`test/utils/test-app.ts`), rather than to the containerized `api` service. See
 ["The e2e heap-threshold health check failure"](#the-e2e-heap-threshold-health-check-failure)
@@ -327,12 +333,14 @@ runaway growth within one.
 app's `close()` to stop every job in `SchedulerRegistry` before
 delegating to the real close — one change, since every spec file's own
 `afterAll(() => app.close())` already routes through it. With the leak
-closed, reintroducing `jest --shard` (now `strategy.matrix.shard: [1, 2]`
-in `ci.yml`, two independent job instances rather than the earlier
-same-job multi-shard attempt) gives the smaller CI runner headroom on
-top of the fix rather than working around an open leak — each shard's
-single worker process now bootstraps roughly half as many test apps
-sequentially as the full suite would in one process.
+closed, reintroducing `jest --shard` (at the time,
+`strategy.matrix.shard: [1, 2]` in `ci.yml`, two independent job
+instances rather than the earlier same-job multi-shard attempt) gives
+the smaller CI runner headroom on top of the fix rather than working
+around an open leak — each shard's single worker process bootstraps a
+fraction of the test apps sequentially instead of the full suite in
+one process. (Widened to 3 shards later — see "Parallelizing e2e
+workers" below.)
 
 ## Parallelizing e2e workers
 
@@ -433,3 +441,18 @@ underutilize a bigger one — but the actual acceptance test for this
 change is a real CI run rather than a further local repro on a machine this
 session has already shown to be noisy independent of anything under
 this repository's control.
+
+**Follow-up — shard count widened from 2 to 3**: real CI runs kept
+confirming the residual risk above was real, not theoretical — repeated
+runs of the same PR each failed a different, unrelated spec file
+(`reserve.e2e-spec.ts` on one run, then `subscriptions.e2e-spec.ts` +
+`risk-tiering.e2e-spec.ts` + `webhook-delivery-log.e2e-spec.ts` together
+on a later run of the same unchanged branch), and a local reproduction
+under deliberately added CPU contention reproduced the same
+no-two-runs-alike pattern on `risk-tiering.e2e-spec.ts` alone (once a
+plain test timeout, once a reserve top-up that silently never ran in
+time). None of these pointed at one fixable line — fewer files per
+shard, not a code change, is the lever actually available here. `ci.yml`
+moved to `strategy.matrix.shard: [1, 2, 3]` / `--shard=N/3` on that
+basis: a direct reduction in peak concurrent CPU demand per job, same
+mitigation shape as the original 2-shard split, just narrower.
