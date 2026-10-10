@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe, VersioningType, RequestMethod } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 
 /**

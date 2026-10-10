@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { generate } from 'otplib';
 import { MerchantService } from '../../src/modules/merchant/merchant.service';
 
