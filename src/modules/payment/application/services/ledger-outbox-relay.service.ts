@@ -44,7 +44,7 @@ export class LedgerOutboxRelayService {
   }
 
   /**
-   * Alerting sweep, not a retry mechanism. markFailed() below sets a
+   * An alerting sweep rather than a retry mechanism. markFailed() below sets a
    * terminal FAILED status (matching LedgerOutboxPort's contract), so a
    * PENDING event only shows up here if the relay never got a chance to
    * attempt it at all — e.g. the process crashed mid-batch, or write
@@ -61,7 +61,7 @@ export class LedgerOutboxRelayService {
       // In production: page on-call / emit a metric an alert is wired to.
       this.logger.error(
         `Ledger outbox event ${event.id} (payment ${event.paymentId}) has been PENDING for ` +
-        `>${STALE_THRESHOLD_MINUTES}min without being relayed — investigate the relay job`,
+          `>${STALE_THRESHOLD_MINUTES}min without being relayed — investigate the relay job`,
       );
     }
   }

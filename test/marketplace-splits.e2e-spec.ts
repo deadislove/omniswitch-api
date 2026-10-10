@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { LedgerOutboxEntity } from '../src/modules/payment/adapters/persistence/entities/ledger-outbox.entity';
 import { PaymentEntity } from '../src/modules/payment/adapters/persistence/entities/payment.entity';
@@ -23,15 +23,13 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('Marketplace & split payments (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -56,8 +54,8 @@ describe('Marketplace & split payments (e2e)', () => {
   // the ambient DataSource's replica routing (app.module.ts's
   // `replication` config sends plain repository reads to the replica,
   // which has ~1s streaming lag behind master; see reserve.service.ts's
-  // release() and test/ledger-and-outbox.e2e-spec.ts for the same issue
-  // confirmed live elsewhere). These helpers force the read onto master.
+  // release() and test/ledger-and-outbox.e2e-spec.ts for the same issue).
+  // These helpers force the read onto master.
   async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
     const queryRunner = dataSource.createQueryRunner('master');
     try {
@@ -81,7 +79,11 @@ describe('Marketplace & split payments (e2e)', () => {
     return (event?.entries as any[]) ?? [];
   }
 
-  async function platformWithConnected(): Promise<{ platform: SeededMerchant; platformToken: string; connected: SeededMerchant }> {
+  async function platformWithConnected(): Promise<{
+    platform: SeededMerchant;
+    platformToken: string;
+    connected: SeededMerchant;
+  }> {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platform') });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {
@@ -105,7 +107,13 @@ describe('Marketplace & split payments (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/admin/merchants')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ merchantId: connectedId, name: 'Seller', roles: ['MERCHANT'], accountType: 'CONNECTED', platformMerchantId: platformId })
+        .send({
+          merchantId: connectedId,
+          name: 'Seller',
+          roles: ['MERCHANT'],
+          accountType: 'CONNECTED',
+          platformMerchantId: platformId,
+        })
         .expect(201);
       expect(res.body.accountType).toBe('CONNECTED');
       expect(res.body.platformMerchantId).toBe(platformId);
@@ -134,7 +142,13 @@ describe('Marketplace & split payments (e2e)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/admin/merchants')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ merchantId: uniqueId('orphan-connected'), name: 'Orphan', roles: ['MERCHANT'], accountType: 'CONNECTED', platformMerchantId: uniqueId('nonexistent') })
+        .send({
+          merchantId: uniqueId('orphan-connected'),
+          name: 'Orphan',
+          roles: ['MERCHANT'],
+          accountType: 'CONNECTED',
+          platformMerchantId: uniqueId('nonexistent'),
+        })
         .expect(404);
     });
 
@@ -143,7 +157,13 @@ describe('Marketplace & split payments (e2e)', () => {
       await request(app.getHttpServer())
         .post('/api/v1/admin/merchants')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ merchantId: uniqueId('grandchild'), name: 'Grandchild', roles: ['MERCHANT'], accountType: 'CONNECTED', platformMerchantId: connected.merchantId })
+        .send({
+          merchantId: uniqueId('grandchild'),
+          name: 'Grandchild',
+          roles: ['MERCHANT'],
+          accountType: 'CONNECTED',
+          platformMerchantId: connected.merchantId,
+        })
         .expect(409);
     });
   });
@@ -178,7 +198,8 @@ describe('Marketplace & split payments (e2e)', () => {
     // PSP_SETTLEMENT debit.
     const debit = entries.find((e) => e.accountType === 'PSP_SETTLEMENT');
     const fee = entries.find((e) => e.accountType === 'FEE');
-    const creditTotal = BigInt(connectedCredit.amountMinorUnits) + BigInt(platformCredit.amountMinorUnits) + BigInt(fee.amountMinorUnits);
+    const creditTotal =
+      BigInt(connectedCredit.amountMinorUnits) + BigInt(platformCredit.amountMinorUnits) + BigInt(fee.amountMinorUnits);
     expect(creditTotal.toString()).toBe(debit.amountMinorUnits);
   });
 
@@ -272,7 +293,7 @@ describe('Marketplace & split payments (e2e)', () => {
     expect(payments).toHaveLength(0);
   });
 
-  it('splits are rejected for a platform merchant with an active settlement-currency conversion', async () => {
+  it('a platform merchant with an active settlement-currency conversion can compose it with splits — the remainder converts, each split credits in the charge currency untouched', async () => {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platformfx'), settlementCurrency: 'EUR' });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {
@@ -281,15 +302,171 @@ describe('Marketplace & split payments (e2e)', () => {
       platformMerchantId: platform.merchantId,
     });
 
+    // $100 charge, 1.5% fee = $1.50, net = $98.50, split $30 to connected ->
+    // remainder = $68.50, converted to EUR at the mock USD->EUR rate 0.92:
+    // 68.50 * 0.92 = 63.02 EUR exactly.
     const res = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
       amount: 100,
       currency: 'USD',
       paymentMethodId: 'pm_card_visa',
       orderId: uniqueId('order'),
       binInfo: USD_BIN,
-      splits: [{ merchantId: connected.merchantId, amount: 10 }],
-    }).expect(409);
-    expect(res.body.code).toBe('SPLIT_WITH_SETTLEMENT_CONVERSION_UNSUPPORTED');
+      splits: [{ merchantId: connected.merchantId, amount: 30 }],
+    }).expect(201);
+    expect(res.body.status).toBe('SUCCEEDED');
+
+    const entries = await ledgerEntries(res.body.paymentId);
+    const merchantCredits = entries.filter((e) => e.accountType === 'MERCHANT');
+    expect(merchantCredits).toHaveLength(2);
+
+    // The connected recipient has no settlementCurrency of its own — its
+    // split credits in the charge currency, untouched by the platform's
+    // own conversion.
+    const connectedCredit = merchantCredits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedCredit.currencyCode).toBe('USD');
+    expect(connectedCredit.amountMinorUnits).toBe('3000');
+
+    // The platform's own remainder is what gets converted, not the full
+    // payout — and only the remainder, via its own FX_CLEARING pair.
+    const platformCredit = merchantCredits.find((e) => e.accountId === platform.merchantId);
+    expect(platformCredit.currencyCode).toBe('EUR');
+    expect(platformCredit.amountMinorUnits).toBe('6302');
+    const fxClearingLegs = entries.filter((e) => e.accountType === 'FX_CLEARING');
+    expect(fxClearingLegs).toHaveLength(2); // one USD leg, one EUR leg — just the remainder's pair
+  });
+
+  it('a split recipient with their own settlement currency converts independently of the platform — different currencies, different rates, same charge', async () => {
+    const platform = await seedMerchant(app, { merchantId: uniqueId('platformfx2'), settlementCurrency: 'EUR' });
+    const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
+    const connected = await seedMerchant(app, {
+      merchantId: uniqueId('connectedfx2'),
+      accountType: 'CONNECTED',
+      platformMerchantId: platform.merchantId,
+      settlementCurrency: 'GBP',
+    });
+
+    // $100 charge, fee $1.50, net $98.50, split $30 to connected (GBP @
+    // 0.79 = 23.70 GBP), remainder $68.50 to platform (EUR @ 0.92 = 63.02
+    // EUR) — two independent conversions, two independent rates, on the
+    // same charge.
+    const res = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
+      amount: 100,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      splits: [{ merchantId: connected.merchantId, amount: 30 }],
+    }).expect(201);
+    expect(res.body.status).toBe('SUCCEEDED');
+
+    const entries = await ledgerEntries(res.body.paymentId);
+    const merchantCredits = entries.filter((e) => e.accountType === 'MERCHANT');
+    expect(merchantCredits).toHaveLength(2);
+
+    const connectedCredit = merchantCredits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedCredit.currencyCode).toBe('GBP');
+    expect(connectedCredit.amountMinorUnits).toBe('2370');
+
+    const platformCredit = merchantCredits.find((e) => e.accountId === platform.merchantId);
+    expect(platformCredit.currencyCode).toBe('EUR');
+    expect(platformCredit.amountMinorUnits).toBe('6302');
+
+    // Two independent FX_CLEARING pairs (one per conversion) — 4 legs total.
+    const fxClearingLegs = entries.filter((e) => e.accountType === 'FX_CLEARING');
+    expect(fxClearingLegs).toHaveLength(4);
+
+    // Double-entry validated the whole event on construction — the 201
+    // itself is part of the proof this balances across all three currency
+    // groups (USD/GBP/EUR), not just these explicit assertions.
+  });
+
+  it('only the split recipient has a settlement currency — the platform remainder stays in the charge currency, unconverted', async () => {
+    const { platform, platformToken } = await platformWithConnected();
+    const connected = await seedMerchant(app, {
+      merchantId: uniqueId('connectedonlyfx'),
+      accountType: 'CONNECTED',
+      platformMerchantId: platform.merchantId,
+      settlementCurrency: 'EUR',
+    });
+
+    const res = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
+      amount: 100,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      splits: [{ merchantId: connected.merchantId, amount: 30 }],
+    }).expect(201);
+
+    const entries = await ledgerEntries(res.body.paymentId);
+    const merchantCredits = entries.filter((e) => e.accountType === 'MERCHANT');
+
+    const connectedCredit = merchantCredits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedCredit.currencyCode).toBe('EUR');
+    expect(connectedCredit.amountMinorUnits).toBe('2760'); // 30 * 0.92
+
+    const platformCredit = merchantCredits.find((e) => e.accountId === platform.merchantId);
+    expect(platformCredit.currencyCode).toBe('USD');
+    expect(platformCredit.amountMinorUnits).toBe('6850'); // unconverted remainder
+
+    // Only one FX_CLEARING pair (the split's), not two.
+    expect(entries.filter((e) => e.accountType === 'FX_CLEARING')).toHaveLength(2);
+  });
+
+  it('reserve + split + FX all compose on the same charge — reserve is withheld in the charge currency before any conversion, splits/remainder convert independently on top', async () => {
+    const platform = await seedMerchant(app, {
+      merchantId: uniqueId('platformreservefx'),
+      settlementCurrency: 'EUR',
+      reserveBps: 1000, // 10%
+    });
+    const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
+    const connected = await seedMerchant(app, {
+      merchantId: uniqueId('connectedreservefx'),
+      accountType: 'CONNECTED',
+      platformMerchantId: platform.merchantId,
+      settlementCurrency: 'GBP',
+    });
+
+    // $100 charge, fee $1.50, net $98.50, reserve 10% of net = $9.85,
+    // payout $88.65. Split $30 to connected (GBP @ 0.79 = $23.70 GBP),
+    // remainder $58.65 to platform (EUR @ 0.92 = $53.96 EUR). The reserve
+    // hold itself stays in USD — it's carved out of the charge-currency
+    // net amount before any FX conversion happens (see
+    // ChargeLedgerParamsResolverService.resolve() and
+    // LedgerOutboxEvent.createChargeEntries()'s reserveHold param).
+    const res = await signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
+      amount: 100,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+      splits: [{ merchantId: connected.merchantId, amount: 30 }],
+    }).expect(201);
+    expect(res.body.status).toBe('SUCCEEDED');
+
+    const entries = await ledgerEntries(res.body.paymentId);
+
+    const reserveEntry = entries.find((e) => e.accountType === 'RESERVE');
+    expect(reserveEntry.currencyCode).toBe('USD');
+    expect(reserveEntry.amountMinorUnits).toBe('985');
+
+    const merchantCredits = entries.filter((e) => e.accountType === 'MERCHANT');
+    const connectedCredit = merchantCredits.find((e) => e.accountId === connected.merchantId);
+    expect(connectedCredit.currencyCode).toBe('GBP');
+    expect(connectedCredit.amountMinorUnits).toBe('2370');
+
+    const platformCredit = merchantCredits.find((e) => e.accountId === platform.merchantId);
+    expect(platformCredit.currencyCode).toBe('EUR');
+    expect(platformCredit.amountMinorUnits).toBe('5396');
+
+    // Two independent FX_CLEARING pairs (split + remainder), same as the
+    // no-reserve version of this scenario — the reserve slice doesn't add
+    // a third.
+    expect(entries.filter((e) => e.accountType === 'FX_CLEARING')).toHaveLength(4);
+
+    // Double-entry validated the whole event on construction — the 201
+    // itself is part of the proof reserve + split + FX balances together
+    // across all three currency groups (USD/GBP/EUR).
   });
 
   it('a charge with no splits behaves exactly as before (single MERCHANT credit to the charging merchant)', async () => {

@@ -1,5 +1,5 @@
 import { Money } from '../value-objects/money.vo';
-import { PSPProvider } from './payment.aggregate';
+import { PSPProvider, PaymentInitiator } from './payment.aggregate';
 import { DisputeAutoDecision } from '../services/dispute-policy';
 
 export type DisputeStatus = 'NEEDS_RESPONSE' | 'UNDER_REVIEW' | 'WON' | 'LOST';
@@ -13,8 +13,8 @@ const DEFAULT_RESPONSE_WINDOW_DAYS = 7;
 /**
  * Dispute Aggregate
  * A chargeback/dispute reported by a PSP against an already-`SUCCEEDED`
- * payment (see PaymentAggregate.markDisputed()). Tracked as its own record,
- * not just a payment status flip, because a dispute has a lifecycle of its
+ * payment (see PaymentAggregate.markDisputed()). Tracked as its own record —
+ * more than just a payment status flip, because a dispute has a lifecycle of its
  * own — evidence submission, a response deadline, an eventual won/lost
  * outcome — that the payment's own state machine has no room to represent.
  */
@@ -33,6 +33,9 @@ export class Dispute {
     private readonly _createdAt: Date,
     private _updatedAt: Date,
     private readonly _autoDecision: DisputeAutoDecision | undefined,
+    private readonly _delegationId?: string,
+    private readonly _initiatedBy?: PaymentInitiator,
+    private readonly _merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH',
   ) {}
 
   static create(params: {
@@ -45,6 +48,11 @@ export class Dispute {
     reason?: string;
     /** Set once, at creation, by DisputeService.recordDispute() — see dispute-policy.ts. Immutable: an operator's later manual action doesn't retroactively change what the policy originally recommended. */
     autoDecision?: DisputeAutoDecision;
+    /** Snapshotted at creation from the disputed Payment — see DisputeEntity.delegationId's docblock for why this is a snapshot rather than a live join. */
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
+    /** Audit-only snapshot of the merchant's risk tier at the moment decideAutoDisposition() ran — see dispute-policy.ts's merchantRiskTier param. `undefined` when the merchant had no evaluable tier (same as 'MEDIUM' for the decision itself). */
+    merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH';
   }): Dispute {
     const now = new Date();
     const respondBy = new Date(now.getTime() + DEFAULT_RESPONSE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -62,6 +70,9 @@ export class Dispute {
       now,
       now,
       params.autoDecision,
+      params.delegationId,
+      params.initiatedBy,
+      params.merchantRiskTierAtDecision,
     );
   }
 
@@ -79,6 +90,9 @@ export class Dispute {
     createdAt: Date;
     updatedAt: Date;
     autoDecision?: DisputeAutoDecision;
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
+    merchantRiskTierAtDecision?: 'LOW' | 'MEDIUM' | 'HIGH';
   }): Dispute {
     return new Dispute(
       params.id,
@@ -94,6 +108,9 @@ export class Dispute {
       params.createdAt,
       params.updatedAt,
       params.autoDecision,
+      params.delegationId,
+      params.initiatedBy,
+      params.merchantRiskTierAtDecision,
     );
   }
 
@@ -121,17 +138,52 @@ export class Dispute {
     this._updatedAt = new Date();
   }
 
-  get id(): string { return this._id; }
-  get paymentId(): string { return this._paymentId; }
-  get merchantId(): string { return this._merchantId; }
-  get pspProvider(): PSPProvider { return this._pspProvider; }
-  get pspDisputeId(): string { return this._pspDisputeId; }
-  get amount(): Money { return this._amount; }
-  get reason(): string | undefined { return this._reason; }
-  get status(): DisputeStatus { return this._status; }
-  get respondBy(): Date { return this._respondBy; }
-  get evidence(): string | undefined { return this._evidence; }
-  get createdAt(): Date { return this._createdAt; }
-  get updatedAt(): Date { return this._updatedAt; }
-  get autoDecision(): DisputeAutoDecision | undefined { return this._autoDecision; }
+  get id(): string {
+    return this._id;
+  }
+  get paymentId(): string {
+    return this._paymentId;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get pspProvider(): PSPProvider {
+    return this._pspProvider;
+  }
+  get pspDisputeId(): string {
+    return this._pspDisputeId;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get reason(): string | undefined {
+    return this._reason;
+  }
+  get status(): DisputeStatus {
+    return this._status;
+  }
+  get respondBy(): Date {
+    return this._respondBy;
+  }
+  get evidence(): string | undefined {
+    return this._evidence;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+  get autoDecision(): DisputeAutoDecision | undefined {
+    return this._autoDecision;
+  }
+  get delegationId(): string | undefined {
+    return this._delegationId;
+  }
+  get initiatedBy(): PaymentInitiator | undefined {
+    return this._initiatedBy;
+  }
+  get merchantRiskTierAtDecision(): 'LOW' | 'MEDIUM' | 'HIGH' | undefined {
+    return this._merchantRiskTierAtDecision;
+  }
 }

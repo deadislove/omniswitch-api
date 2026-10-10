@@ -1,4 +1,9 @@
-import { NestFactory, Reflector } from '@nestjs/core';
+// Must be the first import in this file — see tracing.ts's own docblock
+// for why (auto-instrumentation patches modules at require() time; any
+// import above this one would load unpatched).
+import './tracing';
+
+import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -79,7 +84,7 @@ async function bootstrap() {
   // HealthController/MetricsController's VERSION_NEUTRAL — since
   // k8s/deployment.yaml's probe paths and Prometheus scrape annotation are
   // fixed, unversioned contracts (/health/live, /health/ready, /metrics),
-  // not part of this API's own versioned surface.
+  // separate from this API's own versioned surface.
   app.setGlobalPrefix('api', {
     exclude: [
       { path: 'health', method: RequestMethod.GET },
@@ -99,16 +104,16 @@ async function bootstrap() {
       .setTitle('OmniSwitch Payment Gateway API')
       .setDescription(
         'Enterprise-grade Payment Gateway API Service\n\n' +
-        '## Architecture\n' +
-        '- **Modular Monolith** + **Hexagonal Architecture** (Ports & Adapters)\n' +
-        '- **Domain-Driven Design** with Aggregates, Value Objects, Domain Events\n' +
-        '- **Saga Pattern** for multi-step checkout with compensating transactions\n\n' +
-        '## Security\n' +
-        '- JWT Bearer Authentication\n' +
-        '- RBAC (Role-Based Access Control)\n' +
-        '- HMAC-SHA256 Request Signature Verification\n' +
-        '- Idempotency-Key for duplicate prevention\n' +
-        '- Distributed Rate Limiting (100 req/min per merchant)',
+          '## Architecture\n' +
+          '- **Modular Monolith** + **Hexagonal Architecture** (Ports & Adapters)\n' +
+          '- **Domain-Driven Design** with Aggregates, Value Objects, Domain Events\n' +
+          '- **Saga Pattern** for multi-step checkout with compensating transactions\n\n' +
+          '## Security\n' +
+          '- JWT Bearer Authentication\n' +
+          '- RBAC (Role-Based Access Control)\n' +
+          '- HMAC-SHA256 Request Signature Verification\n' +
+          '- Idempotency-Key for duplicate prevention\n' +
+          '- Distributed Rate Limiting (100 req/min per merchant)',
       )
       .setVersion('1.0.0')
       .addBearerAuth()

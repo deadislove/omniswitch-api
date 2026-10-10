@@ -59,9 +59,8 @@ spec:
       # that whole dance: `id -u` is already non-zero, so the entrypoint's
       # own `if [ "$(id -u)" = '0' ]` check skips the su-exec step, and
       # SKIP_SETCAP=true (env, below) skips the setcap call itself, which
-      # would otherwise fail here the same way it did with only IPC_LOCK
-      # granted (setcap itself needs CAP_SETFCAP, not just IPC_LOCK) —
-      # verified live against a real cluster. This container then only
+      # would otherwise fail here with only IPC_LOCK granted (setcap
+      # itself needs CAP_SETFCAP, not just IPC_LOCK). This container then only
       # ever needs the one capability it actually uses at runtime
       # (IPC_LOCK for mlock), not the broader CAP_SETFCAP a root-started
       # container would transiently need to grant it to itself.

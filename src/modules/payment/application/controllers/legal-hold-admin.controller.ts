@@ -14,7 +14,8 @@ class LegalHoldResponseDto {
 
   @ApiProperty({
     enum: ['live', 'restored-from-archive'],
-    description: 'Where the payment now lives. "restored-from-archive" means placing this hold moved it out of cold storage and back into the live table.',
+    description:
+      'Where the payment now lives. "restored-from-archive" means placing this hold moved it out of cold storage and back into the live table.',
   })
   location: 'live' | 'restored-from-archive';
 }
@@ -37,7 +38,10 @@ export class LegalHoldAdminController {
 
   @Post(':id/legal-hold')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Place a legal hold on a payment — excludes it from archiving/deletion regardless of age or dispute status until released. Restores it from archive to the live table if it was already archived.' })
+  @ApiOperation({
+    summary:
+      'Place a legal hold on a payment — excludes it from archiving/deletion regardless of age or dispute status until released. Restores it from archive to the live table if it was already archived.',
+  })
   @ApiResponse({ status: 200, type: LegalHoldResponseDto })
   @ApiResponse({ status: 404, description: 'Payment not found' })
   async placeHold(@Param('id') id: string): Promise<LegalHoldResponseDto> {
@@ -46,7 +50,10 @@ export class LegalHoldAdminController {
 
   @Delete(':id/legal-hold')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Release a legal hold — the payment becomes archive-eligible again (via the normal archiving job) once its age/status/dispute conditions are otherwise met.' })
+  @ApiOperation({
+    summary:
+      'Release a legal hold — the payment becomes archive-eligible again (via the normal archiving job) once its age/status/dispute conditions are otherwise met.',
+  })
   @ApiResponse({ status: 200, type: LegalHoldResponseDto })
   @ApiResponse({ status: 404, description: 'Payment not found among live payments' })
   async releaseHold(@Param('id') id: string): Promise<LegalHoldResponseDto> {

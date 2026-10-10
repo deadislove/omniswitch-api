@@ -2,6 +2,7 @@ import { Money } from '../value-objects/money.vo';
 import { PaymentStatus, assertValidTransition } from '../value-objects/payment-status.vo';
 import { BinInfo } from '../value-objects/bin-info.vo';
 import { DomainEvent } from '../events/domain-event.base';
+import { classifyDeclineCode, DeclineCategory } from '../services/decline-code-classifier';
 import {
   PaymentIntentCreatedEvent,
   PaymentChargedEvent,
@@ -23,6 +24,8 @@ export interface PaymentMetadata {
   statementDescriptor?: string;
   metadata?: Record<string, string>;
 }
+
+export type PaymentInitiator = 'human' | 'agent';
 
 export interface ThreeDSResult {
   authenticated: boolean;
@@ -54,9 +57,44 @@ export interface SettlementConversion {
   provider: string;
 }
 
+/**
+ * A cross-border audit record, distinct from a tax calculation — see
+ * `src/modules/payment/domain/services/tax-record.ts`'s docblock for why
+ * `jurisdictionBasis` is pinned to `'card-issuing-country'` (the only
+ * signal already available at charge time, and a deliberately simplified
+ * stand-in for real tax nexus determination).
+ */
+export interface TaxRecord {
+  jurisdiction: string;
+  jurisdictionBasis: 'card-issuing-country';
+  collectedAmountMinorUnits: string;
+  currencyCode: string;
+  capturedAt: string;
+}
+
+/**
+ * Domain-owned mirror of `PSPRiskSignal` (ports/outbound/psp-adapter.port.ts)
+ * — structurally identical, kept as a separate type because the domain
+ * layer doesn't depend on the ports layer (the reverse already holds:
+ * `PSPProvider` is defined here and *ports* import it, never the other way
+ * around). `PaymentMapper`/`PaymentCheckoutSaga` translate between the
+ * two at the boundary. See `markSucceeded()`/`requiresCapture()`/
+ * `markFailed()`'s shared docblock on why this is stored *alongside*
+ * `riskScore` rather than blended into it.
+ */
+export interface PspRiskSignal {
+  riskLevel?: 'normal' | 'elevated' | 'highest';
+  riskScore?: number;
+}
+
 export interface PaymentSplit {
   merchantId: string;
   amount: Money;
+  // Present when this recipient had their own settlementCurrency at
+  // charge time — independent of this payment's own top-level
+  // `settlementConversion` (see that field's docblock). Replayed rather than
+  // recomputed on refund — see LedgerOutboxEvent.createRefundEntries().
+  settlementConversion?: SettlementConversion;
 }
 
 /**
@@ -78,6 +116,7 @@ export class PaymentAggregate {
     private _pspTransactionId?: string,
     private _pspRawResponse?: Record<string, unknown>,
     private _riskScore?: number,
+    private _pspRiskSignal?: PspRiskSignal,
     private _threeDSResult?: ThreeDSResult,
     private _refunds: RefundRecord[] = [],
     private _captures: CaptureRecord[] = [],
@@ -91,6 +130,9 @@ export class PaymentAggregate {
     private _ambiguousResolvedReason?: string,
     private _ambiguousResolvedAt?: Date,
     private _ambiguousAutoRetryCount: number = 0,
+    private _taxRecord?: TaxRecord,
+    private _delegationId?: string,
+    private _initiatedBy: PaymentInitiator = 'human',
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -101,6 +143,9 @@ export class PaymentAggregate {
     idempotencyKey: string;
     metadata: PaymentMetadata;
     binInfo?: BinInfo;
+    /** Real, indexed attribution columns — see PaymentEntity.delegationId's docblock for why this replaced the old free-form `metadata.metadata` bag. */
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
   }): PaymentAggregate {
     const payment = new PaymentAggregate(
       params.id,
@@ -109,6 +154,27 @@ export class PaymentAggregate {
       params.idempotencyKey,
       params.metadata,
       params.binInfo,
+      undefined, // pspProvider
+      undefined, // pspTransactionId
+      undefined, // pspRawResponse
+      undefined, // riskScore
+      undefined, // pspRiskSignal
+      undefined, // threeDSResult
+      undefined, // refunds
+      undefined, // captures
+      undefined, // failureReason
+      undefined, // failureCode
+      undefined, // createdAt
+      undefined, // updatedAt
+      undefined, // settlementConversion
+      undefined, // splits
+      undefined, // ambiguousResolvedBy
+      undefined, // ambiguousResolvedReason
+      undefined, // ambiguousResolvedAt
+      undefined, // ambiguousAutoRetryCount
+      undefined, // taxRecord
+      params.delegationId,
+      params.initiatedBy ?? 'human',
     );
 
     payment.addDomainEvent(
@@ -135,6 +201,7 @@ export class PaymentAggregate {
     pspTransactionId?: string;
     pspRawResponse?: Record<string, unknown>;
     riskScore?: number;
+    pspRiskSignal?: PspRiskSignal;
     threeDSResult?: ThreeDSResult;
     refunds?: RefundRecord[];
     captures?: CaptureRecord[];
@@ -148,6 +215,9 @@ export class PaymentAggregate {
     ambiguousResolvedReason?: string;
     ambiguousResolvedAt?: Date;
     ambiguousAutoRetryCount?: number;
+    taxRecord?: TaxRecord;
+    delegationId?: string;
+    initiatedBy?: PaymentInitiator;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -160,6 +230,7 @@ export class PaymentAggregate {
       params.pspTransactionId,
       params.pspRawResponse,
       params.riskScore,
+      params.pspRiskSignal,
       params.threeDSResult,
       params.refunds ?? [],
       params.captures ?? [],
@@ -173,6 +244,9 @@ export class PaymentAggregate {
       params.ambiguousResolvedReason,
       params.ambiguousResolvedAt,
       params.ambiguousAutoRetryCount ?? 0,
+      params.taxRecord,
+      params.delegationId,
+      params.initiatedBy ?? 'human',
     );
   }
 
@@ -197,9 +271,7 @@ export class PaymentAggregate {
       this._pspTransactionId = pspTransactionId;
     }
     this.transitionTo(PaymentStatus.REQUIRES_ACTION);
-    this.addDomainEvent(
-      new PaymentRequiresActionEvent(this._id, actionUrl, riskScore),
-    );
+    this.addDomainEvent(new PaymentRequiresActionEvent(this._id, actionUrl, riskScore));
   }
 
   completeThreeDS(result: ThreeDSResult): void {
@@ -213,16 +285,21 @@ export class PaymentAggregate {
    * (`captureMethod: 'manual'`). The PSP transaction id is recorded now so
    * the capture/cancel API can reference it.
    */
-  requiresCapture(pspTransactionId: string, pspRawResponse?: Record<string, unknown>): void {
+  requiresCapture(
+    pspTransactionId: string,
+    pspRawResponse?: Record<string, unknown>,
+    pspRiskSignal?: PspRiskSignal,
+  ): void {
     assertValidTransition(this._status, PaymentStatus.REQUIRES_CAPTURE);
     this._pspTransactionId = pspTransactionId;
     this._pspRawResponse = pspRawResponse;
+    this._pspRiskSignal = pspRiskSignal;
     this.transitionTo(PaymentStatus.REQUIRES_CAPTURE);
   }
 
   /**
    * Records one capture against a REQUIRES_CAPTURE/PARTIALLY_CAPTURED
-   * authorization. `amount` is the increment being captured *now*, not a
+   * authorization. `amount` is the increment being captured *now*, never a
    * running total — multiple calls are expected for split
    * shipment/partial-fulfillment billing. Only transitions to SUCCEEDED
    * once the sum of all captures reaches the full authorized amount;
@@ -273,10 +350,33 @@ export class PaymentAggregate {
     return isFullyCaptured;
   }
 
-  markSucceeded(pspTransactionId: string, pspRawResponse?: Record<string, unknown>): void {
+  /**
+   * `pspRiskSignal` (Stripe Radar's outcome, Adyen's fraudResult — see
+   * `PspRiskSignal`'s own docblock) is stored *alongside* `riskScore`,
+   * deliberately not blended into it: `riskScore` is computed and acted
+   * on (3DS-skip, the human-approval-hold threshold — see
+   * `calculateRiskScore()`) *before* the PSP is ever called, so there is
+   * no "additional input" to feed it at that point — the PSP signal
+   * doesn't exist yet. Retroactively folding it into `riskScore` here,
+   * after the fact, would silently change a value several existing
+   * callers already treat as "the pre-charge decision score" (e.g.
+   * `PaymentCheckoutSaga`'s returned `riskScore`, asserted on directly
+   * in `agent-risk-scoring.e2e-spec.ts`/`charge-approval.e2e-spec.ts`)
+   * without those callers asking for that. This field is the honest
+   * "recorded for visibility, with no decisioning role yet" posture this
+   * codebase already uses for `ambiguousRiskFlagged` — a real
+   * integration into risk tiering or the approval threshold is future
+   * work that this plumbing pass deliberately doesn't attempt.
+   */
+  markSucceeded(
+    pspTransactionId: string,
+    pspRawResponse?: Record<string, unknown>,
+    pspRiskSignal?: PspRiskSignal,
+  ): void {
     assertValidTransition(this._status, PaymentStatus.SUCCEEDED);
     this._pspTransactionId = pspTransactionId;
     this._pspRawResponse = pspRawResponse;
+    this._pspRiskSignal = pspRiskSignal;
     this.transitionTo(PaymentStatus.SUCCEEDED);
     this.addDomainEvent(
       new PaymentChargedEvent(
@@ -289,14 +389,23 @@ export class PaymentAggregate {
     );
   }
 
-  markFailed(reason: string, errorCode?: string): void {
+  /**
+   * `pspProvider`, when passed, overrides `_pspProvider` before recording
+   * the failure — needed because `_pspProvider` is only ever set by
+   * `startProcessing()` at the *first* attempt; a charge that falls back
+   * to a second PSP provider and is declined there would otherwise record
+   * this failure against the wrong provider, which `declineCategory`
+   * below depends on to classify it correctly (Stripe and Adyen use
+   * disjoint decline-code vocabularies — see decline-code-classifier.ts).
+   */
+  markFailed(reason: string, errorCode?: string, pspProvider?: PSPProvider, pspRiskSignal?: PspRiskSignal): void {
     assertValidTransition(this._status, PaymentStatus.FAILED);
+    if (pspProvider) this._pspProvider = pspProvider;
     this._failureReason = reason;
     this._failureCode = errorCode;
+    if (pspRiskSignal) this._pspRiskSignal = pspRiskSignal;
     this.transitionTo(PaymentStatus.FAILED);
-    this.addDomainEvent(
-      new PaymentFailedEvent(this._id, reason, errorCode),
-    );
+    this.addDomainEvent(new PaymentFailedEvent(this._id, reason, errorCode));
   }
 
   markAmbiguous(reason: string, errorCode?: string): void {
@@ -304,14 +413,12 @@ export class PaymentAggregate {
     this._failureReason = reason;
     this._failureCode = errorCode;
     this.transitionTo(PaymentStatus.AMBIGUOUS);
-    this.addDomainEvent(
-      new PaymentAmbiguousEvent(this._id, reason, this._pspProvider),
-    );
+    this.addDomainEvent(new PaymentAmbiguousEvent(this._id, reason, this._pspProvider));
   }
 
   /**
    * Records who resolved an AMBIGUOUS payment and why — a manual admin
-   * override of financial state (see AmbiguousPaymentService), not a
+   * override of financial state (see AmbiguousPaymentService) rather than a
    * status transition itself, so this is called alongside
    * markSucceeded()/markFailed() rather than instead of them. Deliberately
    * separate fields from failureReason/failureCode above: those are
@@ -343,26 +450,16 @@ export class PaymentAggregate {
     this.transitionTo(PaymentStatus.CANCELLED);
   }
 
-  refund(params: {
-    refundId: string;
-    amount: Money;
-    reason: string;
-    pspRefundId?: string;
-  }): void {
+  refund(params: { refundId: string; amount: Money; reason: string; pspRefundId?: string }): void {
     if (this._status !== PaymentStatus.SUCCEEDED && this._status !== PaymentStatus.PARTIALLY_REFUNDED) {
       throw new Error(`Cannot refund payment in status: ${this._status}`);
     }
 
-    const totalRefunded = this._refunds.reduce(
-      (sum, r) => sum.add(r.amount),
-      Money.zero(this._amount.currency.code),
-    );
+    const totalRefunded = this._refunds.reduce((sum, r) => sum.add(r.amount), Money.zero(this._amount.currency.code));
 
     const newTotal = totalRefunded.add(params.amount);
     if (newTotal.isGreaterThan(this._amount)) {
-      throw new Error(
-        `Refund amount ${params.amount.toString()} exceeds remaining refundable amount`,
-      );
+      throw new Error(`Refund amount ${params.amount.toString()} exceeds remaining refundable amount`);
     }
 
     this._refunds.push({
@@ -392,7 +489,7 @@ export class PaymentAggregate {
    * Records a chargeback/dispute reported by the PSP via webhook.
    * Valid from SUCCEEDED or PARTIALLY_REFUNDED (a payment can't be disputed
    * before it charged, but a partial refund doesn't prevent a chargeback on
-   * what's left — a normal real-world sequence, not an edge case).
+   * what's left — a normal real-world sequence rather than an edge case).
    */
   markDisputed(reason?: string): void {
     assertValidTransition(this._status, PaymentStatus.DISPUTED);
@@ -422,15 +519,15 @@ export class PaymentAggregate {
     // LOST: economically identical to a full, merchant-uninitiated refund —
     // the card network claws the funds back regardless of what the merchant
     // wants. Recorded via the same RefundRecord/refunds[] mechanism a normal
-    // refund uses (not a separate code path) so totalRefunded/
+    // reuses the same refund machinery (no separate code path) so totalRefunded/
     // remainingRefundable stay accurate no matter why the money left.
     //
-    // Amount is `remainingRefundable`, not the full `_amount` — a dispute
+    // Amount is `remainingRefundable` rather than the full `_amount` — a dispute
     // that started from a PARTIALLY_REFUNDED payment already has some of
     // `_amount` accounted for in `_refunds`; pushing the full amount again
     // here would double-count the already-refunded portion. For a dispute
     // that started from SUCCEEDED (nothing refunded yet), remainingRefundable
-    // equals the full amount anyway, so this is a strict generalization, not
+    // equals the full amount anyway, so this is a strict generalization rather than
     // a behavior change for that case.
     assertValidTransition(this._status, PaymentStatus.REFUNDED);
     this._refunds.push({
@@ -450,7 +547,7 @@ export class PaymentAggregate {
    * settlementConversion. Deliberately recorded once and never overwritten
    * on a later capture of the same payment: a partial-capture payment's
    * settlement currency doesn't change between captures, and even if it
-   * did, refunds/dispute losses need one consistent rate to replay, not
+   * did, refunds/dispute losses need one consistent rate to replay instead of
    * whatever the merchant's settlement currency happens to be *right now*.
    *
    * This is what lets refund()/a lost dispute convert their clawback
@@ -466,11 +563,23 @@ export class PaymentAggregate {
   }
 
   /**
+   * Records a cross-border tax audit record — same "record once, never
+   * overwritten" posture as recordSettlementConversion() above, and for
+   * the same reason: a later capture of an already-cross-border payment
+   * shouldn't produce a second, possibly-different jurisdiction call for
+   * money that was already collected under the first one.
+   */
+  recordTaxRecord(record: TaxRecord): void {
+    if (this._taxRecord) return;
+    this._taxRecord = record;
+  }
+
+  /**
    * Records the marketplace `splits` this payment was charged with, the
    * first time (charge or capture) it had any — same "record once, never
    * overwritten" posture as recordSettlementConversion() above, and for
    * the same reason: a refund or lost dispute needs to replay the
-   * *original* split ratios, not whatever this payment's splits happen to
+   * *original* split ratios, never whatever this payment's splits happen to
    * be reasoned about later (there's no way to change them after the
    * charge anyway, but future-proofing the invariant costs nothing). See
    * LedgerOutboxEvent.createRefundEntries()'s splits param for how a
@@ -482,9 +591,61 @@ export class PaymentAggregate {
     this._splits = splits;
   }
 
+  /**
+   * Overwrites each split's `settlementConversion` with whatever was
+   * actually used to book this charge's ledger entries — called exactly
+   * once, at the moment a charge is *actually* confirmed successful
+   * (immediate capture, or a 3DS-deferred webhook confirmation), from
+   * whichever call site's `ChargeLedgerParamsResolverService.resolve()`
+   * produced the `splits` that went into `LedgerOutboxEvent.
+   * createChargeEntries()`.
+   *
+   * `recordSplits()` above already ran earlier, at request time (before
+   * the PSP was ever called) — necessary so a 3DS-deferred charge's split
+   * *identity* (which recipients, what amounts) survives the detour (see
+   * PaymentCheckoutSaga.execute()'s docblock). But each split's FX
+   * conversion is resolved fresh every time `resolve()` runs, and a 3DS
+   * challenge can take real time to complete — the rate available at
+   * request time isn't necessarily the rate available when the charge
+   * actually confirms. Without this, `payment.splits` (what refunds/
+   * dispute-loss clawbacks replay) could carry a *different* rate than
+   * what the ledger was actually booked at. Matches merchantId identity
+   * exactly (same recipients/amounts either way — only the FX portion can
+   * differ), so this only ever refines, never changes, what `recordSplits()`
+   * already established.
+   */
+  finalizeSplitConversions(bookedSplits: PaymentSplit[]): void {
+    if (!this._splits) return;
+    this._splits = bookedSplits;
+  }
+
   // ─── Risk Assessment ────────────────────────────────────────────────────────
 
-  calculateRiskScore(): number {
+  /**
+   * `agentContext` is only ever populated for an agent-initiated charge
+   * (see PaymentCheckoutSaga's Step 2) — a human charge always calls this
+   * with no argument, identical to this method's behavior before these
+   * two signals existed. Deliberately NOT "high frequency = suspicious"
+   * the way a human charge is implicitly treated elsewhere — an agent
+   * repeatedly charging a merchant it already has a track record with
+   * (e.g. a subscription-like recurring purchase) is normal for an agent
+   * in a way it wouldn't be for a walk-up human customer; what's actually
+   * risk-relevant is novelty and budget pressure *relative to this
+   * delegation's own history*, rather than absolute call volume:
+   * - `isFirstChargeToMerchant`: this delegation has never charged this
+   *   merchant before — no track record to judge "is this normal for
+   *   this pairing" against yet.
+   * - `percentOfRemainingMonthlyBudget`: this charge alone consumes a
+   *   large share of what's left in the delegation's rolling monthly
+   *   budget (`SpendPolicy.monthlyLimit`/`Delegation.currentMonthSpent`)
+   *   — a single charge that nearly exhausts the month's budget is worth
+   *   flagging even if it's within the hard per-transaction limit.
+   */
+  calculateRiskScore(agentContext?: {
+    isFirstChargeToMerchant?: boolean;
+    /** 0-100 scale — this charge's amount as a percentage of the delegation's remaining monthly budget *before* this charge. */
+    percentOfRemainingMonthlyBudget?: number;
+  }): number {
     let score = 0;
 
     // High-value transactions increase risk
@@ -498,6 +659,14 @@ export class PaymentAggregate {
     // (In real implementation, check merchant history)
     score += 10;
 
+    if (agentContext?.isFirstChargeToMerchant) score += 15;
+    if (
+      agentContext?.percentOfRemainingMonthlyBudget !== undefined &&
+      agentContext.percentOfRemainingMonthlyBudget >= 50
+    ) {
+      score += 15;
+    }
+
     this._riskScore = Math.min(score, 100);
     return this._riskScore;
   }
@@ -508,9 +677,7 @@ export class PaymentAggregate {
     const previousStatus = this._status;
     this._status = newStatus;
     this._updatedAt = new Date();
-    this.addDomainEvent(
-      new PaymentStatusChangedEvent(this._id, previousStatus, newStatus),
-    );
+    this.addDomainEvent(new PaymentStatusChangedEvent(this._id, previousStatus, newStatus));
   }
 
   private addDomainEvent(event: DomainEvent): void {
@@ -519,35 +686,100 @@ export class PaymentAggregate {
 
   // ─── Getters ────────────────────────────────────────────────────────────────
 
-  get id(): string { return this._id; }
-  get amount(): Money { return this._amount; }
-  get status(): PaymentStatus { return this._status; }
-  get idempotencyKey(): string { return this._idempotencyKey; }
-  get metadata(): PaymentMetadata { return this._metadata; }
-  get binInfo(): BinInfo | undefined { return this._binInfo; }
-  get pspProvider(): PSPProvider | undefined { return this._pspProvider; }
-  get pspTransactionId(): string | undefined { return this._pspTransactionId; }
-  get pspRawResponse(): Record<string, unknown> | undefined { return this._pspRawResponse; }
-  get riskScore(): number | undefined { return this._riskScore; }
-  get threeDSResult(): ThreeDSResult | undefined { return this._threeDSResult; }
-  get refunds(): RefundRecord[] { return [...this._refunds]; }
-  get captures(): CaptureRecord[] { return [...this._captures]; }
-  get failureReason(): string | undefined { return this._failureReason; }
-  get failureCode(): string | undefined { return this._failureCode; }
-  get createdAt(): Date { return this._createdAt; }
-  get updatedAt(): Date { return this._updatedAt; }
-  get settlementConversion(): SettlementConversion | undefined { return this._settlementConversion; }
-  get splits(): PaymentSplit[] | undefined { return this._splits; }
-  get ambiguousResolvedBy(): string | undefined { return this._ambiguousResolvedBy; }
-  get ambiguousResolvedReason(): string | undefined { return this._ambiguousResolvedReason; }
-  get ambiguousResolvedAt(): Date | undefined { return this._ambiguousResolvedAt; }
-  get ambiguousAutoRetryCount(): number { return this._ambiguousAutoRetryCount; }
+  get id(): string {
+    return this._id;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get status(): PaymentStatus {
+    return this._status;
+  }
+  get idempotencyKey(): string {
+    return this._idempotencyKey;
+  }
+  get metadata(): PaymentMetadata {
+    return this._metadata;
+  }
+  get binInfo(): BinInfo | undefined {
+    return this._binInfo;
+  }
+  get pspProvider(): PSPProvider | undefined {
+    return this._pspProvider;
+  }
+  get pspTransactionId(): string | undefined {
+    return this._pspTransactionId;
+  }
+  get pspRawResponse(): Record<string, unknown> | undefined {
+    return this._pspRawResponse;
+  }
+  get riskScore(): number | undefined {
+    return this._riskScore;
+  }
+  get pspRiskSignal(): PspRiskSignal | undefined {
+    return this._pspRiskSignal;
+  }
+  get threeDSResult(): ThreeDSResult | undefined {
+    return this._threeDSResult;
+  }
+  get refunds(): RefundRecord[] {
+    return [...this._refunds];
+  }
+  get captures(): CaptureRecord[] {
+    return [...this._captures];
+  }
+  get failureReason(): string | undefined {
+    return this._failureReason;
+  }
+  get failureCode(): string | undefined {
+    return this._failureCode;
+  }
+  /**
+   * Derived rather than persisted — re-runs classifyDeclineCode() against
+   * whatever is currently stored, same "derive on read" posture
+   * Subscription.canceledByHardDecline uses for the same underlying
+   * classification, rather than caching a value that could drift from
+   * the classifier's own logic if that logic ever changes.
+   */
+  get declineCategory(): DeclineCategory {
+    return classifyDeclineCode(this._failureCode, this._pspProvider);
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+  get settlementConversion(): SettlementConversion | undefined {
+    return this._settlementConversion;
+  }
+  get taxRecord(): TaxRecord | undefined {
+    return this._taxRecord;
+  }
+  get delegationId(): string | undefined {
+    return this._delegationId;
+  }
+  get initiatedBy(): PaymentInitiator {
+    return this._initiatedBy;
+  }
+  get splits(): PaymentSplit[] | undefined {
+    return this._splits;
+  }
+  get ambiguousResolvedBy(): string | undefined {
+    return this._ambiguousResolvedBy;
+  }
+  get ambiguousResolvedReason(): string | undefined {
+    return this._ambiguousResolvedReason;
+  }
+  get ambiguousResolvedAt(): Date | undefined {
+    return this._ambiguousResolvedAt;
+  }
+  get ambiguousAutoRetryCount(): number {
+    return this._ambiguousAutoRetryCount;
+  }
 
   get totalRefunded(): Money {
-    return this._refunds.reduce(
-      (sum, r) => sum.add(r.amount),
-      Money.zero(this._amount.currency.code),
-    );
+    return this._refunds.reduce((sum, r) => sum.add(r.amount), Money.zero(this._amount.currency.code));
   }
 
   get remainingRefundable(): Money {
@@ -555,10 +787,7 @@ export class PaymentAggregate {
   }
 
   get totalCaptured(): Money {
-    return this._captures.reduce(
-      (sum, c) => sum.add(c.amount),
-      Money.zero(this._amount.currency.code),
-    );
+    return this._captures.reduce((sum, c) => sum.add(c.amount), Money.zero(this._amount.currency.code));
   }
 
   get remainingCapturable(): Money {

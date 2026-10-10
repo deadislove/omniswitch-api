@@ -21,15 +21,11 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET!;
  */
 describe('Cross-border settlement remainder (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
-  let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
   });
 
   afterAll(async () => {
@@ -54,8 +50,8 @@ describe('Cross-border settlement remainder (e2e)', () => {
   // DataSource's replica routing (app.module.ts's `replication` config
   // sends plain repository reads to the replica, which has ~1s streaming
   // lag behind master; see reserve.service.ts's release() and
-  // test/ledger-and-outbox.e2e-spec.ts for the same issue confirmed live
-  // elsewhere). This forces the read onto master instead.
+  // test/ledger-and-outbox.e2e-spec.ts for the same issue). This forces
+  // the read onto master instead.
   async function ledgerEntries(paymentId: string, eventType?: string): Promise<any[]> {
     const where: any = { paymentId };
     if (eventType) where.eventType = eventType;
@@ -90,10 +86,16 @@ describe('Cross-border settlement remainder (e2e)', () => {
       expect(chargeMerchantCredit.currencyCode).toBe('EUR');
       expect(chargeMerchantCredit.amountMinorUnits).toBe('9062');
 
-      const refundRes = await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, {
-        amount: 100,
-        reason: 'requested_by_customer',
-      }).expect(200);
+      const refundRes = await signedRequest(
+        merchant,
+        token,
+        'post',
+        `/api/v1/payments/${chargeRes.body.paymentId}/refund`,
+        {
+          amount: 100,
+          reason: 'requested_by_customer',
+        },
+      ).expect(200);
       expect(refundRes.body.status).toBe('REFUNDED');
 
       const refundEntries = await ledgerEntries(chargeRes.body.paymentId, 'PAYMENT_REFUNDED');
@@ -128,10 +130,16 @@ describe('Cross-border settlement remainder (e2e)', () => {
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
       const chargeRes = await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-        amount: 50, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+        amount: 50,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
       }).expect(201);
 
-      await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, { amount: 50 }).expect(200);
+      await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/refund`, {
+        amount: 50,
+      }).expect(200);
 
       const refundEntries = await ledgerEntries(chargeRes.body.paymentId, 'PAYMENT_REFUNDED');
       expect(refundEntries.every((e) => e.accountType !== 'FX_CLEARING')).toBe(true);
@@ -147,7 +155,11 @@ describe('Cross-border settlement remainder (e2e)', () => {
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
       const chargeRes = await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-        amount: 40, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+        amount: 40,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
       }).expect(201);
 
       const disputeId = 'dp_' + uniqueId('fx');

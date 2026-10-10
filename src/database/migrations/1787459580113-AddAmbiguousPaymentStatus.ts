@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Adds AMBIGUOUS to payments_status_enum — see PaymentStatus.AMBIGUOUS's
@@ -15,11 +15,10 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * payments_old (the pre-partitioning cutover safety-net table — see
  * 1787333739819-BackfillAndSwapPartitionedPaymentsAndLedgerOutbox.ts and
  * docs/compliance/data-retention.md) shares the SAME Postgres enum type
- * object for its own status column, not a separate copy — renaming
+ * object for its own status column rather than a separate copy — renaming
  * payments_status_enum renames what payments_old.status points at too,
  * so DROP TYPE ..._old fails with "other objects depend on it" unless
- * payments_old.status is detached first. Found by actually running this
- * migration against a real cutover-completed schema, not assumed.
+ * payments_old.status is detached first.
  * payments_old is deprecated and read only by drop-cutover-tables.ts via
  * raw SQL (no TypeORM entity), so converting its status column to plain
  * varchar — the same type archive.payments.status already uses — is
@@ -28,14 +27,13 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * already have been dropped (CUTOVER_OLD_TABLE_RETENTION_DAYS elapsed)
  * by the time this migration — or its down() — actually runs. The
  * column's own DEFAULT clause is a second, separate dependency on the
- * enum type beyond the column's data type itself (confirmed live — the
- * first version of this migration dropped only the type dependency and
- * still failed on the default) — dropped here rather than carried
- * forward, since nothing inserts into this frozen historical snapshot
- * table anymore.
+ * enum type beyond the column's data type itself — dropping only the
+ * type dependency and leaving the default in place still fails, so both
+ * are dropped here rather than carried forward, since nothing inserts
+ * into this frozen historical snapshot table anymore.
  */
 export class AddAmbiguousPaymentStatus1787459580113 implements MigrationInterface {
-  name = "AddAmbiguousPaymentStatus1787459580113";
+  name = 'AddAmbiguousPaymentStatus1787459580113';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
@@ -47,21 +45,15 @@ export class AddAmbiguousPaymentStatus1787459580113 implements MigrationInterfac
                 END IF;
             END $$;
         `);
-    await queryRunner.query(
-      `ALTER TYPE "public"."payments_status_enum" RENAME TO "payments_status_enum_old"`,
-    );
+    await queryRunner.query(`ALTER TYPE "public"."payments_status_enum" RENAME TO "payments_status_enum_old"`);
     await queryRunner.query(
       `CREATE TYPE "public"."payments_status_enum" AS ENUM('PENDING', 'PROCESSING', 'REQUIRES_ACTION', 'REQUIRES_CAPTURE', 'PARTIALLY_CAPTURED', 'SUCCEEDED', 'FAILED', 'AMBIGUOUS', 'CANCELLED', 'REFUNDED', 'PARTIALLY_REFUNDED', 'DISPUTED')`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "payments" ALTER COLUMN "status" DROP DEFAULT`,
-    );
+    await queryRunner.query(`ALTER TABLE "payments" ALTER COLUMN "status" DROP DEFAULT`);
     await queryRunner.query(
       `ALTER TABLE "payments" ALTER COLUMN "status" TYPE "public"."payments_status_enum" USING "status"::"text"::"public"."payments_status_enum"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "payments" ALTER COLUMN "status" SET DEFAULT 'PENDING'`,
-    );
+    await queryRunner.query(`ALTER TABLE "payments" ALTER COLUMN "status" SET DEFAULT 'PENDING'`);
     await queryRunner.query(`DROP TYPE "public"."payments_status_enum_old"`);
   }
 
@@ -69,19 +61,13 @@ export class AddAmbiguousPaymentStatus1787459580113 implements MigrationInterfac
     await queryRunner.query(
       `CREATE TYPE "public"."payments_status_enum_old" AS ENUM('PENDING', 'PROCESSING', 'REQUIRES_ACTION', 'REQUIRES_CAPTURE', 'PARTIALLY_CAPTURED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'REFUNDED', 'PARTIALLY_REFUNDED', 'DISPUTED')`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "payments" ALTER COLUMN "status" DROP DEFAULT`,
-    );
+    await queryRunner.query(`ALTER TABLE "payments" ALTER COLUMN "status" DROP DEFAULT`);
     await queryRunner.query(
       `ALTER TABLE "payments" ALTER COLUMN "status" TYPE "public"."payments_status_enum_old" USING "status"::"text"::"public"."payments_status_enum_old"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "payments" ALTER COLUMN "status" SET DEFAULT 'PENDING'`,
-    );
+    await queryRunner.query(`ALTER TABLE "payments" ALTER COLUMN "status" SET DEFAULT 'PENDING'`);
     await queryRunner.query(`DROP TYPE "public"."payments_status_enum"`);
-    await queryRunner.query(
-      `ALTER TYPE "public"."payments_status_enum_old" RENAME TO "payments_status_enum"`,
-    );
+    await queryRunner.query(`ALTER TYPE "public"."payments_status_enum_old" RENAME TO "payments_status_enum"`);
     await queryRunner.query(`
             DO $$
             BEGIN

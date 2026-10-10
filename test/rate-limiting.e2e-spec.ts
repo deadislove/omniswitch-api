@@ -10,8 +10,7 @@ import { seedMerchant, login, uniqueId } from './utils/seed';
  * limit. The limit itself is raised for the rest of the e2e suite (see
  * setup-env.ts) so other specs can fire several requests per second without
  * tripping it — this test still proves isolation correctly at any limit
- * value, which is also exactly how this was verified manually before being
- * automated here.
+ * value.
  */
 describe('Per-merchant rate limiting (e2e)', () => {
   let app: INestApplication;

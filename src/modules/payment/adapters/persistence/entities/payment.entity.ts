@@ -1,11 +1,4 @@
-import {
-  Entity,
-  PrimaryColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  Index,
-} from 'typeorm';
+import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 import { PaymentStatus } from '../../../domain/value-objects/payment-status.vo';
 import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 
@@ -17,7 +10,7 @@ import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 // every unique constraint on a partitioned table to include the
 // partition key). TypeORM's own migration-generation isn't used in this
 // codebase (all migrations here are hand-written), so this decorator is
-// documentation only, not a live schema-sync source — expressing the
+// documentation only, never a live schema-sync source — expressing the
 // true 3-column constraint here would be misleading in the other
 // direction (implying TypeORM manages it), so it's left off entirely
 // rather than declared incorrectly.
@@ -35,6 +28,23 @@ export class PaymentEntity {
 
   @Column({ name: 'customer_id', nullable: true })
   customerId?: string;
+
+  /**
+   * Real, indexed columns — promoted (Phase 1) from the old
+   * `paymentMetadata` jsonb bag (`{delegationId, initiatedBy}`), which
+   * had no query surface of its own. `delegationId` is `null` for a
+   * human-initiated charge; `initiatedBy` always has a value (`'human'`
+   * is the default for every charge that isn't an AGENT-authenticated
+   * one — see PaymentCheckoutSaga/PaymentController.charge()). See
+   * DisputeEntity's matching columns, snapshotted at dispute-creation
+   * time from these.
+   */
+  @Column({ name: 'delegation_id', type: 'uuid', nullable: true })
+  @Index()
+  delegationId?: string;
+
+  @Column({ name: 'initiated_by', type: 'varchar', default: 'human' })
+  initiatedBy: 'human' | 'agent';
 
   @Column({ name: 'order_id', nullable: true })
   orderId?: string;
@@ -75,6 +85,17 @@ export class PaymentEntity {
 
   @Column({ name: 'risk_score', type: 'int', nullable: true })
   riskScore?: number;
+
+  /**
+   * The PSP's own transaction-level fraud/risk signal (Stripe Radar's
+   * outcome, Adyen's fraudResult) — see PspRiskSignal's docblock in
+   * payment.aggregate.ts for why this is a separate column from
+   * riskScore rather than merged into it. `{riskLevel?, riskScore?}`,
+   * both optional depending on which PSP handled this charge and
+   * whether it populated the field at all.
+   */
+  @Column({ name: 'psp_risk_signal', type: 'jsonb', nullable: true })
+  pspRiskSignal?: Record<string, unknown>;
 
   @Column({ name: 'three_ds_result', type: 'jsonb', nullable: true })
   threeDSResult?: Record<string, unknown>;
@@ -121,14 +142,39 @@ export class PaymentEntity {
   settlementConversion?: { currency: string; rate: number; provider: string };
 
   /**
+   * A cross-border audit record rather than a tax calculation — see
+   * PaymentAggregate.recordTaxRecord()'s and
+   * src/modules/payment/domain/services/tax-record.ts's docblocks. Only
+   * set when this charge was cross-border (same condition as
+   * settlementConversion above being present) and a BinInfo was
+   * available to derive a jurisdiction from.
+   */
+  @Column({ name: 'tax_record', type: 'jsonb', nullable: true })
+  taxRecord?: {
+    jurisdiction: string;
+    jurisdictionBasis: 'card-issuing-country';
+    collectedAmountMinorUnits: string;
+    currencyCode: string;
+    capturedAt: string;
+  };
+
+  /**
    * The marketplace `splits` this payment was actually charged with, if
    * any — recorded once at charge time (see
    * PaymentAggregate.recordSplits()'s docblock) so a later refund or lost
    * dispute can reverse each recipient's share proportionally rather than
    * only ever debiting the charging (platform) merchant's own account.
+   * `settlementConversion` per split is present when that recipient had
+   * their own settlement currency at charge time — independent of this
+   * payment's own `settlementConversion` column above.
    */
   @Column({ name: 'splits', type: 'jsonb', nullable: true })
-  splits?: { merchantId: string; amountMinorUnits: string; currencyCode: string }[];
+  splits?: {
+    merchantId: string;
+    amountMinorUnits: string;
+    currencyCode: string;
+    settlementConversion?: { currency: string; rate: number; provider: string };
+  }[];
 
   /**
    * Audit trail for AmbiguousPaymentService.resolve() — deliberately

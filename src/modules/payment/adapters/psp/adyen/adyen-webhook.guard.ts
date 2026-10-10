@@ -50,8 +50,7 @@ export class AdyenWebhookGuard implements CanActivate {
       });
     }
 
-    const items: Array<{ NotificationRequestItem: AdyenNotificationRequestItem }> =
-      request.body?.notificationItems;
+    const items: Array<{ NotificationRequestItem: AdyenNotificationRequestItem }> = request.body?.notificationItems;
     if (!Array.isArray(items) || items.length === 0) {
       throw new BadRequestException({
         statusCode: 400,
@@ -79,10 +78,7 @@ export class AdyenWebhookGuard implements CanActivate {
       try {
         const expectedBuffer = Buffer.from(expectedSignature, 'base64');
         const providedBuffer = Buffer.from(providedSignature, 'base64');
-        if (
-          expectedBuffer.length !== providedBuffer.length ||
-          !timingSafeEqual(expectedBuffer, providedBuffer)
-        ) {
+        if (expectedBuffer.length !== providedBuffer.length || !timingSafeEqual(expectedBuffer, providedBuffer)) {
           throw new Error('mismatch');
         }
       } catch {

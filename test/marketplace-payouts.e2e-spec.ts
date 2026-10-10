@@ -1,11 +1,16 @@
 import { INestApplication } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { PayoutService } from '../src/modules/payment/application/services/payout.service';
+import { CachePort } from '../src/modules/payment/ports/outbound/cache.port';
+import {
+  forceSharedRedisDbForSweepLock,
+  acquireExclusiveSweepTestSuite,
+  SUITE_MUTEX_ACQUIRE_TIMEOUT_MS,
+} from './utils/shared-redis-db';
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
 
@@ -22,21 +27,22 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('Marketplace payout scheduling (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
-  let dataSource: DataSource;
   let payoutService: PayoutService;
+  const sharedRedisDb = forceSharedRedisDbForSweepLock();
+  let releaseSweepMutex: () => Promise<void>;
 
   beforeAll(async () => {
     app = await createTestApp();
-    dataSource = app.get(DataSource);
+    releaseSweepMutex = await acquireExclusiveSweepTestSuite(app.get(CachePort));
     payoutService = app.get(PayoutService);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
-  });
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
+  }, SUITE_MUTEX_ACQUIRE_TIMEOUT_MS);
 
   afterAll(async () => {
+    await releaseSweepMutex();
     await app.close();
+    sharedRedisDb.restore();
   });
 
   function signedRequest(m: SeededMerchant, t: string, method: 'post', path: string, body: object) {
@@ -53,7 +59,10 @@ describe('Marketplace payout scheduling (e2e)', () => {
       .send(body);
   }
 
-  async function platformWithConnected(payoutReserveBps = 0, payoutReserveHoldDays = 0): Promise<{ platform: SeededMerchant; platformToken: string; connected: SeededMerchant }> {
+  async function platformWithConnected(
+    payoutReserveBps = 0,
+    payoutReserveHoldDays = 0,
+  ): Promise<{ platform: SeededMerchant; platformToken: string; connected: SeededMerchant }> {
     const platform = await seedMerchant(app, { merchantId: uniqueId('platform') });
     const platformToken = await login(app, platform.apiKeyId, platform.apiKeySecret);
     const connected = await seedMerchant(app, {
@@ -66,7 +75,13 @@ describe('Marketplace payout scheduling (e2e)', () => {
     return { platform, platformToken, connected };
   }
 
-  async function chargeWithSplit(platform: SeededMerchant, platformToken: string, connectedMerchantId: string, amount: number, splitAmount: number) {
+  async function chargeWithSplit(
+    platform: SeededMerchant,
+    platformToken: string,
+    connectedMerchantId: string,
+    amount: number,
+    splitAmount: number,
+  ) {
     return signedRequest(platform, platformToken, 'post', '/api/v1/payments/charge', {
       amount,
       currency: 'USD',
@@ -84,7 +99,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       .send({ legalName, taxId });
   }
 
-  it('a sweep batches a connected merchant\'s split credit into a Payout, withholding the configured rolling reserve', async () => {
+  it("a sweep batches a connected merchant's split credit into a Payout, withholding the configured rolling reserve", async () => {
     const { platform, platformToken, connected } = await platformWithConnected(1000, 90); // 10% rolling reserve, 90-day hold
     await chargeWithSplit(platform, platformToken, connected.merchantId, 100, 40); // connected gets $40
 
@@ -139,18 +154,18 @@ describe('Marketplace payout scheduling (e2e)', () => {
     await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 10);
 
     await payoutService.runSweep();
-    const afterFirst = await payoutService.findMany({ merchantId: connected.merchantId });
+    const afterFirst = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(afterFirst).toHaveLength(1);
 
     // No new charges happened — a second sweep should find nothing new for this merchant.
     await payoutService.runSweep();
-    const afterSecond = await payoutService.findMany({ merchantId: connected.merchantId });
+    const afterSecond = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(afterSecond).toHaveLength(1);
 
     // A new charge after the second sweep produces exactly one more Payout, not a re-sum of history.
     await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 10);
     await payoutService.runSweep();
-    const afterThird = await payoutService.findMany({ merchantId: connected.merchantId });
+    const afterThird = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(afterThird).toHaveLength(2);
     expect(afterThird.every((p) => p.grossAmount.amount === 10)).toBe(true);
   });
@@ -175,19 +190,23 @@ describe('Marketplace payout scheduling (e2e)', () => {
     expect(results.filter((r) => r !== null)).toHaveLength(1);
     expect(results.filter((r) => r === null)).toHaveLength(1);
 
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(payouts).toHaveLength(1);
   });
 
-  it('a PLATFORM merchant\'s own charge proceeds are never turned into a Payout', async () => {
+  it("a PLATFORM merchant's own charge proceeds are never turned into a Payout", async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('platformonly') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
     await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-      amount: 25, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+      amount: 25,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
     }).expect(201);
 
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: merchant.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: merchant.merchantId });
     expect(payouts).toHaveLength(0);
   });
 
@@ -205,9 +224,9 @@ describe('Marketplace payout scheduling (e2e)', () => {
     expect(sweepRes.body.released).toBeGreaterThanOrEqual(1);
     expect(sweepRes.body.failed).toBe(0);
 
-    const eligiblePayouts = await payoutService.findMany({ merchantId: eligible.connected.merchantId });
+    const eligiblePayouts = await payoutService.findManyOnMaster({ merchantId: eligible.connected.merchantId });
     expect(eligiblePayouts[0].reserveStatus).toBe('RELEASED');
-    const ineligiblePayouts = await payoutService.findMany({ merchantId: ineligible.connected.merchantId });
+    const ineligiblePayouts = await payoutService.findManyOnMaster({ merchantId: ineligible.connected.merchantId });
     expect(ineligiblePayouts[0].reserveStatus).toBe('HELD');
   });
 
@@ -215,7 +234,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
     const { platform, platformToken, connected } = await platformWithConnected(1000, 90);
     await chargeWithSplit(platform, platformToken, connected.merchantId, 40, 20);
     await payoutService.runSweep();
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     const payoutId = payouts[0].id;
 
     const releaseRes = await request(app.getHttpServer())
@@ -242,7 +261,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
     await chargeWithSplit(platform, platformToken, connected.merchantId, 100, 50);
     await payoutService.runSweep();
 
-    const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+    const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
     expect(payouts).toHaveLength(1);
     expect(payouts[0].reserveAmount.amount).toBe(10); // 20% of $50
     expect(payouts[0].netAmount.amount).toBe(40);
@@ -262,7 +281,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       await chargeWithSplit(platform, platformToken, connected.merchantId, 40, 20);
       await payoutService.runSweep();
 
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts).toHaveLength(1);
       expect(payouts[0].kycBlocked).toBe(true);
       // Gross/net/reserve math is computed exactly as usual — KYC blocks
@@ -278,11 +297,11 @@ describe('Marketplace payout scheduling (e2e)', () => {
 
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts[0].kycBlocked).toBe(true);
     });
 
-    it('a verified connected merchant\'s payouts are not KYC-blocked, and its transfer can be initiated', async () => {
+    it("a verified connected merchant's payouts are not KYC-blocked, and its transfer can be initiated", async () => {
       const { platform, platformToken, connected } = await platformWithConnected(0, 0);
 
       const kycRes = await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
@@ -290,7 +309,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
 
       await chargeWithSplit(platform, platformToken, connected.merchantId, 40, 25);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts[0].kycBlocked).toBe(false);
 
       const transferRes = await request(app.getHttpServer())
@@ -312,7 +331,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       const { platform, platformToken, connected } = await platformWithConnected(0, 0);
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(payouts[0].kycBlocked).toBe(true);
 
       const res = await request(app.getHttpServer())
@@ -327,7 +346,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       // Payout created BEFORE KYC is ever submitted — starts blocked.
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const before = await payoutService.findMany({ merchantId: connected.merchantId });
+      const before = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(before[0].kycBlocked).toBe(true);
 
       await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
@@ -338,7 +357,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
         .expect(200);
       expect(recheckRes.body.cleared).toBeGreaterThanOrEqual(1);
 
-      const after = await payoutService.findMany({ merchantId: connected.merchantId });
+      const after = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
       expect(after[0].kycBlocked).toBe(false);
       expect(after[0].kycClearedAt).toBeTruthy();
     });
@@ -355,7 +374,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
       await submitKyc(connected.merchantId, 'Acme Sellers LLC').expect(200);
       await chargeWithSplit(platform, platformToken, connected.merchantId, 30, 15);
       await payoutService.runSweep();
-      const payouts = await payoutService.findMany({ merchantId: connected.merchantId });
+      const payouts = await payoutService.findManyOnMaster({ merchantId: connected.merchantId });
 
       const failRes = await request(app.getHttpServer())
         .post(`/api/v1/admin/marketplace/payouts/${payouts[0].id}/initiate-transfer`)
@@ -363,7 +382,7 @@ describe('Marketplace payout scheduling (e2e)', () => {
         .expect(422);
       expect(failRes.body.code).toBe('PAYOUT_TRANSFER_FAILED');
 
-      const afterFail = await payoutService.findById(payouts[0].id);
+      const afterFail = await payoutService.findByIdOnMaster(payouts[0].id);
       expect(afterFail!.transferStatus).toBe('FAILED');
       expect(afterFail!.transferError).toBeTruthy();
     });
@@ -383,9 +402,9 @@ describe('Marketplace payout scheduling (e2e)', () => {
         .expect(200);
       expect(sweepRes.body.initiated).toBeGreaterThanOrEqual(1);
 
-      const verifiedPayouts = await payoutService.findMany({ merchantId: verified.connected.merchantId });
+      const verifiedPayouts = await payoutService.findManyOnMaster({ merchantId: verified.connected.merchantId });
       expect(verifiedPayouts[0].transferStatus).toBe('INITIATED');
-      const blockedPayouts = await payoutService.findMany({ merchantId: blocked.connected.merchantId });
+      const blockedPayouts = await payoutService.findManyOnMaster({ merchantId: blocked.connected.merchantId });
       expect(blockedPayouts[0].transferStatus).toBe('NOT_INITIATED');
     });
   });

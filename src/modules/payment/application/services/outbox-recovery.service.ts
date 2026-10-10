@@ -26,7 +26,7 @@ export class OutboxRecoveryService {
   /**
    * Resets a FAILED event back to PENDING so the relay's next
    * EVERY_10_SECONDS tick picks it up. Does not touch the event's
-   * `entries` — this is purely a delivery-status reset, not a correction of
+   * `entries` — this is purely a delivery-status reset rather than a correction of
    * the underlying ledger entries (those were already validated for
    * double-entry balance at creation and must not be edited here).
    */

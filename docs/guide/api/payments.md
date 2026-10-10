@@ -14,9 +14,11 @@ internally — see [`system-design.md`](../system-design.md#3-a-charge-end-to-en
 for the full internal flow.
 
 - **Roles**: `MERCHANT`, `ADMIN`, `AGENT`
-- **Guards**: HMAC + Idempotency-Key — HMAC is **skipped** for an
-  `AGENT` caller (see [`agentic-payments.md`](./agentic-payments.md));
-  `Idempotency-Key` is required unconditionally, for every role
+- **Guards**: HMAC + Idempotency-Key — required for every role including
+  `AGENT`, which signs with its own delegation-issued signing key
+  instead of the merchant's (see
+  [`agentic-payments.md`](./agentic-payments.md)); `Idempotency-Key` is
+  required unconditionally, for every role
 - **Rate limit**: 100/min
 
 **Request body**
@@ -33,7 +35,7 @@ for the full internal flow.
 | `statementDescriptor` | string | no | Max 22 chars |
 | `binInfo` | object | no | `{ bin, country, cardBrand, cardType, issuingBank? }` — feeds smart routing (3DS/EU heuristics) |
 | `preferredProvider` | `'STRIPE'\|'ADYEN'\|'PAYPAL'\|'CHASE'` | no | Overrides smart routing (only Stripe/Adyen have adapters implemented). Rejected with `422` if outside the merchant's PSP entitlement — see [`merchants-and-auth.md`](./merchants-and-auth.md#patch-adminmerchantsidpsp-entitlement) |
-| `metadata` | object | no | Free-form key-value pairs |
+| `metadata` | object | no | Free-form key-value pairs — stored on the payment (`GET /payments/:id` echoes it back) and forwarded to the PSP's own metadata concept (Stripe `metadata[<key>]`, Adyen `metadata`); reserved keys the PSP adapters use internally (e.g. `payment_id`/`merchant_id`) can't be overwritten |
 | `category` | string | no | Only enforced for an `AGENT` caller against its delegation's `allowedCategories` — ignored otherwise |
 | `captureMethod` | `'automatic'\|'manual'` | no | `'manual'` authorizes without capturing; default `'automatic'` |
 | `presentmentCurrency` | string | no | Purely informational display conversion — never changes what's charged |
@@ -63,11 +65,23 @@ for the full internal flow.
 
 `status` is one of `SUCCEEDED`, `REQUIRES_ACTION` (3DS challenge —
 `actionUrl` is set, resolved later via webhook), `REQUIRES_CAPTURE`
-(manual capture), or `FAILED`.
+(manual capture), `FAILED`, or `AMBIGUOUS` (the PSP call itself timed
+out or every configured PSP failed — genuinely unknown whether the
+card was charged, which is a different thing entirely from a decline;
+see
+[`risk-and-reserves.md`](./risk-and-reserves.md) for how this gets
+resolved).
+
+An `AGENT` charge above its delegation's `requireApprovalAboveAmount`
+returns a different, minimal shape instead —
+`{ paymentId, status: "PENDING_APPROVAL", requiresAction: false,
+usedFallback: false, approvalId, createdAt }`, with no PSP call made
+yet. See [`agentic-payments.md`](./agentic-payments.md) for the
+approve/deny flow that resolves it.
 
 **Errors**: `400` missing `Idempotency-Key`; `403` an `AGENT`'s
 delegation has been revoked; `409` `splits` combined with
-`captureMethod: 'manual'`, or a split's settlement-currency conflict;
+`captureMethod: 'manual'`;
 `422` a raw-card-number-shaped reference, request validation failure,
 an invalid split recipient, `preferredProvider` names a PSP outside
 the merchant's PSP entitlement (`PREFERRED_PROVIDER_NOT_ENTITLED` —
@@ -90,7 +104,9 @@ useful for a frontend polling a 3DS challenge's resolution.
 
 ## `GET /payments/:id`
 
-Full payment detail, including refund/capture history.
+Full payment detail, including refund/capture history, and the exact
+`metadata`/`statementDescriptor` sent at charge time (echoed back
+rather than re-derived) — see `PaymentDetailResponseDto`.
 
 - **Roles**: `MERCHANT`, `ADMIN`, `READONLY`
 - **Errors**: `403` belongs to a different merchant; `404` not found.
@@ -150,9 +166,9 @@ not found; `409` not in a cancellable status (e.g. already captured);
 ## `POST /payments/bulk-upload`
 
 `multipart/form-data` CSV upload (field name `file`, max 10MB) for batch
-payment processing. Rows are parsed and **queued**, not charged
-synchronously — a `201` means parsing succeeded, not that every row's
-payment succeeded.
+payment processing. Rows are parsed and **queued** rather than charged
+synchronously — a `201` means parsing succeeded, with no claim that
+every row's payment succeeded too.
 
 - **Roles**: `MERCHANT`, `ADMIN`
 - CSV columns: `amount`, `currency` (defaults `USD`), `order_id`,
@@ -170,3 +186,16 @@ gauges expose, here as a JSON snapshot for a human/dashboard rather than
 Prometheus).
 
 - **Roles**: `ADMIN`, `OPERATOR`
+
+## `POST /payments/routing/circuit-breaker/:provider/reset`
+
+Operator escape hatch — forces a PSP's circuit breaker back to `CLOSED`,
+bypassing the normal automated recovery flow. No other way to intervene
+short of reaching into Redis directly if automated recovery isn't
+behaving as expected.
+
+- **Roles**: `ADMIN`, `OPERATOR`
+- **Response `200`**: the same per-provider shape `GET
+  /payments/routing/health` returns, for just this provider, reflecting
+  the reset.
+- **Errors**: `400` unknown provider (`UNKNOWN_PSP_PROVIDER`).

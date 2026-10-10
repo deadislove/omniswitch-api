@@ -14,8 +14,8 @@ provider-specific detail below.
 | `DELETION_BACKUP_GCS_BUCKET` | Yes | Bucket name, no `gs://` prefix |
 
 No region variable — unlike S3, the `@google-cloud/storage` client
-resolves the bucket's location from the bucket itself, not from local
-configuration.
+resolves the bucket's location from the bucket itself rather than from
+local configuration.
 
 ## Credentials
 

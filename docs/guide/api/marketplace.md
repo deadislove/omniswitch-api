@@ -72,6 +72,10 @@ List, optionally filtered by `merchantId`.
   "transferId": null,
   "transferInitiatedAt": null,
   "transferError": null,
+  "reserveTransferStatus": "NOT_INITIATED",
+  "reserveTransferId": null,
+  "reserveTransferInitiatedAt": null,
+  "reserveTransferError": null,
   "createdAt": "2026-01-01T00:00:00.000Z"
 }
 ```
@@ -80,6 +84,12 @@ List, optionally filtered by `merchantId`.
 `reserveStatus: "NONE"` (no reserve configured) and still `kycBlocked:
 true`, or vice versa. Both must clear before a transfer can be
 initiated.
+
+`reserveTransferStatus` is a separate follow-up transfer from
+`transferStatus` — it only becomes meaningful once `reserveStatus` is
+`RELEASED`, and covers sending the *released reserve* to the
+merchant's bank, independent of whether the original net-amount
+transfer already completed.
 
 ### `POST /admin/marketplace/run-payouts`
 
@@ -115,10 +125,14 @@ recipient has since become `VERIFIED` (including a payout created
 
 ### `POST /admin/marketplace/payouts/:id/initiate-transfer`
 
-Sends this payout's `netAmount` via the (mocked) bank rail
-(`BankTransferPort`). Never covers a reserve released later — that
-remains a known, documented gap (see the top-level README's Known
-Limitations).
+Sends this payout's `netAmount` via `BankTransferPort` — the mock rail
+(default) resolves synchronously and this returns `transferStatus:
+'INITIATED'` immediately; the two real rails (`ach`/`wire`, selected via
+`BANK_TRANSFER_PROVIDER`) return `PENDING_CONFIRMATION` instead, with
+final settlement arriving later via `POST /webhooks/bank-transfer` — see
+[`../../business-domain/marketplace-and-payouts.md`](../../business-domain/marketplace-and-payouts.md#payout-kyc-gating-and-real-transfer-initiation).
+Never covers a reserve released later — see
+`POST .../payouts/:id/initiate-reserve-transfer` below for that.
 
 - **Errors**: `404` not found (`PAYOUT_NOT_FOUND`); `409` KYC-blocked
   (`PAYOUT_KYC_BLOCKED`), zero net amount
@@ -132,6 +146,31 @@ Limitations).
 Runs the transfer-initiation sweep now — initiates a transfer for every
 payout that isn't KYC-blocked, has a net amount, and hasn't already been
 initiated (a previously `FAILED` transfer is retried).
+
+**Response `200`**: `{ initiated: number, failed: number }`
+
+### `POST /admin/marketplace/payouts/:id/initiate-reserve-transfer`
+
+The follow-up transfer for a *released* reserve — a completely separate
+transfer from `.../initiate-transfer` above, tracked by its own
+`reserveTransferStatus`/`reserveTransferId` fields. Eligibility is just
+"reserve released, KYC clear, and not already initiated" — independent
+of whatever already happened to `netAmount`'s own transfer, so this
+works whether the reserve was released before, during, or long after
+the netAmount transfer. Same rail, same real-vs-mock behavior as
+`.../initiate-transfer`.
+
+- **Errors**: `404` not found (`PAYOUT_NOT_FOUND`); `409` KYC-blocked
+  (`PAYOUT_KYC_BLOCKED`), no reserve (`PAYOUT_NO_RESERVE_TO_TRANSFER`),
+  reserve not yet released (`PAYOUT_RESERVE_NOT_RELEASED`), or already
+  initiated (`PAYOUT_RESERVE_TRANSFER_ALREADY_INITIATED`); `422` the
+  bank declined the transfer (`PAYOUT_RESERVE_TRANSFER_FAILED`).
+
+### `POST /admin/marketplace/initiate-eligible-reserve-transfers`
+
+Runs the reserve-transfer-initiation sweep now — initiates a reserve
+transfer for every payout whose reserve is released, isn't KYC-blocked,
+and hasn't already had its reserve transfer initiated.
 
 **Response `200`**: `{ initiated: number, failed: number }`
 

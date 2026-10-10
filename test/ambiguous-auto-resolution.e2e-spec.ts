@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { resetCircuitBreakerState } from './utils/circuit-breaker';
 import { PaymentEntity } from '../src/modules/payment/adapters/persistence/entities/payment.entity';
@@ -61,8 +61,7 @@ describe('Ambiguous payment auto-resolution (e2e)', () => {
     dataSource = app.get(DataSource);
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 
@@ -136,7 +135,10 @@ describe('Ambiguous payment auto-resolution (e2e)', () => {
     const queryRunner = dataSource.createQueryRunner('master');
     let events: LedgerOutboxEntity[];
     try {
-      events = await queryRunner.manager.find(LedgerOutboxEntity, { where: { paymentId }, order: { createdAt: 'ASC' } });
+      events = await queryRunner.manager.find(LedgerOutboxEntity, {
+        where: { paymentId },
+        order: { createdAt: 'ASC' },
+      });
     } finally {
       await queryRunner.release();
     }

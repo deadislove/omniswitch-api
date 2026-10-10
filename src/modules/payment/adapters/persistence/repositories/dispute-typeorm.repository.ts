@@ -28,6 +28,9 @@ export class DisputeTypeOrmRepository implements DisputePort {
     entity.respondBy = dispute.respondBy;
     entity.evidence = dispute.evidence;
     entity.autoDecision = dispute.autoDecision;
+    entity.delegationId = dispute.delegationId;
+    entity.initiatedBy = dispute.initiatedBy;
+    entity.merchantRiskTierAtDecision = dispute.merchantRiskTierAtDecision;
     await this.repo.save(entity);
   }
 
@@ -41,14 +44,14 @@ export class DisputeTypeOrmRepository implements DisputePort {
     return entity ? this.toDomain(entity) : null;
   }
 
-  // Forced onto master, not the ambient replica-routed connection (see
+  // Forced onto master instead of the ambient replica-routed connection (see
   // app.module.ts's `replication` config) — GET /admin/disputes is
   // routinely called right after a webhook just wrote a new dispute (an
   // operator opening the list after being notified, or — as
   // test/webhooks.e2e-spec.ts does — a test listing immediately after
   // processing charge.dispute.created), which can lose the race against
-  // the replica's ~1s streaming lag and simply not show the dispute yet.
-  // Confirmed live in CI — see docs/technical/ci-cd.md.
+  // the replica's ~1s streaming lag and simply not show the dispute yet —
+  // see docs/technical/ci-cd.md.
   async findMany(filter?: FindDisputesFilter): Promise<Dispute[]> {
     const queryRunner = this.dataSource.createQueryRunner('master');
     let entities: DisputeEntity[];
@@ -69,7 +72,7 @@ export class DisputeTypeOrmRepository implements DisputePort {
   }
 
   async countByMerchantSince(merchantId: string, status: DisputeStatus, since: Date): Promise<number> {
-    // .toISOString(), not a raw Date bound via MoreThanOrEqual() — `disputes.created_at`
+    // .toISOString(), never a raw Date bound via MoreThanOrEqual() — `disputes.created_at`
     // is a naive TIMESTAMP (no tz) column; node-postgres serializes a raw
     // Date parameter using this process's local timezone offset for such a
     // column, silently shifting the comparison. See
@@ -82,6 +85,21 @@ export class DisputeTypeOrmRepository implements DisputePort {
       .andWhere('d.status = :status', { status })
       .andWhere('d.createdAt >= :since', { since: since.toISOString() })
       .getCount();
+  }
+
+  async findReasonsByMerchantStatusSince(
+    merchantId: string,
+    status: DisputeStatus,
+    since: Date,
+  ): Promise<(string | null)[]> {
+    const rows = await this.repo
+      .createQueryBuilder('d')
+      .select('d.reason', 'reason')
+      .where('d.merchantId = :merchantId', { merchantId })
+      .andWhere('d.status = :status', { status })
+      .andWhere('d.createdAt >= :since', { since: since.toISOString() })
+      .getRawMany<{ reason: string | null }>();
+    return rows.map((r) => r.reason);
   }
 
   private toDomain(entity: DisputeEntity): Dispute {
@@ -99,6 +117,9 @@ export class DisputeTypeOrmRepository implements DisputePort {
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
       autoDecision: entity.autoDecision,
+      delegationId: entity.delegationId,
+      initiatedBy: entity.initiatedBy,
+      merchantRiskTierAtDecision: entity.merchantRiskTierAtDecision,
     });
   }
 }

@@ -3,8 +3,12 @@
 How to actually get `k8s/` running, as opposed to
 [`../k8s/`](../k8s/), which documents what each manifest is and why
 it's shaped the way it is. Start here if you're trying to answer "how
-do I deploy this," not "what does this manifest do."
+do I deploy this," rather than "what does this manifest do."
 
+- [`infrastructure-as-code.md`](./infrastructure-as-code.md) — how the
+  cluster/VPC/IAM/managed database `prerequisites.md` and `k8s/` both
+  assume already exists actually gets provisioned (Terraform, one
+  independent project per cloud) — current status and known gaps
 - [`prerequisites.md`](./prerequisites.md) — cluster infrastructure
   `k8s/` assumes already exists (a default `StorageClass`,
   `ingress-nginx` with specific Helm values, `cert-manager` with a real

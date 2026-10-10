@@ -8,7 +8,7 @@
  * row alone can't serve as that cursor, since a window with no eligible
  * merchant produces no Payout row at all.
  *
- * Deliberately a plain record, not a rich aggregate with invariants to
+ * Deliberately a plain record rather than a rich aggregate with invariants to
  * protect — same posture as `ReconciliationRun`.
  */
 export class PayoutSweepRun {
@@ -26,7 +26,13 @@ export class PayoutSweepRun {
     windowEnd: Date;
     connectedMerchantsPaid: number;
   }): PayoutSweepRun {
-    return new PayoutSweepRun(params.id, params.windowStart, params.windowEnd, params.connectedMerchantsPaid, new Date());
+    return new PayoutSweepRun(
+      params.id,
+      params.windowStart,
+      params.windowEnd,
+      params.connectedMerchantsPaid,
+      new Date(),
+    );
   }
 
   static reconstitute(params: {
@@ -36,6 +42,12 @@ export class PayoutSweepRun {
     connectedMerchantsPaid: number;
     ranAt: Date;
   }): PayoutSweepRun {
-    return new PayoutSweepRun(params.id, params.windowStart, params.windowEnd, params.connectedMerchantsPaid, params.ranAt);
+    return new PayoutSweepRun(
+      params.id,
+      params.windowStart,
+      params.windowEnd,
+      params.connectedMerchantsPaid,
+      params.ranAt,
+    );
   }
 }

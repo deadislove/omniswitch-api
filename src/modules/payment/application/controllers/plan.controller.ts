@@ -1,4 +1,16 @@
-import { Controller, Post, Get, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsBoolean, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
@@ -11,12 +23,18 @@ import { Money } from '../../domain/value-objects/money.vo';
 import { Plan } from '../../domain/aggregates/plan.aggregate';
 
 class ListPlansQuery {
-  @ApiPropertyOptional({ description: 'ADMIN/OPERATOR/READONLY only — a MERCHANT is always scoped to their own plans regardless of this param' })
+  @ApiPropertyOptional({
+    description:
+      'ADMIN/OPERATOR/READONLY only — a MERCHANT is always scoped to their own plans regardless of this param',
+  })
   @IsOptional()
   @IsString()
   merchantId?: string;
 
-  @ApiPropertyOptional({ default: true, description: 'Defaults to true (active plans only) — pass false to include deactivated ones' })
+  @ApiPropertyOptional({
+    default: true,
+    description: 'Defaults to true (active plans only) — pass false to include deactivated ones',
+  })
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
@@ -87,7 +105,9 @@ export class PlanController {
 
   @Get()
   @Roles(UserRole.MERCHANT, UserRole.ADMIN, UserRole.OPERATOR, UserRole.READONLY)
-  @ApiOperation({ summary: 'List plans — a MERCHANT always sees only their own; ADMIN/OPERATOR/READONLY may filter by merchantId' })
+  @ApiOperation({
+    summary: 'List plans — a MERCHANT always sees only their own; ADMIN/OPERATOR/READONLY may filter by merchantId',
+  })
   @ApiResponse({ status: 200, type: [PlanResponseDto] })
   async list(@Query() query: ListPlansQuery, @Req() req: any): Promise<PlanResponseDto[]> {
     const isMerchantRole = req.user?.roles?.includes(UserRole.MERCHANT);
@@ -99,7 +119,10 @@ export class PlanController {
   @Post(':id/deactivate')
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Deactivate a plan — stops it being usable for new subscriptions or plan changes; existing subscribers are unaffected' })
+  @ApiOperation({
+    summary:
+      'Deactivate a plan — stops it being usable for new subscriptions or plan changes; existing subscribers are unaffected',
+  })
   @ApiResponse({ status: 200, type: PlanResponseDto })
   @ApiResponse({ status: 403, description: 'This plan belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Plan not found' })

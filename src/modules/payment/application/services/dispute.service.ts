@@ -1,4 +1,5 @@
 import { Injectable, Logger, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { randomUUID as uuidv4 } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -12,23 +13,38 @@ import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { Money } from '../../domain/value-objects/money.vo';
 import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggregate';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
-import { decideAutoDisposition, autoContestEvidenceFor } from '../../domain/services/dispute-policy';
+import { RiskTieringService } from './risk-tiering.service';
+import {
+  decideAutoDisposition,
+  autoContestEvidenceFor,
+  DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS,
+  DEFAULT_LOW_RISK_THRESHOLD_MULTIPLIER,
+  DEFAULT_HIGH_RISK_THRESHOLD_MULTIPLIER,
+} from '../../domain/services/dispute-policy';
 
 /**
  * Dispute Service
  * Owns the Dispute record's lifecycle (see Dispute aggregate's docblock for
- * why this exists as its own thing, not just a PaymentAggregate status
+ * why this exists as its own thing, beyond just a PaymentAggregate status
  * flip) and the payment-status/ledger side effects of a dispute resolving.
  *
  * Dispute *creation* is driven by WebhookProcessingService (a PSP telling us
  * a chargeback happened); *resolution* also arrives by webhook (the PSP/card
- * network's decision, not something this system or the merchant decides).
+ * network's decision rather than something this system or the merchant decides).
  * The only thing genuinely operator-initiated here is submitEvidence —
  * everything else is this service reacting to what a PSP reported.
  */
 @Injectable()
 export class DisputeService {
   private readonly logger = new Logger(DisputeService.name);
+  // See dispute-policy.ts's own comment: not FX-normalized, illustrative,
+  // uncalibrated against real chargeback win-rate data — this makes it
+  // tunable per-deployment without a code change, as opposed to "calibrated" on its
+  // own. `ConfigService.get<number>()` doesn't actually cast (see
+  // health.controller.ts's own comment on the same gap) — wrap explicitly.
+  private readonly autoAcceptThresholdMajorUnits: number;
+  private readonly lowRiskThresholdMultiplier: number;
+  private readonly highRiskThresholdMultiplier: number;
 
   constructor(
     private readonly disputePort: DisputePort,
@@ -37,7 +53,19 @@ export class DisputeService {
     private readonly processorFactory: PaymentProcessorFactory,
     private readonly dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
-  ) {}
+    private readonly riskTieringService: RiskTieringService,
+    configService: ConfigService,
+  ) {
+    this.autoAcceptThresholdMajorUnits = Number(
+      configService.get('DISPUTE_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS', DEFAULT_AUTO_ACCEPT_THRESHOLD_MAJOR_UNITS),
+    );
+    this.lowRiskThresholdMultiplier = Number(
+      configService.get('DISPUTE_LOW_RISK_THRESHOLD_MULTIPLIER', DEFAULT_LOW_RISK_THRESHOLD_MULTIPLIER),
+    );
+    this.highRiskThresholdMultiplier = Number(
+      configService.get('DISPUTE_HIGH_RISK_THRESHOLD_MULTIPLIER', DEFAULT_HIGH_RISK_THRESHOLD_MULTIPLIER),
+    );
+  }
 
   async recordDispute(params: {
     paymentId: string;
@@ -55,6 +83,15 @@ export class DisputeService {
       return existing;
     }
 
+    // Re-evaluated fresh, right now, rather than reading a persisted tier
+    // — RiskTieringService doesn't persist the tier label itself (only
+    // the derived reserveBps/reserveHoldDays), so there's nothing to read.
+    // Accepts the extra synchronous DB round trip on this webhook path;
+    // `evaluateMerchant()` returns `null` for too-small a sample size or
+    // an unknown merchant, which decideAutoDisposition() below treats
+    // identically to 'MEDIUM' (base threshold, default reason set) — a
+    // risk-tier lookup failure should never block recording the dispute.
+    const tierResult = await this.riskTieringService.evaluateMerchant(params.merchantId, new Date());
     // See dispute-policy.ts's docblock for the (deliberately simple,
     // illustrative) thresholds. 'CONTEST' actually calls the PSP with a
     // template response right here, immediately, before this dispute is
@@ -62,8 +99,30 @@ export class DisputeService {
     // recommendations only — this system has no PSP "accept/close" action
     // to call, so 'ACCEPT' just tells the operator not to bother, it
     // doesn't take an action a human wouldn't otherwise need to.
-    const autoDecision = decideAutoDisposition(params.amount, params.reason);
-    const dispute = Dispute.create({ id: uuidv4(), ...params, autoDecision });
+    const autoDecision = decideAutoDisposition(
+      params.amount,
+      params.reason,
+      this.autoAcceptThresholdMajorUnits,
+      tierResult?.tier,
+      this.lowRiskThresholdMultiplier,
+      this.highRiskThresholdMultiplier,
+    );
+    // Forced onto master rather than the ambient replica-routed connection — a
+    // dispute can arrive (in tests, and in principle in production too)
+    // moments after the charge that created this exact payment record,
+    // which can lose the race against the replica's ~1s streaming lag and
+    // read back a payment that doesn't exist yet. Same class of bug as
+    // findMany()'s own docblock above and the several replica-lag fixes
+    // elsewhere in this codebase (see docs/technical/ci-cd.md).
+    const payment = await this.paymentRepository.findByIdOnMaster(params.paymentId);
+    const dispute = Dispute.create({
+      id: uuidv4(),
+      ...params,
+      autoDecision,
+      merchantRiskTierAtDecision: tierResult?.tier,
+      delegationId: payment?.delegationId,
+      initiatedBy: payment?.initiatedBy,
+    });
 
     if (autoDecision === 'CONTEST') {
       const evidence = autoContestEvidenceFor(params.reason);
@@ -85,17 +144,17 @@ export class DisputeService {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Auto-contest evidence submission threw for dispute ${dispute.id}: ${msg} — leaving for manual review`);
+        this.logger.error(
+          `Auto-contest evidence submission threw for dispute ${dispute.id}: ${msg} — leaving for manual review`,
+        );
       }
     }
 
     await this.disputePort.save(dispute);
 
-    // Structured event, not just a log line — a real notification
-    // integration (email/Slack/paging) has something to subscribe to now,
-    // even though nothing does yet. Same stand-in posture as
-    // ReconciliationService/LedgerOutboxRelayService's alerting elsewhere
-    // in this codebase.
+    // Structured event, beyond just a log line — DisputeNotificationListener
+    // subscribes this to a real per-merchant email/Slack/webhook delivery
+    // (see dispute-notification.listener.ts).
     this.eventEmitter.emit('dispute.created', {
       disputeId: dispute.id,
       paymentId: dispute.paymentId,
@@ -111,7 +170,7 @@ export class DisputeService {
 
     this.logger.warn(
       `New dispute ${dispute.id} for payment ${params.paymentId} (${params.amount.toString()}) — ` +
-      `auto-decision=${autoDecision}, status=${dispute.status} — needs a response by ${dispute.respondBy.toISOString()}`,
+        `auto-decision=${autoDecision}, status=${dispute.status} — needs a response by ${dispute.respondBy.toISOString()}`,
     );
     return dispute;
   }
@@ -128,7 +187,7 @@ export class DisputeService {
     if (dispute.status !== 'NEEDS_RESPONSE') {
       throw new ConflictException({
         statusCode: 409,
-        error: `Dispute is in status ${dispute.status}, not NEEDS_RESPONSE`,
+        error: `Dispute is in status ${dispute.status}, expected NEEDS_RESPONSE`,
         code: 'DISPUTE_NOT_RESPONDABLE',
       });
     }
@@ -173,13 +232,13 @@ export class DisputeService {
       return;
     }
 
-    // Forced onto master (findByIdOnMaster(), not findById()) — this gates
+    // Forced onto master via findByIdOnMaster() instead of findById() — this gates
     // whether the payment/ledger side of a dispute resolution actually
     // runs. A stale (pre-DISPUTED) read here doesn't just show wrong data,
-    // it makes this method silently skip the update below — confirmed
-    // live: a lost dispute's charge.dispute.closed webhook, processed
-    // shortly after the charge.dispute.created webhook that set DISPUTED,
-    // raced this exact read. See PaymentRepositoryPort.findByIdOnMaster().
+    // it makes this method silently skip the update below: a lost
+    // dispute's charge.dispute.closed webhook, processed shortly after the
+    // charge.dispute.created webhook that set DISPUTED, would race this
+    // exact read. See PaymentRepositoryPort.findByIdOnMaster().
     const payment = await this.paymentRepository.findByIdOnMaster(dispute.paymentId);
     if (!payment || payment.status !== PaymentStatus.DISPUTED) {
       this.logger.warn(
@@ -212,13 +271,7 @@ export class DisputeService {
         paymentId: payment.id,
         merchantId: payment.metadata.merchantId,
         refundAmount: dispute.amount,
-        settlementConversion: settlementConversion
-          ? {
-              convertedRefundAmount: dispute.amount.convertTo(settlementConversion.currency, settlementConversion.rate, settlementConversion.provider),
-              rate: settlementConversion.rate,
-              provider: settlementConversion.provider,
-            }
-          : undefined,
+        settlementConversion,
         splits,
         originalChargeAmount: splits ? payment.amount : undefined,
       });

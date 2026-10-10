@@ -31,6 +31,7 @@ const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
   findByMerchantId: jest.fn(),
   update: jest.fn().mockResolvedValue(undefined),
   existsById: jest.fn(),
+  existsForDelegationAndMerchant: jest.fn(),
   count: jest.fn(),
   findByProviderAndDateRange: jest.fn(),
   countByStatusAndProvider: jest.fn(),
@@ -39,6 +40,7 @@ const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
   countAmbiguousIncidentsSince: jest.fn(),
   findRecentAmbiguousFlags: jest.fn(),
   findAmbiguousEligibleForAutoResolution: jest.fn(),
+  countHardDeclinesSince: jest.fn(),
 });
 
 const createMockLedgerOutbox = (): jest.Mocked<LedgerOutboxPort> => ({
@@ -54,11 +56,12 @@ const createMockLedgerOutbox = (): jest.Mocked<LedgerOutboxPort> => ({
   findCreatedBetween: jest.fn(),
 });
 
-const createMockAcquirerRouting = (): jest.Mocked<AcquirerRoutingService> => ({
-  selectOptimalAdapter: jest.fn(),
-  executeWithSmartRouting: jest.fn(),
-  getPSPHealthSummary: jest.fn(),
-} as any);
+const createMockAcquirerRouting = (): jest.Mocked<AcquirerRoutingService> =>
+  ({
+    selectOptimalAdapter: jest.fn(),
+    executeWithSmartRouting: jest.fn(),
+    getPSPHealthSummary: jest.fn(),
+  }) as any;
 
 const createMockDataSource = () => ({
   transaction: jest.fn().mockImplementation(async (cb: any) => {
@@ -94,6 +97,10 @@ const createMockAmbiguousRiskMonitoring = () => ({
   evaluate: jest.fn().mockResolvedValue(undefined),
 });
 
+const createMockAmlReviewMonitoring = () => ({
+  evaluate: jest.fn().mockResolvedValue(undefined),
+});
+
 // ─── Test Fixtures ───────────────────────────────────────────────────────────
 
 const createSagaInput = (overrides: Partial<CheckoutSagaInput> = {}): CheckoutSagaInput => ({
@@ -107,13 +114,14 @@ const createSagaInput = (overrides: Partial<CheckoutSagaInput> = {}): CheckoutSa
   ...overrides,
 });
 
-const createEuropeanBinInfo = () => new BinInfo({
-  bin: '491761',
-  country: 'DE',
-  cardBrand: CardBrand.VISA,
-  cardType: CardType.CREDIT,
-  issuingBank: 'Deutsche Bank',
-});
+const createEuropeanBinInfo = () =>
+  new BinInfo({
+    bin: '491761',
+    country: 'DE',
+    cardBrand: CardBrand.VISA,
+    cardType: CardType.CREDIT,
+    issuingBank: 'Deutsche Bank',
+  });
 
 // ─── Test Suite ──────────────────────────────────────────────────────────────
 
@@ -128,6 +136,7 @@ describe('PaymentCheckoutSaga', () => {
   let fxRateProvider: any;
   let reserveService: any;
   let ambiguousRiskMonitoring: any;
+  let amlReviewMonitoring: any;
 
   beforeEach(() => {
     paymentRepository = createMockPaymentRepository();
@@ -139,6 +148,7 @@ describe('PaymentCheckoutSaga', () => {
     fxRateProvider = createMockFxRateProvider();
     reserveService = createMockReserveService();
     ambiguousRiskMonitoring = createMockAmbiguousRiskMonitoring();
+    amlReviewMonitoring = createMockAmlReviewMonitoring();
 
     saga = new PaymentCheckoutSaga(
       paymentRepository,
@@ -149,6 +159,7 @@ describe('PaymentCheckoutSaga', () => {
       new ChargeLedgerParamsResolverService(merchantService, fxRateProvider, paymentRepository),
       reserveService,
       ambiguousRiskMonitoring,
+      amlReviewMonitoring,
     );
   });
 
@@ -167,7 +178,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: ['ADYEN'],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE (score: 85)',
           score: 85,
         },
@@ -193,7 +204,7 @@ describe('PaymentCheckoutSaga', () => {
       expect(result.usedFallback).toBe(false);
       expect(paymentRepository.save).toHaveBeenCalledTimes(1); // Step 1: PENDING intent, no ledger entry yet
       expect(paymentRepository.update).toHaveBeenCalledTimes(1); // PROCESSING
-      // SUCCEEDED is written via dataSource.transaction (atomic with the ledger entry), not paymentRepository.update
+      // SUCCEEDED is written via dataSource.transaction (atomic with the ledger entry) rather than paymentRepository.update
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
     });
 
@@ -205,7 +216,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -220,11 +231,11 @@ describe('PaymentCheckoutSaga', () => {
       await saga.execute(input);
 
       // The ledger entry is written inside dataSource.transaction, which is
-      // only invoked once the charge is confirmed SUCCEEDED — not at Step 1
-      // (payment intent creation uses paymentRepository.save(), not a
-      // transaction). Verified live: the old behavior double-booked a
-      // PAYMENT_CHARGED entry for manual-capture payments (once at
-      // authorization, once at capture).
+      // only invoked once the charge is confirmed SUCCEEDED — never at Step 1
+      // (payment intent creation uses paymentRepository.save() instead of a
+      // transaction). The old behavior double-booked a PAYMENT_CHARGED
+      // entry for manual-capture payments (once at authorization, once at
+      // capture) — this regression test guards against that.
       expect(paymentRepository.save).toHaveBeenCalledTimes(1);
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
       const transactionCallback = dataSource.transaction.mock.calls[0][0];
@@ -234,9 +245,7 @@ describe('PaymentCheckoutSaga', () => {
     it('should NOT write any ledger entry when routing fails before a PSP is ever contacted', async () => {
       const input = createSagaInput();
 
-      acquirerRouting.selectOptimalAdapter.mockRejectedValue(
-        new Error('No available PSP providers for currency USD'),
-      );
+      acquirerRouting.selectOptimalAdapter.mockRejectedValue(new Error('No available PSP providers for currency USD'));
 
       await expect(saga.execute(input)).rejects.toThrow('No available PSP');
 
@@ -259,7 +268,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: ['ADYEN'],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -295,15 +304,13 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
       });
 
-      acquirerRouting.executeWithSmartRouting.mockRejectedValue(
-        new Error('Connection timeout: STRIPE'),
-      );
+      acquirerRouting.executeWithSmartRouting.mockRejectedValue(new Error('Connection timeout: STRIPE'));
 
       await expect(saga.execute(input)).rejects.toThrow();
 
@@ -319,9 +326,7 @@ describe('PaymentCheckoutSaga', () => {
     it('should mark payment FAILED when routing finds no available PSP', async () => {
       const input = createSagaInput();
 
-      acquirerRouting.selectOptimalAdapter.mockRejectedValue(
-        new Error('No available PSP providers for currency USD'),
-      );
+      acquirerRouting.selectOptimalAdapter.mockRejectedValue(new Error('No available PSP providers for currency USD'));
 
       await expect(saga.execute(input)).rejects.toThrow('No available PSP');
 
@@ -342,7 +347,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: ['ADYEN'],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -379,7 +384,7 @@ describe('PaymentCheckoutSaga', () => {
     // decide REQUIRES_ACTION, same as Stripe/Adyen actually behave. This
     // test would fail if that short-circuit ever came back: it asserts the
     // PSP was actually invoked and that the resulting pspTransactionId is
-    // the real one the (mocked) PSP returned, not a fabricated one.
+    // the real one the (mocked) PSP returned, as opposed to a fabricated one.
     it('should call the PSP and use its REQUIRES_ACTION response for a high-risk European card, not a pre-emptive redirect', async () => {
       const input = createSagaInput({
         amount: Money.of(15000, 'EUR'), // High value: crosses the >10,000 major-unit tier in calculateRiskScore()
@@ -422,7 +427,7 @@ describe('PaymentCheckoutSaga', () => {
     it('should still succeed a high-risk European card if the PSP does not actually challenge it', async () => {
       // A high risk score no longer guarantees REQUIRES_ACTION on its own —
       // only the PSP's real response does. This covers the other half of
-      // the regression: risk score must inform, not decide.
+      // the regression: risk score must inform, never decide.
       const input = createSagaInput({
         amount: Money.of(15000, 'EUR'),
         binInfo: createEuropeanBinInfo(),
@@ -510,7 +515,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },
@@ -552,7 +557,7 @@ describe('PaymentCheckoutSaga', () => {
     });
 
     it('should handle KWD (3-decimal currency) correctly', () => {
-      const kwd = Money.of(10.500, 'KWD');
+      const kwd = Money.of(10.5, 'KWD');
       expect(kwd.amountMinorUnits).toBe(10500n);
       expect(kwd.currency.minorUnits).toBe(3);
     });
@@ -588,7 +593,7 @@ describe('PaymentCheckoutSaga', () => {
         decision: {
           selectedProvider: 'STRIPE',
           fallbackProviders: [],
-          estimatedFee: Money.of(3.20, 'USD'),
+          estimatedFee: Money.of(3.2, 'USD'),
           routingReason: 'Selected STRIPE',
           score: 80,
         },

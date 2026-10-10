@@ -1,4 +1,9 @@
 import { Money } from '../value-objects/money.vo';
+import { PSPProvider } from './payment.aggregate';
+import { classifyDeclineCode, DeclineCategory } from '../services/decline-code-classifier';
+
+export { classifyDeclineCode };
+export type { DeclineCategory };
 
 export type SubscriptionStatus = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED';
 export type BillingInterval = 'day' | 'week' | 'month' | 'year';
@@ -11,11 +16,11 @@ export type BillingInterval = 'day' | 'week' | 'month' | 'year';
  *
  * Known simplification: 'month'/'year' use JS's native
  * setUTCMonth()/setUTCFullYear(), which overflows on a day that doesn't
- * exist in the target month (Jan 31 + 1 month becomes Mar 3, not Feb 28).
+ * exist in the target month (Jan 31 + 1 month becomes Mar 3 instead of Feb 28).
  * Real billing systems (Stripe included) clamp to the target month's last
  * day instead — not implemented here; a subscription anchored on the 29th
  * through 31st will drift forward across February in the current
- * implementation. Documented, not fixed.
+ * implementation. A documented gap, still unfixed.
  */
 export function addBillingInterval(date: Date, interval: BillingInterval, count: number): Date {
   const d = new Date(date.getTime());
@@ -41,39 +46,12 @@ export function addBillingInterval(date: Date, interval: BillingInterval, count:
  * charge — index 0 applies after the 1st failure (before the 2nd
  * attempt), index 1 after the 2nd (before the 3rd), index 2 after the
  * 3rd (before the 4th and final attempt). A fixed backoff schedule
- * spread over about a week, not the "retry on the very next daily sweep
- * tick" behavior this used to have — see recordFailedCharge()'s
- * docblock for why that was a real gap, not just a stylistic choice.
+ * spread over about a week — a deliberate departure from the "retry on
+ * the very next daily sweep tick" behavior this used to have — see
+ * recordFailedCharge()'s docblock for why that was a real gap, beyond
+ * just a stylistic choice.
  */
 const RETRY_SCHEDULE_DAYS = [1, 3, 7];
-
-/**
- * Decline codes a real card network/PSP can return where retrying is
- * actively harmful, not just unlikely to succeed — a stolen/lost/
- * fraudulent card retried again is a real signal to whoever's monitoring
- * for card testing, and an expired card will never succeed on a retry
- * with the *same* stored credential regardless of backoff. A
- * subscription that gets one of these skips the day 1/3/7 retry schedule
- * entirely and cancels immediately, however few attempts it's made so
- * far — unlike `insufficient_funds` (worth retrying — the card might
- * work again in a few days) or an unrecognized/absent code (a routing
- * failure that never reached a PSP, or a code this list doesn't know
- * about), which both still get the full retry schedule. See
- * `docs/business-domain/subscriptions.md`'s Dunning section for the
- * fuller reasoning and this list's known limitation (it's a fixed,
- * illustrative set, not derived from real chargeback/decline data —
- * same posture as `RiskTieringService`'s tiers or the dispute
- * auto-decision reason-code table).
- */
-const HARD_DECLINE_CODES = new Set([
-  'stolen_card', 'lost_card', 'fraudulent', 'pickup_card', 'restricted_card', 'expired_card',
-]);
-
-export type DeclineCategory = 'RETRYABLE' | 'HARD_DECLINE';
-
-export function classifyDeclineCode(errorCode: string | undefined): DeclineCategory {
-  return errorCode && HARD_DECLINE_CODES.has(errorCode) ? 'HARD_DECLINE' : 'RETRYABLE';
-}
 
 /**
  * Subscription Aggregate
@@ -87,7 +65,7 @@ export function classifyDeclineCode(errorCode: string | undefined): DeclineCateg
  * catalog entry — see plan.aggregate.ts), but always carries its own
  * amount/currency/interval directly rather than a live reference to one —
  * `planId` is provenance ("this was created from/last changed to Plan
- * X"), not something re-read from the Plan on every billing cycle. That
+ * X"), rather than something re-read from the Plan on every billing cycle. That
  * snapshotting is deliberate: a Plan's price is meant to be immutable
  * once created (see Plan's own docblock), so there's no "the plan changed
  * out from under an existing subscriber" case to handle — but even if a
@@ -118,9 +96,11 @@ export class Subscription {
     private _pendingCredit: Money | undefined,
     private _nextRetryAt: Date | undefined,
     private _lastDeclineCode: string | undefined,
+    /** Which PSP produced `_lastDeclineCode` — needed to re-classify it later (canceledByHardDecline) against the *right* PSP's vocabulary, since the same raw string means different things under Stripe's vs Adyen's tables. */
+    private _lastDeclinePspProvider: PSPProvider | undefined = undefined,
   ) {}
 
-  /** No charge yet — the first real charge happens when the trial period elapses (see runBillingSweep()'s TRIALING branch), not at creation. */
+  /** No charge yet — the first real charge happens when the trial period elapses (see runBillingSweep()'s TRIALING branch) — never at creation. */
   static startTrial(params: {
     id: string;
     merchantId: string;
@@ -137,11 +117,27 @@ export class Subscription {
     const now = new Date();
     const currentPeriodEnd = new Date(now.getTime() + params.trialDays * 24 * 60 * 60 * 1000);
     return new Subscription(
-      params.id, params.merchantId, params.customerId, params.amount,
-      params.interval, params.intervalCount, params.paymentMethodId,
-      'TRIALING', now, currentPeriodEnd, false, 0,
-      params.orderId, params.description, undefined, now, now, params.planId,
-      undefined, undefined, undefined,
+      params.id,
+      params.merchantId,
+      params.customerId,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      params.paymentMethodId,
+      'TRIALING',
+      now,
+      currentPeriodEnd,
+      false,
+      0,
+      params.orderId,
+      params.description,
+      undefined,
+      now,
+      now,
+      params.planId,
+      undefined,
+      undefined,
+      undefined,
     );
   }
 
@@ -161,11 +157,27 @@ export class Subscription {
     const now = new Date();
     const currentPeriodEnd = addBillingInterval(now, params.interval, params.intervalCount);
     return new Subscription(
-      params.id, params.merchantId, params.customerId, params.amount,
-      params.interval, params.intervalCount, params.paymentMethodId,
-      'ACTIVE', now, currentPeriodEnd, false, 0,
-      params.orderId, params.description, undefined, now, now, params.planId,
-      undefined, undefined, undefined,
+      params.id,
+      params.merchantId,
+      params.customerId,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      params.paymentMethodId,
+      'ACTIVE',
+      now,
+      currentPeriodEnd,
+      false,
+      0,
+      params.orderId,
+      params.description,
+      undefined,
+      now,
+      now,
+      params.planId,
+      undefined,
+      undefined,
+      undefined,
     );
   }
 
@@ -191,14 +203,31 @@ export class Subscription {
     pendingCredit?: Money;
     nextRetryAt?: Date;
     lastDeclineCode?: string;
+    lastDeclinePspProvider?: PSPProvider;
   }): Subscription {
     return new Subscription(
-      params.id, params.merchantId, params.customerId, params.amount,
-      params.interval, params.intervalCount, params.paymentMethodId,
-      params.status, params.currentPeriodStart, params.currentPeriodEnd,
-      params.cancelAtPeriodEnd, params.failedAttempts, params.orderId,
-      params.description, params.canceledAt, params.createdAt, params.updatedAt,
-      params.planId, params.pendingCredit, params.nextRetryAt, params.lastDeclineCode,
+      params.id,
+      params.merchantId,
+      params.customerId,
+      params.amount,
+      params.interval,
+      params.intervalCount,
+      params.paymentMethodId,
+      params.status,
+      params.currentPeriodStart,
+      params.currentPeriodEnd,
+      params.cancelAtPeriodEnd,
+      params.failedAttempts,
+      params.orderId,
+      params.description,
+      params.canceledAt,
+      params.createdAt,
+      params.updatedAt,
+      params.planId,
+      params.pendingCredit,
+      params.nextRetryAt,
+      params.lastDeclineCode,
+      params.lastDeclinePspProvider,
     );
   }
 
@@ -223,7 +252,7 @@ export class Subscription {
 
   /**
    * Anchors the new period to the *schedule* (old currentPeriodEnd + one
-   * interval), not to `now` — a charge that succeeds after a dunning
+   * interval), rather than to `now` — a charge that succeeds after a dunning
    * retry delay still bills the next period on the original cadence,
    * rather than letting retries drift the schedule forward.
    */
@@ -234,6 +263,7 @@ export class Subscription {
     this._failedAttempts = 0;
     this._nextRetryAt = undefined;
     this._lastDeclineCode = undefined;
+    this._lastDeclinePspProvider = undefined;
     this._updatedAt = now;
   }
 
@@ -261,10 +291,11 @@ export class Subscription {
    * failure that never reached a PSP) defaults to `RETRYABLE`, the same
    * behavior this method always had before decline codes existed.
    */
-  recordFailedCharge(now: Date, maxAttempts: number, errorCode?: string): void {
+  recordFailedCharge(now: Date, maxAttempts: number, errorCode?: string, pspProvider?: PSPProvider): void {
     this._failedAttempts += 1;
     this._lastDeclineCode = errorCode;
-    const isHardDecline = classifyDeclineCode(errorCode) === 'HARD_DECLINE';
+    this._lastDeclinePspProvider = pspProvider;
+    const isHardDecline = classifyDeclineCode(errorCode, pspProvider) === 'HARD_DECLINE';
     if (isHardDecline || this._failedAttempts >= maxAttempts) {
       this._status = 'CANCELED';
       this._canceledAt = now;
@@ -287,7 +318,10 @@ export class Subscription {
    * `lastDeclineCode` at all).
    */
   get canceledByHardDecline(): boolean {
-    return this._status === 'CANCELED' && classifyDeclineCode(this._lastDeclineCode) === 'HARD_DECLINE';
+    return (
+      this._status === 'CANCELED' &&
+      classifyDeclineCode(this._lastDeclineCode, this._lastDeclinePspProvider) === 'HARD_DECLINE'
+    );
   }
 
   /** The cancelAtPeriodEnd due-date arriving, with no charge attempted — see dueAction(). */
@@ -322,13 +356,15 @@ export class Subscription {
    * simplification.
    *
    * Anchored to the *current* period's actual boundaries
-   * (currentPeriodStart/End), not to the interval in the abstract — a
+   * (currentPeriodStart/End) rather than to the interval in the abstract — a
    * period shortened/lengthened by a previous dunning retry still
    * prorates correctly against how long this period actually is.
    */
   computeUpgradeProration(newAmount: Money, now: Date): Money | undefined {
     if (newAmount.currency.code !== this._amount.currency.code) {
-      throw new Error(`Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`);
+      throw new Error(
+        `Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`,
+      );
     }
 
     const totalMs = this._currentPeriodEnd.getTime() - this._currentPeriodStart.getTime();
@@ -357,7 +393,9 @@ export class Subscription {
    */
   computeDowngradeCredit(newAmount: Money, now: Date): Money | undefined {
     if (newAmount.currency.code !== this._amount.currency.code) {
-      throw new Error(`Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`);
+      throw new Error(
+        `Cannot change to a plan in a different currency (${this._amount.currency.code} -> ${newAmount.currency.code})`,
+      );
     }
 
     const totalMs = this._currentPeriodEnd.getTime() - this._currentPeriodStart.getTime();
@@ -389,7 +427,9 @@ export class Subscription {
    */
   get amountDueThisPeriod(): Money {
     if (!this._pendingCredit || this._pendingCredit.isZero()) return this._amount;
-    return this._amount.isGreaterThan(this._pendingCredit) ? this._amount.subtract(this._pendingCredit) : Money.zero(this._amount.currency.code);
+    return this._amount.isGreaterThan(this._pendingCredit)
+      ? this._amount.subtract(this._pendingCredit)
+      : Money.zero(this._amount.currency.code);
   }
 
   /**
@@ -422,7 +462,10 @@ export class Subscription {
    * service through its end) — same "billing sweep drives what actually
    * gets charged" posture as everywhere else in this aggregate.
    */
-  applyPlanChange(params: { planId: string; amount: Money; interval: BillingInterval; intervalCount: number }, now: Date): void {
+  applyPlanChange(
+    params: { planId: string; amount: Money; interval: BillingInterval; intervalCount: number },
+    now: Date,
+  ): void {
     this._planId = params.planId;
     this._amount = params.amount;
     this._interval = params.interval;
@@ -430,25 +473,70 @@ export class Subscription {
     this._updatedAt = now;
   }
 
-  get id(): string { return this._id; }
-  get merchantId(): string { return this._merchantId; }
-  get customerId(): string { return this._customerId; }
-  get amount(): Money { return this._amount; }
-  get interval(): BillingInterval { return this._interval; }
-  get intervalCount(): number { return this._intervalCount; }
-  get paymentMethodId(): string { return this._paymentMethodId; }
-  get status(): SubscriptionStatus { return this._status; }
-  get currentPeriodStart(): Date { return this._currentPeriodStart; }
-  get currentPeriodEnd(): Date { return this._currentPeriodEnd; }
-  get cancelAtPeriodEnd(): boolean { return this._cancelAtPeriodEnd; }
-  get failedAttempts(): number { return this._failedAttempts; }
-  get orderId(): string | undefined { return this._orderId; }
-  get description(): string | undefined { return this._description; }
-  get canceledAt(): Date | undefined { return this._canceledAt; }
-  get createdAt(): Date { return this._createdAt; }
-  get updatedAt(): Date { return this._updatedAt; }
-  get planId(): string | undefined { return this._planId; }
-  get pendingCredit(): Money | undefined { return this._pendingCredit; }
-  get nextRetryAt(): Date | undefined { return this._nextRetryAt; }
-  get lastDeclineCode(): string | undefined { return this._lastDeclineCode; }
+  get id(): string {
+    return this._id;
+  }
+  get merchantId(): string {
+    return this._merchantId;
+  }
+  get customerId(): string {
+    return this._customerId;
+  }
+  get amount(): Money {
+    return this._amount;
+  }
+  get interval(): BillingInterval {
+    return this._interval;
+  }
+  get intervalCount(): number {
+    return this._intervalCount;
+  }
+  get paymentMethodId(): string {
+    return this._paymentMethodId;
+  }
+  get status(): SubscriptionStatus {
+    return this._status;
+  }
+  get currentPeriodStart(): Date {
+    return this._currentPeriodStart;
+  }
+  get currentPeriodEnd(): Date {
+    return this._currentPeriodEnd;
+  }
+  get cancelAtPeriodEnd(): boolean {
+    return this._cancelAtPeriodEnd;
+  }
+  get failedAttempts(): number {
+    return this._failedAttempts;
+  }
+  get orderId(): string | undefined {
+    return this._orderId;
+  }
+  get description(): string | undefined {
+    return this._description;
+  }
+  get canceledAt(): Date | undefined {
+    return this._canceledAt;
+  }
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+  get planId(): string | undefined {
+    return this._planId;
+  }
+  get pendingCredit(): Money | undefined {
+    return this._pendingCredit;
+  }
+  get nextRetryAt(): Date | undefined {
+    return this._nextRetryAt;
+  }
+  get lastDeclineCode(): string | undefined {
+    return this._lastDeclineCode;
+  }
+  get lastDeclinePspProvider(): PSPProvider | undefined {
+    return this._lastDeclinePspProvider;
+  }
 }

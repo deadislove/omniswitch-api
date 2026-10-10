@@ -27,9 +27,7 @@
 # outright (`setuid` to a *different* user than the one you're already
 # running as always fails with `Operation not permitted`, `root`
 # excepted) and crash-loops the pod on both the userlist.txt write
-# (no writable volume at /etc/pgbouncer) and this setuid call. Verified
-# live against a real cluster with Postgres/Vault/Redis and the actual
-# application image all deployed.
+# (no writable volume at /etc/pgbouncer) and this setuid call.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

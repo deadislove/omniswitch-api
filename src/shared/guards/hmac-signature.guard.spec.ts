@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { HmacSignatureGuard } from './hmac-signature.guard';
 import { MerchantService } from '../../modules/merchant/merchant.service';
+import { DelegationPort } from '../../modules/payment/ports/outbound/delegation.port';
 import { VaultTransitService } from '../vault/vault-transit.service';
 
 function buildGuard(hmacSecret: string | undefined): HmacSignatureGuard {
@@ -12,6 +13,7 @@ function buildGuard(hmacSecret: string | undefined): HmacSignatureGuard {
     configService,
     new Reflector(),
     {} as MerchantService,
+    {} as DelegationPort,
     {} as VaultTransitService,
   );
 }

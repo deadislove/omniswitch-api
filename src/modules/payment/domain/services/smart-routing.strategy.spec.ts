@@ -1,4 +1,10 @@
-import { SmartRoutingStrategy, RoutingContext, PSPHealthStatus, CircuitBreakerState, PreferredProviderNotEntitledError } from './smart-routing.strategy';
+import {
+  SmartRoutingStrategy,
+  RoutingContext,
+  PSPHealthStatus,
+  CircuitBreakerState,
+  PreferredProviderNotEntitledError,
+} from './smart-routing.strategy';
 import { Money } from '../value-objects/money.vo';
 import { BinInfo, CardBrand, CardType } from '../value-objects/bin-info.vo';
 import { PSPProvider } from '../aggregates/payment.aggregate';
@@ -106,10 +112,7 @@ describe('SmartRoutingStrategy.selectProvider — preferredProvider override', (
   it('preferredProvider overrides the geographic nudge too — an EU card explicitly preferring STRIPE still gets STRIPE', async () => {
     const map = healthMap(health({ provider: 'STRIPE' }), health({ provider: 'ADYEN' }));
 
-    const decision = strategy.selectProvider(
-      { ...baseContext, binInfo: EU_BIN, preferredProvider: 'STRIPE' },
-      map,
-    );
+    const decision = strategy.selectProvider({ ...baseContext, binInfo: EU_BIN, preferredProvider: 'STRIPE' }, map);
 
     expect(decision.selectedProvider).toBe('STRIPE');
   });

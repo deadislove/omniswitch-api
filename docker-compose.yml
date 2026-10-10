@@ -97,9 +97,44 @@ services:
       # serves a /fx/rates endpoint (see docs/business-domain/ledger-and-settlement.md).
       FX_RATE_PROVIDER_URL: http://mock-psp:4000/fx
       # Same pattern again — mock-psp also serves /kyc/verify and
-      # /bank/transfers (see docs/business-domain/ledger-and-settlement.md).
+      # /bank/transfers (see docs/business-domain/marketplace-and-payouts.md).
       KYC_PROVIDER_URL: http://mock-psp:4000/kyc
+      # Same pattern again — mock-psp also serves /sanctions/screen (see
+      # MockSanctionsScreeningAdapter). Missing here until this fix meant
+      # MockSanctionsScreeningAdapter fell back to its own default
+      # (http://localhost:4000/sanctions) — "localhost" inside this
+      # container is the api container itself, not mock-psp, so every
+      # merchant-creation call (which screens on creation) failed with a
+      # generic "fetch failed" the moment nothing was listening on
+      # localhost:4000 here. Found running a real load test against a
+      # freshly rebuilt stack — see docs/technical/tests/load-testing.md.
+      SANCTIONS_PROVIDER_URL: http://mock-psp:4000/sanctions
       BANK_TRANSFER_PROVIDER_URL: http://mock-psp:4000/bank
+      # BANK_TRANSFER_PROVIDER stays at its default (mock, synchronous
+      # /bank/transfers) here — set to "ach" or "wire" to exercise the two
+      # real, async-settling rails against mock-psp's /ach/transfers or
+      # /wire/transfers instead (see AchBankTransferAdapter/
+      # WireBankTransferAdapter). Both need BANK_TRANSFER_WEBHOOK_SECRET
+      # below to verify mock-psp's signed settlement callback.
+      ACH_PROVIDER_URL: http://mock-psp:4000/ach
+      WIRE_PROVIDER_URL: http://mock-psp:4000/wire
+      # EmailDisputeNotificationAdapter's target — mock-psp also serves
+      # /v1/email/send, mimicking a real transactional-email provider's
+      # {to, subject, body} shape (see docs/business-domain/disputes.md).
+      EMAIL_PROVIDER_URL: http://mock-psp:4000/v1/email
+      BANK_TRANSFER_WEBHOOK_SECRET: bts_dev_compose_placeholder_do_not_use_in_prod
+      # KYC_PROVIDER stays at its default (mock, synchronous /kyc/verify)
+      # here — set to "persona" to exercise the real, async-reviewing
+      # provider against mock-psp's /persona/kyc-applications instead
+      # (see PersonaKycProviderAdapter). Needs KYC_WEBHOOK_SECRET below to
+      # verify mock-psp's signed review-decision callback.
+      PERSONA_PROVIDER_URL: http://mock-psp:4000/persona
+      KYC_WEBHOOK_SECRET: kyc_dev_compose_placeholder_do_not_use_in_prod
+      # Same story, for KYB_PROVIDER=persona against mock-psp's
+      # /persona/kyb-applications (see PersonaKybProviderAdapter) — a
+      # distinct secret from KYC_WEBHOOK_SECRET, matching KybWebhookGuard's
+      # own separate-secret posture.
+      KYB_WEBHOOK_SECRET: kyb_dev_compose_placeholder_do_not_use_in_prod
       # CORS
       CORS_ORIGINS: "http://localhost:3000,http://localhost:4200"
       # App
@@ -107,6 +142,11 @@ services:
       # Vault (envelope-encrypts merchants.hmac_secret_ciphertext)
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: omniswitch-dev-root-token
+      # OpenTelemetry — see src/tracing.ts. No depends_on against `jaeger`
+      # below: the OTLP exporter buffers/retries on its own, so api's own
+      # startup shouldn't block on tracing infra being ready first, same
+      # reasoning as prometheus/alertmanager not gating api's startup.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
       pgbouncer-master:
         condition: service_healthy
@@ -122,13 +162,12 @@ services:
       # 127.0.0.1, not localhost — same reasoning as the vault service's
       # healthcheck below: inside this container "localhost" resolves to
       # ::1 first, and main.ts's `app.listen(port, '0.0.0.0')` only binds
-      # IPv4, so a "localhost" healthcheck reports Connection refused even
-      # though the app answers fine on 127.0.0.1. Verified live: `docker
-      # exec omniswitch-api wget ... http://localhost:3000/...` fails with
+      # IPv4, so a "localhost" healthcheck would report Connection refused
+      # even though the app answers fine on 127.0.0.1 (`docker exec
+      # omniswitch-api wget ... http://localhost:3000/...` fails with
       # "can't connect to remote host: Connection refused" while the same
-      # command against 127.0.0.1 succeeds — a real, pre-existing bug, not
-      # host-load flakiness (confirmed via the healthcheck's own retry
-      # history: identical failure every 30s regardless of load).
+      # command against 127.0.0.1 succeeds) — not host-load flakiness,
+      # since the failure is identical on every retry regardless of load.
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health/live"]
       interval: 30s
       timeout: 10s
@@ -320,11 +359,11 @@ services:
       # postgres-master's is off 5432 (see docker-compose.yml's comment
       # there): a locally installed Redis commonly already owns
       # 127.0.0.1:6379, and connections silently land on the wrong instance
-      # instead of failing loudly — confirmed live on this machine (a native
-      # redis-server was answering with no password required, while this
-      # container enforces one; every e2e run's ioredis "default user does
-      # not require a password" warning was that collision, not benign
-      # noise). Internal container-to-container traffic still uses 6379.
+      # instead of failing loudly — a native redis-server answering with
+      # no password required, while this container enforces one, is
+      # exactly the collision an ioredis "default user does not require a
+      # password" warning during an e2e run would indicate, not benign
+      # noise. Internal container-to-container traffic still uses 6379.
       - "16379:6379"
     command: >
       redis-server
@@ -396,10 +435,101 @@ services:
     volumes:
       - ./scripts/mock-psp/server.js:/app/server.js:ro
     command: ["node", "server.js"]
+    environment:
+      # Lets /ach/transfers and /wire/transfers call back with a real,
+      # signed settlement confirmation — see scheduleBankTransferSettlement()
+      # in server.js and BankTransferWebhookGuard. `api` is this compose
+      # network's DNS name for the app service above; must match that
+      # service's own BANK_TRANSFER_WEBHOOK_SECRET exactly, or every
+      # callback gets rejected with INVALID_SIGNATURE.
+      APP_BASE_URL: http://api:3000/api/v1
+      BANK_TRANSFER_WEBHOOK_SECRET: bts_dev_compose_placeholder_do_not_use_in_prod
+      # Same story for /persona/kyc-applications's signed review-decision
+      # callback — see scheduleKycDecision() and KycWebhookGuard.
+      KYC_WEBHOOK_SECRET: kyc_dev_compose_placeholder_do_not_use_in_prod
+      # Same story for /persona/kyb-applications — see scheduleKybDecision()
+      # and KybWebhookGuard. Must match the `api` service's own
+      # KYB_WEBHOOK_SECRET above exactly, or every callback gets rejected.
+      KYB_WEBHOOK_SECRET: kyb_dev_compose_placeholder_do_not_use_in_prod
     networks:
       - omniswitch-net
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4000/ || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ─── Jaeger (trace collector + UI) ───────────────────────────────────────────
+  # Receives OTLP/HTTP spans from `api` (see src/tracing.ts and this file's
+  # OTEL_EXPORTER_OTLP_ENDPOINT above). UI at http://localhost:16686 — a
+  # charge should show up as one trace with saga.route/saga.charge spans
+  # (see payment-checkout.saga.ts) and, nested under saga.charge, the
+  # actual outbound fetch() call to Stripe/Adyen/mock-psp, auto-
+  # instrumented via undici (see tracing.ts's docblock for why that
+  # specific instrumentation matters here).
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: omniswitch-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686" # UI
+      - "4318:4318"   # OTLP/HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ─── Prometheus ──────────────────────────────────────────────────────────────
+  # Scrapes `api`'s /metrics (see src/observability/metrics.controller.ts)
+  # and evaluates monitoring/alert.rules.yml against it — real rule
+  # evaluation, not just a manifest reviewed by eye. Pair with a load like
+  # `POST /admin/reconciliation/run` against deliberately-mismatched data,
+  # or manually flipping a circuit breaker via Redis, to watch an alert
+  # actually go from pending to firing.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: omniswitch-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+    depends_on:
+      - api
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ─── Alertmanager ────────────────────────────────────────────────────────────
+  # Receives alerts Prometheus evaluates as firing. monitoring/alertmanager.yml's
+  # default receiver has no real paging/chat integration wired up (see that
+  # file's header) — this exists to prove the alert pipeline itself works
+  # end to end (visible at http://localhost:9093), not to page anyone yet.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: omniswitch-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - omniswitch-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

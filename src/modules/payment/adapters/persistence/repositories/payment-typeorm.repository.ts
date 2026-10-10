@@ -10,6 +10,7 @@ import { LedgerOutboxPort } from '../../../ports/outbound/ledger-outbox.port';
 import { LedgerOutboxEvent, LedgerEntry, OutboxStatus } from '../../../domain/aggregates/ledger-outbox.aggregate';
 import { LedgerOutboxEntity } from '../entities/ledger-outbox.entity';
 import { Money } from '../../../domain/value-objects/money.vo';
+import { classifyDeclineCode } from '../../../domain/services/decline-code-classifier';
 
 /**
  * TypeORM implementation of PaymentRepositoryPort
@@ -67,19 +68,14 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return PaymentMapper.toDomain(entity);
   }
 
-  async findByMerchantId(
-    merchantId: string,
-    filter?: FindPaymentsFilter,
-  ): Promise<PaymentAggregate[]> {
-    const qb = this.paymentRepo
-      .createQueryBuilder('p')
-      .where('p.merchantId = :merchantId', { merchantId });
+  async findByMerchantId(merchantId: string, filter?: FindPaymentsFilter): Promise<PaymentAggregate[]> {
+    const qb = this.paymentRepo.createQueryBuilder('p').where('p.merchantId = :merchantId', { merchantId });
 
     if (filter?.status) {
       qb.andWhere('p.status = :status', { status: filter.status });
     }
     if (filter?.fromDate) {
-      // .toISOString(), not the raw Date object — see findByProviderAndDateRange's
+      // .toISOString(), instead of the raw Date object — see findByProviderAndDateRange's
       // comment below for why: `created_at` is `timestamp without time zone`,
       // and node-postgres serializes a bound Date parameter using this
       // process's local timezone offset for an untyped/naive-timestamp
@@ -110,6 +106,19 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return count > 0;
   }
 
+  // See PaymentRepositoryPort.existsForDelegationAndMerchant()'s docblock
+  // for why this is forced onto master.
+  async existsForDelegationAndMerchant(delegationId: string, merchantId: string): Promise<boolean> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let count: number;
+    try {
+      count = await queryRunner.manager.count(PaymentEntity, { where: { delegationId, merchantId } });
+    } finally {
+      await queryRunner.release();
+    }
+    return count > 0;
+  }
+
   async count(filter?: FindPaymentsFilter): Promise<number> {
     // fromDate/toDate used to be silently dropped here — FindPaymentsFilter
     // advertises them, findByMerchantId() above already honors them, but
@@ -136,7 +145,9 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return qb.getCount();
   }
 
-  async countByStatusAndProvider(): Promise<{ status: PaymentStatus; pspProvider: PSPProvider | null; count: number }[]> {
+  async countByStatusAndProvider(): Promise<
+    { status: PaymentStatus; pspProvider: PSPProvider | null; count: number }[]
+  > {
     const rows = await this.paymentRepo
       .createQueryBuilder('p')
       .select('p.status', 'status')
@@ -165,17 +176,15 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
       .createQueryBuilder('p')
       .where('p.pspProvider = :pspProvider', { pspProvider })
       .andWhere('p.status IN (:...chargedStatuses)', { chargedStatuses })
-      // .toISOString(), not the raw Date object. Found the hard way while
-      // verifying reconciliation: `created_at` is `timestamp without time
-      // zone` (TypeORM's @CreateDateColumn() default), and node-postgres
-      // serializes a bound Date parameter for such a column using this
-      // *process's local timezone offset*, not UTC. On a UTC+8 dev machine,
-      // that silently shifted every comparison by 8 hours — a payment
-      // charged seconds earlier wasn't found by a "last hour" window query.
-      // An explicit ISO string (always UTC, unambiguous) sidesteps the
-      // serialization entirely. Confirmed via a minimal reproduction
-      // outside the app (same query, Date object vs. .toISOString()) before
-      // concluding this wasn't a logic bug in the WHERE clause itself.
+      // .toISOString(), never the raw Date object: `created_at` is `timestamp
+      // without time zone` (TypeORM's @CreateDateColumn() default), and
+      // node-postgres serializes a bound Date parameter for such a column
+      // using this *process's local timezone offset* rather than UTC. On a UTC+8
+      // machine, that silently shifts every comparison by 8 hours — a
+      // payment charged seconds earlier wouldn't be found by a "last hour"
+      // window query. An explicit ISO string (always UTC, unambiguous)
+      // sidesteps the serialization entirely — not a logic bug in the
+      // WHERE clause itself.
       .andWhere('p.createdAt >= :fromDate', { fromDate: fromDate.toISOString() })
       .andWhere('p.createdAt <= :toDate', { toDate: toDate.toISOString() })
       .getMany();
@@ -183,7 +192,7 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
   }
 
   async findAmbiguousOlderThan(olderThanMinutes: number): Promise<PaymentAggregate[]> {
-    // Forced onto master, not the ambient replica-routed connection — same
+    // Forced onto master rather than the ambient replica-routed connection — same
     // reasoning as findByIdOnMaster()'s docblock. Unlike
     // findByProviderAndDateRange() (a passive hourly reconciliation sweep,
     // fine with the replica's ~1s staleness), this backs an interactive
@@ -194,11 +203,11 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     const queryRunner = this.dataSource.createQueryRunner('master');
     let entities: PaymentEntity[];
     try {
-      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // .toISOString(), instead of the raw Date object — same naive-TIMESTAMP-column
       // gotcha findByProviderAndDateRange()/sumSucceededVolumeSince() below
       // document: node-postgres serializes a bound Date parameter for a
       // `timestamp without time zone` column using this process's local
-      // timezone offset, not UTC.
+      // timezone offset rather than UTC.
       entities = await queryRunner.manager
         .createQueryBuilder(PaymentEntity, 'p')
         .where('p.status = :status', { status: 'AMBIGUOUS' })
@@ -212,7 +221,7 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
   }
 
   async sumSucceededVolumeSince(merchantId: string, since: Date, currencyCode: string): Promise<bigint> {
-    // .toISOString(), not the raw Date object — same createdAt-column
+    // .toISOString(), never the raw Date object — same createdAt-column
     // timezone gotcha findByProviderAndDateRange() above documents.
     const { total } = await this.paymentRepo
       .createQueryBuilder('p')
@@ -229,10 +238,10 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     // Forced onto master — same reasoning as findAmbiguousOlderThan():
     // this runs synchronously right after the merchant's own payment just
     // transitioned to AMBIGUOUS in the same request, and needs to see
-    // that write immediately, not after the replica's ~1s streaming lag.
+    // that write immediately, without waiting out the replica's ~1s streaming lag.
     const queryRunner = this.dataSource.createQueryRunner('master');
     try {
-      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // .toISOString(), rather than the raw Date object — same naive-TIMESTAMP-column
       // gotcha findByProviderAndDateRange() documents.
       return await queryRunner.manager
         .createQueryBuilder(PaymentEntity, 'p')
@@ -263,7 +272,31 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     return entities.map((e) => e.status === 'AMBIGUOUS' || e.ambiguousResolvedAt != null);
   }
 
-  async findAmbiguousEligibleForAutoResolution(maxAttempts: number, minAgeMinutes: number): Promise<PaymentAggregate[]> {
+  async countHardDeclinesSince(merchantId: string, since: Date): Promise<number> {
+    // Forced onto master — same reasoning as countAmbiguousIncidentsSince():
+    // this runs synchronously right after the merchant's own payment just
+    // transitioned to FAILED in the same request, and needs to see that
+    // write immediately, without waiting out the replica's ~1s streaming lag.
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let rows: PaymentEntity[];
+    try {
+      rows = await queryRunner.manager
+        .createQueryBuilder(PaymentEntity, 'p')
+        .select(['p.failureCode', 'p.pspProvider'])
+        .where('p.merchantId = :merchantId', { merchantId })
+        .andWhere('p.status = :status', { status: 'FAILED' })
+        .andWhere('p.createdAt >= :since', { since: since.toISOString() })
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+    return rows.filter((r) => classifyDeclineCode(r.failureCode, r.pspProvider) === 'HARD_DECLINE').length;
+  }
+
+  async findAmbiguousEligibleForAutoResolution(
+    maxAttempts: number,
+    minAgeMinutes: number,
+  ): Promise<PaymentAggregate[]> {
     // Forced onto master — same reasoning as findAmbiguousOlderThan(): this
     // backs an automated sweep that can also be triggered on demand right
     // after another write in the same request (the admin run-now endpoint),
@@ -273,7 +306,7 @@ export class PaymentTypeOrmRepository implements PaymentRepositoryPort {
     const queryRunner = this.dataSource.createQueryRunner('master');
     let entities: PaymentEntity[];
     try {
-      // .toISOString(), not the raw Date object — same naive-TIMESTAMP-column
+      // .toISOString(), in place of the raw Date object — same naive-TIMESTAMP-column
       // gotcha findAmbiguousOlderThan() above documents.
       entities = await queryRunner.manager
         .createQueryBuilder(PaymentEntity, 'p')
@@ -333,7 +366,7 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
   }
 
   async findPending(limit = 100): Promise<LedgerOutboxEvent[]> {
-    // Forced onto master, not the ambient replica-routed connection (see
+    // Forced onto master instead of the ambient replica-routed connection (see
     // app.module.ts's `replication` config) — this is a low-volume
     // internal poll (every 10s, batch of `limit`) whose whole job is to
     // notice new PENDING events as fast as possible. It has nothing to
@@ -420,16 +453,34 @@ export class LedgerOutboxTypeOrmRepository implements LedgerOutboxPort {
     return this.outboxRepo.count({ where: { status } });
   }
 
+  // Forced onto master, same reasoning as MerchantService's
+  // findMerchantOnMaster()/list() and PayoutTypeOrmRepository's
+  // findLatestSweepRun() — this is PayoutService.runSweepLocked()'s only
+  // source of which ledger events fall in its window. Because
+  // runSweepLocked() advances windowStart to this call's own windowEnd
+  // regardless of what it actually found, a replica-lagged read here
+  // isn't just a stale read — it's a *permanent* miss: an event created
+  // just before windowEnd but not yet replicated gets silently excluded,
+  // and no later sweep will ever re-check that already-passed window. A
+  // real e2e failure (`Received length: 0`, far short of 2/3) surfaced this
+  // once the sweep's own distributed lock was fixed to actually serialize
+  // across concurrent callers (see test/utils/shared-redis-db.ts).
   async findCreatedBetween(since: Date, until: Date): Promise<LedgerOutboxEvent[]> {
-    // .toISOString() — same naive-TIMESTAMP-column reason as findStale()
-    // above: a raw JS Date gets serialized using the host process's local
-    // timezone by node-postgres, silently shifting the comparison.
-    const entities = await this.outboxRepo
-      .createQueryBuilder('o')
-      .where('o.createdAt >= :since', { since: since.toISOString() })
-      .andWhere('o.createdAt < :until', { until: until.toISOString() })
-      .orderBy('o.createdAt', 'ASC')
-      .getMany();
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entities: LedgerOutboxEntity[];
+    try {
+      // .toISOString() — same naive-TIMESTAMP-column reason as findStale()
+      // above: a raw JS Date gets serialized using the host process's local
+      // timezone by node-postgres, silently shifting the comparison.
+      entities = await queryRunner.manager
+        .createQueryBuilder(LedgerOutboxEntity, 'o')
+        .where('o.createdAt >= :since', { since: since.toISOString() })
+        .andWhere('o.createdAt < :until', { until: until.toISOString() })
+        .orderBy('o.createdAt', 'ASC')
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
     return entities.map(this.toDomain);
   }
 

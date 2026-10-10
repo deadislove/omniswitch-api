@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { resetCircuitBreakerState } from './utils/circuit-breaker';
 import { PaymentEntity } from '../src/modules/payment/adapters/persistence/entities/payment.entity';
@@ -24,12 +24,14 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  * (primary attempt + one same-provider retry, both timing out) — two
  * STRIPE failures per call, enough across this file's ~6 calls to reach
  * RedisCircuitBreakerService's FAILURE_THRESHOLD (5) and trip STRIPE's
- * circuit OPEN as a side effect, the same leak already found and fixed in
+ * circuit OPEN as a side effect — same category of leak
  * `ambiguous-payment-outcome.e2e-spec.ts`/`psp-bulkhead-isolation.e2e-spec.ts`
- * — reset before and after (and, since this file alone makes enough such
+ * also reset for. Reset before and after (and, since this file alone makes enough such
  * calls to cross FAILURE_THRESHOLD within itself, before *every* test
- * too) so it doesn't happen here or leak into whichever e2e file runs
- * next (maxWorkers: 1, no Redis flush between files).
+ * too) so it doesn't happen here or leak into whichever e2e file the same
+ * Jest worker runs next (each worker gets its own Redis DB — see
+ * test/setup-env.ts — but files within one worker still run sequentially
+ * with no flush between them).
  */
 describe('Ambiguous payment admin resolution (e2e)', () => {
   let app: INestApplication;
@@ -44,8 +46,7 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     dataSource = app.get(DataSource);
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
     await resetCircuitBreakerState(app, ['STRIPE', 'ADYEN']);
   });
 
@@ -90,7 +91,10 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     const queryRunner = dataSource.createQueryRunner('master');
     let events: LedgerOutboxEntity[];
     try {
-      events = await queryRunner.manager.find(LedgerOutboxEntity, { where: { paymentId }, order: { createdAt: 'ASC' } });
+      events = await queryRunner.manager.find(LedgerOutboxEntity, {
+        where: { paymentId },
+        order: { createdAt: 'ASC' },
+      });
     } finally {
       await queryRunner.release();
     }
@@ -173,7 +177,11 @@ describe('Ambiguous payment admin resolution (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/api/v1/admin/payments/${paymentId}/resolve-ambiguous`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ outcome: 'SUCCEEDED', pspTransactionId: 'pi_manually_confirmed_123', reason: 'Confirmed in Stripe dashboard' })
+      .send({
+        outcome: 'SUCCEEDED',
+        pspTransactionId: 'pi_manually_confirmed_123',
+        reason: 'Confirmed in Stripe dashboard',
+      })
       .expect(200);
 
     expect(res.body.status).toBe('SUCCEEDED');

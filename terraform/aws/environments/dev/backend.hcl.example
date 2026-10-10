@@ -1,0 +1,9 @@
+# Copy to backend.hcl (gitignored) and fill in real values, then:
+#   terraform init -backend-config=backend.hcl
+#
+# bucket and dynamodb_table come from `terraform output` in ../../bootstrap,
+# after that root module has been applied once for this AWS account.
+
+bucket         = "omniswitch-api-terraform-state-<account-id>"
+region         = "us-east-1"
+dynamodb_table = "omniswitch-api-terraform-locks"

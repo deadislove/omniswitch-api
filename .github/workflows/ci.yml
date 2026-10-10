@@ -34,21 +34,16 @@ jobs:
 
       - run: npm ci
 
-      # Non-blocking, deliberately: this codebase was never actually run
-      # through `eslint --fix` and committed in that state (no
-      # .prettierrc means prettier's default double-quote style fights
-      # the codebase's existing single-quote convention), and
-      # tsconfig.json's `"exclude": ["test"]` means parserOptions.project
-      # can't type-check test/**/*.ts at all — so a strict, no-fix lint
-      # run currently reports ~8.7k pre-existing formatting diffs plus a
-      # parsing error on every test file. Fixing that is a real, separate
-      # cleanup task (repo-wide reformat, plus a tsconfig/eslint.config.cjs
-      # adjustment) — not something to do silently as a side effect of
-      # adding CI. Until then, this step reports lint findings without
-      # blocking merges on them.
-      - name: Lint (report-only)
+      # Blocking: `.prettierrc` (single-quote, matching this codebase's
+      # actual convention) and `tsconfig.eslint.json` (extends the build
+      # tsconfig with test/**/*.ts included, so type-aware rules can
+      # parse test files without touching tsconfig.json's own `exclude`,
+      # which is load-bearing for `nest build` — see eslint.config.cjs's
+      # own comment) closed the two gaps that used to make a strict,
+      # no-fix lint run fail on ~10k pre-existing findings. A clean
+      # `eslint --fix` pass now reports zero problems.
+      - name: Lint
         run: npx eslint "{src,apps,libs,test}/**/*.ts"
-        continue-on-error: true
 
       - run: npx tsc --noEmit
 
@@ -57,8 +52,12 @@ jobs:
       - run: npm test
 
   e2e:
-    name: E2E tests (full Docker stack)
+    name: E2E tests (full Docker stack, shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -75,13 +74,32 @@ jobs:
       # on a GitHub-hosted runner instead of a laptop. `api` itself is
       # deliberately excluded: the e2e suite talks to a Nest app started
       # in-process by Jest/Supertest, not to the containerized api service.
+      # Each matrix shard gets its own isolated runner/containers — no
+      # state shared between shard 1 and shard 2.
       - name: Start infrastructure (Postgres, Redis, Vault, mock-psp)
         run: |
           docker compose up -d --wait \
             postgres-master postgres-replica redis vault mock-psp
 
+      # `--shard=N/3` (Jest's own built-in sharding, not a hand-maintained
+      # file list) splits the ~48 e2e spec files into three roughly equal
+      # groups — each matrix job's single Jest worker process now
+      # sequentially bootstraps/tears down ~16 Nest apps instead of ~48,
+      # cutting both the cumulative heap this GitHub-hosted runner's
+      # tighter 2-core/7GB envelope has to carry before
+      # HEALTH_CHECK_HEAP_THRESHOLD_BYTES (test/setup-env.ts) gets hit,
+      # and the per-job wall-clock time — see
+      # test/utils/test-app.ts's createTestApp() for the actual leak fix
+      # (stopping orphaned @Cron() jobs on app.close()) this sharding
+      # is headroom for, not a replacement for. Widened from 2 to 3
+      # shards after host-CPU-contention-driven flakiness (see
+      # docs/technical/ci-cd.md's "Parallelizing e2e workers" section)
+      # kept surfacing as different random spec files failing each run,
+      # never the same one twice — a third shard is a mitigation for
+      # less CPU pressure per job, not a fix for a specific failing
+      # test, since there wasn't one.
       - name: Run e2e tests
-        run: npm run test:e2e
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/3
 
       - name: Show service logs on failure
         if: failure()

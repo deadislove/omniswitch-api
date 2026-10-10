@@ -19,7 +19,7 @@ import { MerchantService } from '../../../merchant/merchant.service';
  *
  * 1. Volume: more than AMBIGUOUS_RISK_DAILY_THRESHOLD "ever AMBIGUOUS"
  *    incidents (see PaymentRepositoryPort.countAmbiguousIncidentsSince()'s
- *    docblock for why "ever", not "currently") in a rolling 24h window.
+ *    docblock for why "ever" is used instead of "currently") in a rolling 24h window.
  * 2. Streak: the merchant's last AMBIGUOUS_RISK_CONSECUTIVE_THRESHOLD
  *    payments were *all* ambiguous — a stronger, more specific signal
  *    than raw volume (a high-volume merchant could rack up several
@@ -36,7 +36,7 @@ import { MerchantService } from '../../../merchant/merchant.service';
 @Injectable()
 export class AmbiguousRiskMonitoringService {
   private readonly logger = new Logger(AmbiguousRiskMonitoringService.name);
-  // Read in the constructor, not as module-level constants — a
+  // Read in the constructor rather than as module-level constants — a
   // module-level `Number(process.env.X) || default` is evaluated once at
   // first import, before a test's beforeAll ever gets to set
   // process.env, so a test wanting a low threshold to trigger quickly
@@ -75,7 +75,10 @@ export class AmbiguousRiskMonitoringService {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const dailyCount = await this.paymentRepository.countAmbiguousIncidentsSince(merchantId, since);
     if (dailyCount > this.dailyThreshold) {
-      await this.flag(merchantId, `${dailyCount} AMBIGUOUS incidents in the trailing 24 hours (threshold: ${this.dailyThreshold})`);
+      await this.flag(
+        merchantId,
+        `${dailyCount} AMBIGUOUS incidents in the trailing 24 hours (threshold: ${this.dailyThreshold})`,
+      );
       return;
     }
 
@@ -105,7 +108,11 @@ export class AmbiguousRiskMonitoringService {
     const cutoff = new Date(now.getTime() - this.autoClearDays * 24 * 60 * 60 * 1000);
     const merchants = await this.merchantService.list();
     const candidates = merchants.filter(
-      (m) => m.ambiguousRiskFlagged && m.ambiguousRiskAutoManaged && m.ambiguousRiskFlaggedAt && m.ambiguousRiskFlaggedAt <= cutoff,
+      (m) =>
+        m.ambiguousRiskFlagged &&
+        m.ambiguousRiskAutoManaged &&
+        m.ambiguousRiskFlaggedAt &&
+        m.ambiguousRiskFlaggedAt <= cutoff,
     );
 
     let cleared = 0;
@@ -113,7 +120,9 @@ export class AmbiguousRiskMonitoringService {
       try {
         await this.merchantService.applyAutoAmbiguousRiskFlag(merchant.merchantId, false, '');
         cleared++;
-        this.logger.log(`Merchant ${merchant.merchantId} auto-cleared from ambiguous-risk watch (no incident in ${this.autoClearDays} days)`);
+        this.logger.log(
+          `Merchant ${merchant.merchantId} auto-cleared from ambiguous-risk watch (no incident in ${this.autoClearDays} days)`,
+        );
       } catch (err: unknown) {
         // One merchant's failure shouldn't abort the whole sweep — same
         // per-item try/catch posture RiskTieringService/PayoutService use

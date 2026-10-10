@@ -1,12 +1,15 @@
 # Cloud Providers
 
-The only cloud-provider-specific code in this project is the
-pluggable `BackupStorage` abstraction the deletion job writes its
-pre-delete export to (`src/jobs/backup-storage/`) — this project
-doesn't provision cloud infrastructure itself (no Terraform/Pulumi in
-this repo) or integrate with a cloud provider anywhere else. This
-folder documents that one integration point, one file per supported
-provider:
+The only cloud-provider-specific *application* code in this project is
+the pluggable `BackupStorage` abstraction the deletion job writes its
+pre-delete export to (`src/jobs/backup-storage/`) — this folder
+documents that one integration point, one file per supported provider.
+Provisioning the cloud infrastructure those adapters (and everything
+else in `k8s/`) run on top of is a separate concern — see
+[`../deployment/infrastructure-as-code.md`](../deployment/infrastructure-as-code.md)
+for the current status of that (Terraform, one project per cloud) and
+[`../../../terraform/README.md`](../../../terraform/README.md) for the
+full module-by-module detail.
 
 - [`aws-s3.md`](./aws-s3.md) — `S3BackupStorage`, `DELETION_BACKUP_STORAGE=s3`
 - [`gcp-gcs.md`](./gcp-gcs.md) — `GcsBackupStorage`, `DELETION_BACKUP_STORAGE=gcs`
@@ -52,7 +55,7 @@ at factory-call time — a missing bucket name or connection string
 throws immediately, before the job attempts any backup, rather than
 surfacing later as an unexplained upload failure.
 
-## Why `local` is the default, not one of these three
+## Why `local` is the default instead of one of these three
 
 This project's GitHub Actions CI never has real cloud credentials
 available for any provider — provisioning them for a public reference
@@ -64,7 +67,7 @@ deployment's own deliberate, opt-in decision at deploy time — see
 [`../../compliance/data-retention.md#where-the-backup-goes`](../../compliance/data-retention.md#where-the-backup-goes)
 for the fuller reasoning, including why a self-hosted stand-in (e.g.
 MinIO in CI) was considered and not pursued — that's a new
-architectural commitment for this project, not a small config change.
+architectural commitment for this project rather than a small config change.
 
 ## Credentials: always the platform's own default mechanism, never a bespoke one
 
@@ -95,9 +98,12 @@ these for the first time should do its own live verification run
 before depending on it in production — see each provider's own doc for
 a suggested verification checklist.
 
-**Bucket/container-level policy is out of scope for this codebase.**
+**Bucket/container-level policy is out of scope for these adapters.**
 Versioning, encryption-at-rest, access logging, retention/lifecycle
 rules, chain-of-custody for a legal request — these adapters write to
 whatever bucket/container is configured; they don't provision or
-configure that bucket's own policies. That's infrastructure-as-code
-territory, and a real deployment's own decision.
+configure that bucket's own policies themselves. That's the
+`cloud-saas` module's job in each cloud's `terraform/` tree (see the
+link at the top of this doc) — application code and infrastructure
+provisioning stay in separate layers even where they both touch the
+same bucket.

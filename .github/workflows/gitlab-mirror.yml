@@ -1,0 +1,55 @@
+name: GitLab Backup Mirror
+
+# Disaster-recovery backup only. --mirror pushes every branch/tag and
+# propagates deletions, so GitLab becomes a byte-for-byte copy of GitHub's
+# refs; it must never be treated as independently editable — anything
+# pushed there by hand is overwritten on the next sync.
+#
+# The GitLab project's CI/CD feature must stay disabled in its own
+# project settings: GitLab only triggers pipelines off .gitlab-ci.yml,
+# never .github/workflows/*.yml, but that project setting is the
+# second, independent guarantee that nothing ever executes there.
+#
+# GITLAB_MIRROR_TOKEN/GITLAB_MIRROR_URL resolve only via the
+# gitlab-backup environment's deployment-branch policy (currently:
+# main only) — a push from any other branch fails to resolve them.
+on:
+  push:
+    branches: [main]
+    tags: ['**']
+  schedule:
+    # Catches branch deletions that never push to main — e.g. Dependabot
+    # closing a superseded PR and deleting its branch fires no push event,
+    # so a deletion-only change can otherwise sit unmirrored indefinitely.
+    - cron: '0 6 * * 1' # weekly, Monday 06:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitlab-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: gitlab-backup
+    steps:
+      # Not actions/checkout: that only fetches the single branch that
+      # triggered this run. git push --mirror makes GitLab match the
+      # local repo exactly, including deletions — a single-branch
+      # checkout would wipe every other branch off the GitLab backup.
+      # Cloning --mirror here pulls every ref straight from GitHub,
+      # independent of which branch triggered this run.
+      - name: Clone full mirror from GitHub
+        run: git clone --mirror "https://github.com/${{ github.repository }}.git" repo-mirror
+
+      - name: Push mirror to GitLab
+        working-directory: repo-mirror
+        env:
+          GITLAB_MIRROR_URL: ${{ vars.GITLAB_MIRROR_URL }}
+          GITLAB_MIRROR_TOKEN: ${{ secrets.GITLAB_MIRROR_TOKEN }}
+        run: |
+          git remote add gitlab-mirror "https://oauth2:${GITLAB_MIRROR_TOKEN}@${GITLAB_MIRROR_URL#https://}"
+          git push --mirror gitlab-mirror

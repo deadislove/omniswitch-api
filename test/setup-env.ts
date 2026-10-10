@@ -31,24 +31,55 @@ setDefault('DB_SSL', 'false');
 setDefault('REDIS_HOST', 'localhost');
 setDefault('REDIS_PORT', '16379');
 setDefault('REDIS_PASSWORD', 'redis_secret');
-setDefault('REDIS_DB', '1'); // separate logical DB from local dev's REDIS_DB=0
+// Each Jest worker gets its own logical Redis DB, not a shared one —
+// `JEST_WORKER_ID` (always set by Jest, 1-indexed) selects it, so
+// idempotency locks/circuit-breaker windows/rate-limit buckets/JWT
+// revocation sets can't land in the same keyspace *concurrently* across
+// workers. `test/jest-e2e.json` currently runs with `maxWorkers: 1`, so
+// this isolation is inert today (only worker 1 ever exists) — it's
+// verified-correct groundwork for `docs/technical/ci-cd.md`'s
+// "Parallelizing e2e workers" section, which documents a real,
+// reproducible flakiness class that showed up when `maxWorkers` was
+// actually raised and is NOT explained by this Redis isolation being
+// wrong (confirmed via targeted diagnostics — see that section). Left in
+// place, harmless at maxWorkers:1, ready for whoever picks the
+// parallelization work back up. Redis's default `databases` count is 16;
+// `+1` keeps DB 0 (local dev) and DB 1 (historically the sole e2e DB, now
+// worker 1's) free of collision with worker indices, and a worker count
+// above 14 would wrap into local dev's/an earlier worker's DB.
+setDefault('REDIS_DB', String(1 + Number(process.env.JEST_WORKER_ID || 1)));
+// Configurable (production, app.module.ts, still defaults to 20 — this
+// override is test-only) so N concurrent NestJS app instances can be
+// bounded against one `max_connections=200` Postgres without a code
+// change. 15 at `maxWorkers: 4` caps worst case at 4 * 2 pools * 15 =
+// 120 connections, well under 200 — a real fix for real queueing delays
+// found under contention (see ci-cd.md's "Parallelizing e2e workers":
+// risk-tiering.e2e-spec.ts's 10-sequential-real-charge test was timing
+// out even at a 60s budget, consistent with this app instance's own
+// small pool queueing internally under concurrent load, not just
+// external cross-worker contention).
+setDefault('DB_POOL_MAX', '15');
 
 // Test-only secrets — never used outside this process.
 setDefault('JWT_SECRET', 'e2e-test-jwt-secret-do-not-use-outside-tests-32chars');
 setDefault('HMAC_SECRET', 'e2e-test-hmac-secret-do-not-use-outside-tests-32c');
 
 // The production default (100/min) is IP-scoped, not per-merchant — every
-// e2e spec file's charge() calls in a single `npm run test:e2e` run share
-// one IP-keyed bucket (the whole suite finishes in well under 60s), so the
-// full suite's cumulative charge volume competes against one limit, not
-// one per file. Adding the subscriptions/reserve/risk-tiering specs (each
-// legitimately firing 10+ charges to reach a real minimum-sample-size
-// threshold) pushed the suite past 100 and started 429-ing unrelated
-// *later* files — confirmed live: test/webhooks.e2e-spec.ts's dispute
-// tests, which don't touch rate limiting at all, started failing with 429
-// once those specs were added. Same reasoning as AUTH_LOGIN_RATE_LIMIT
-// below: rate-limiting behavior itself is covered by a dedicated, isolated
-// spec, so raising the ambient limit here doesn't weaken that coverage.
+// e2e spec file's charge() calls share one IP-keyed bucket *within a Jest
+// worker* (the REDIS_DB isolation above scopes it per worker, not per
+// file — see that comment), so a worker's own cumulative charge volume
+// across however many spec files it happens to run competes against one
+// limit, not one per file. Files like subscriptions/reserve/risk-tiering
+// (each legitimately firing 10+ charges to reach a real
+// minimum-sample-size threshold) can still push a worker's bucket past
+// 100 and 429 whatever unrelated file runs next in that same worker.
+// Raised well above what any single worker's realistic file assignment
+// would need — this was originally calibrated against the *entire* suite
+// sharing one bucket (a stricter constraint than today's per-worker
+// one), so it has headroom to spare now, not less. Same reasoning as
+// AUTH_LOGIN_RATE_LIMIT below: rate-limiting behavior itself is covered
+// by a dedicated, isolated spec, so raising the ambient limit here
+// doesn't weaken that coverage.
 setDefault('RATE_LIMIT_MAX', '2000');
 // Generous headroom for the *other* spec files, which legitimately fire
 // several requests per second against one seeded merchant. The dedicated
@@ -62,14 +93,13 @@ setDefault('RATE_LIMIT_BURST_MAX', '50');
 // does NOT touch it, because both the global IP-scoped guard and
 // MerchantThrottlerGuard check the same 'default' throttler name and pick
 // up this route-level override instead. Raising RATE_LIMIT_MAX alone
-// (the change described in the comment above) does not actually fix the
-// charge()-specific 429s a full suite run produces — confirmed by hitting
-// this exact 429 on a clean run after RATE_LIMIT_MAX was already raised.
+// (the change described in the comment above) does not fix the
+// charge()-specific 429s a full suite run produces, since that override
+// bypasses RATE_LIMIT_MAX entirely.
 // Same reasoning as RATE_LIMIT_MAX: covered by its own isolated behavior,
 // not by this ambient ceiling, so raising it doesn't weaken any coverage.
-// See docs/technical/load-testing.md, Finding #1, where this same
-// hardcoded cap was first found to be the real ceiling for a single-IP
-// load generator.
+// See docs/technical/load-testing.md, Finding #1: this same hardcoded
+// cap is the real ceiling for a single-IP load generator.
 setDefault('CHARGE_RATE_LIMIT_MAX', '2000');
 // The production default (10/min) is a deliberately aggressive brute-force
 // guard on POST /auth/token — a full e2e run legitimately logs in more than
@@ -106,6 +136,28 @@ setDefault('ADYEN_HMAC_KEY', '00112233445566778899aabbccddeeff001122334455667788
 setDefault('FX_RATE_PROVIDER_URL', 'http://localhost:4000/fx');
 setDefault('KYC_PROVIDER_URL', 'http://localhost:4000/kyc');
 setDefault('BANK_TRANSFER_PROVIDER_URL', 'http://localhost:4000/bank');
+// BANK_TRANSFER_PROVIDER intentionally left unset here (defaults to
+// 'mock' — see payment.module.ts's useFactory) so the bulk of the e2e
+// suite keeps using the synchronous mock rail. bank-transfer-rail.e2e-spec.ts
+// posts directly to POST /webhooks/bank-transfer (same pattern
+// webhooks.e2e-spec.ts already uses for Stripe/Adyen) rather than relying
+// on mock-psp's own async callback, since the app under test here runs
+// in-process (Jest/Supertest), not as a container mock-psp could reach.
+setDefault('ACH_PROVIDER_URL', 'http://localhost:4000/ach');
+setDefault('WIRE_PROVIDER_URL', 'http://localhost:4000/wire');
+setDefault('BANK_TRANSFER_WEBHOOK_SECRET', 'bts_e2e_test_placeholder');
+setDefault('EMAIL_PROVIDER_URL', 'http://localhost:4000/v1/email');
+// KYC_PROVIDER intentionally left unset here (defaults to 'mock' — see
+// merchant.module.ts's useFactory), same reasoning as BANK_TRANSFER_PROVIDER
+// above — kyc-review.e2e-spec.ts posts directly to POST /webhooks/kyc
+// rather than relying on mock-psp's own async callback.
+setDefault('PERSONA_PROVIDER_URL', 'http://localhost:4000/persona');
+setDefault('KYC_WEBHOOK_SECRET', 'kyc_e2e_test_placeholder');
+// Same reasoning as KYC_WEBHOOK_SECRET above — kyb-review.e2e-spec.ts
+// posts directly to POST /webhooks/kyb. Deliberately a different value
+// from KYC_WEBHOOK_SECRET, matching KybWebhookGuard's own separate-secret
+// posture.
+setDefault('KYB_WEBHOOK_SECRET', 'kyb_e2e_test_placeholder');
 
 setDefault('CORS_ORIGINS', 'http://localhost:3000');
 setDefault('APP_VERSION', 'e2e-test');

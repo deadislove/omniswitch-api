@@ -58,8 +58,13 @@ the double-booking one found and fixed during this project) could silently
 misstate the books indefinitely. `ReconciliationService` now runs hourly
 per PSP (`@Cron`), diffing our own charged-status payments against Stripe's
 balance transactions / Adyen's settlement report for the same window, and
-flags three distinct mismatch shapes (`MISSING_AT_PSP`, `AMOUNT_MISMATCH`,
-`UNKNOWN_AT_PSP`) rather than a single undifferentiated "doesn't match."
+flags five distinct mismatch shapes (`MISSING_AT_PSP`, `AMOUNT_MISMATCH`,
+`UNKNOWN_AT_PSP`, `CURRENCY_MISMATCH`, `COMPARISON_ERROR`) rather than a
+single undifferentiated "doesn't match" — `CURRENCY_MISMATCH` is kept
+separate from `AMOUNT_MISMATCH` since a settled currency differing from
+the charge currency can be a legitimate PSP-side conversion rather than a
+bug, and `COMPARISON_ERROR` isolates one payment's comparison throwing
+unexpectedly so it doesn't fail the whole provider's run.
 Every run — clean or not — is persisted (`reconciliation_runs`) and
 queryable via `ReconciliationAdminController`
 (`GET /admin/reconciliation/runs`, `POST /admin/reconciliation/run` for an
@@ -126,8 +131,15 @@ honestly-labeled example and a written migration path:
 adopting it needs zero deployment-manifest changes) and
 [`docs/technical/secret-management.md`](docs/technical/secret-management.md#migration-path-for-k8s-level-secrets-and-production-vault)'s
 "Migration path" section, covering both the K8s-secrets question and the
-separate dev-mode-Vault-to-production steps (persistent storage backend,
-AppRole/K8s auth instead of a static root token).
+remaining dev-mode-Vault-to-production steps (persistent storage backend,
+HA, auto-unseal against a cloud KMS). The auth-method half of that
+migration is already done, not just planned: `VaultTransitService` now
+supports an `approle` mode (`VAULT_AUTH_METHOD=approle`, short-lived
+token with background renewal — see `src/shared/vault/vault-transit.service.ts`)
+alongside the original static root token; `docker-compose.yml`'s `vault`
+service still uses the static token for local dev, which is the right
+default for a disposable dev stack, not a sign the alternative doesn't
+exist.
 
 ### 5. Observability gaps — partially resolved
 `k8s/deployment.yaml` had carried `prometheus.io/scrape: "true"` /
@@ -162,14 +174,33 @@ charge and a real PSP decline (`test/observability.e2e-spec.ts`): the
 gauge reflects both `SUCCEEDED` and `FAILED` immediately, and increments
 by exactly one per additional charge on the same (status, provider) pair.
 
-**Still deliberately out of scope** (would need a larger, separate
-change): distributed tracing (OpenTelemetry spans across the saga → PSP
-call → webhook resolution chain would make debugging a stuck payment far
-faster than grepping correlation IDs across log lines), and
-centralized/tamper-evident log shipping (see the PCI doc's Req 10.5 gap)
-— both need an external tracing/log backend this project doesn't stand
-up, so there's nothing here to verify against real infrastructure the
-way the gauges above could be.
+**Both later addressed, to different degrees of completeness**:
+
+- Distributed tracing: `src/tracing.ts` bootstraps an OpenTelemetry SDK
+  (auto-instrumentation for HTTP/`pg`/`ioredis`/`fetch`-via-`undici` —
+  the last one matters specifically because `StripePSPAdapter`/
+  `AdyenPSPAdapter` call out via the global `fetch()`, not Node's older
+  `http`/`https` modules that most instrumentation guides assume), plus
+  manual `saga.route`/`saga.charge` spans in
+  `payment-checkout.saga.ts` for the cross-step causality auto-
+  instrumentation alone wouldn't group meaningfully. Exported via OTLP to
+  `docker-compose.yml`'s new `jaeger` service. Deliberately did *not*
+  touch `StripePSPAdapter`/`AdyenPSPAdapter`'s own charge/refund/capture/
+  cancel methods to add spans there too — undici auto-instrumentation
+  already covers the actual `fetch()` call nested correctly under
+  `saga.charge`, and manually restructuring four methods' existing
+  circuit-breaker try/catch logic per adapter for a marginal naming
+  improvement wasn't worth the risk on this specific code path. Not yet
+  run against a real charge end-to-end (no Docker daemon in the session
+  that wrote this) — verify a trace actually shows up at `:16686` before
+  trusting this.
+- Centralized logging: [`k8s/log-shipping-example.yaml`](k8s/log-shipping-example.yaml)
+  is a Fluent Bit DaemonSet, illustrative only (same posture as
+  `k8s/external-secrets-example.yaml` — no real SIEM/Loki/Elasticsearch
+  cluster in this repo to verify against). It closes the *centralization*
+  half of the Req 10.5 gap; *tamper-evidence* is a property of whatever
+  backend it's pointed at, not something this manifest can provide on its
+  own — see that file's header and `security-and-compliance.md`.
 
 ---
 
@@ -338,16 +369,29 @@ benefit from USD volume crossing the same numeric threshold; clearing
 tiers reverts to the flat rate; and non-ascending/duplicate thresholds
 are rejected 422 rather than silently sorted.
 
-**Still open**: this platform fee — flat or tiered — is still not
-reconciled against actual PSP interchange cost.
-`SmartRoutingStrategy.calculateFee()` separately *estimates* PSP fees for
-routing/display purposes (`estimatedFee` in charge responses), and that
-number remains completely disconnected from what's actually booked to the
-ledger via `platformFeeBps`/`feeTiers`. If the platform fee is meant to
-be "PSP cost plus margin," that calculation still doesn't exist — making
-the platform-side rate configurable (and now volume-tiered) didn't
-connect it to real PSP cost data, which this project has no source for
-in the first place (the mock PSP doesn't simulate interchange costs).
+**The PSP-interchange-cost side is resolved too, as a separate
+reconciliation rather than feeding back into the platform fee itself**:
+`SmartRoutingStrategy.calculateFee()` still *estimates* PSP fees for
+routing/display purposes (`estimatedFee` in charge responses,
+`PspFeeScheduleService`, now configurable per-deployment instead of
+hardcoded), and that number stays intentionally separate from what's
+booked to the ledger via `platformFeeBps`/`feeTiers` — those answer "what
+does the platform charge the merchant," not "what does the platform pay
+the PSP." What *was* missing is a way to check the estimate against
+reality. `PspCostReconciliationService` (`POST
+/admin/psp-cost-reconciliation/run`) now closes that: it computes the
+estimated fee from real settled charges and diffs it against the actual
+invoiced fee from `PSPAdapterPort.fetchFeeStatement()` (or an
+operator-supplied override, e.g. a downloaded real PSP statement),
+recording which source was used (`actualFeeSource`) so a report can't be
+mistaken for the other kind. Against `mock-psp`'s `/statement` endpoints
+here, that's a deterministic *simulated* real fee with per-transaction
+variance (a premium-card surcharge on a fifth of transactions) rather
+than an unrealistic exact match every time — proving the reconciliation
+math against genuine drift. "PSP cost plus margin" as a pricing *policy*
+still isn't automatic — the reconciliation reports the gap, it doesn't
+feed back into `platformFeeBps` on its own — but the data to make that
+decision on now exists, which it didn't before.
 
 ### 9. Circuit breaker / health metrics are unbounded cumulative counters — ✅ resolved
 `successCount`/`totalRequests`/`totalLatencyMs` used to accumulate for as
@@ -371,7 +415,7 @@ collapsed to ~0%; it stayed at the correct value instead). A real charge
 was also made through the running app to confirm `recordSuccess` writes to
 the *current* bucket correctly, not just that manually-injected data reads
 back. Verifying this also surfaced a real, unrelated infrastructure bug —
-see [`docs/technical/infra-verification-status.md`](docs/technical/infra-verification-status.md)
+see [`docs/technical/infra-verification-status.md`](docs/technical/tests/infra-verification-status.md)
 for the Redis port collision it led to finding and fixing.
 
 ### 10. Outbox dead-letter recovery is manual — ✅ resolved
@@ -429,14 +473,14 @@ many merchant identities should trigger — but it means a real charge-path
 capacity number needs a distributed load generator (many source IPs), out
 of scope here. Full story, including how each rate-limiting layer was
 isolated, in
-[`docs/technical/load-testing.md`](docs/technical/load-testing.md).
+[`docs/technical/load-testing.md`](docs/technical/tests/load-testing.md).
 
 ### 12. No merchant bootstrap path — ✅ resolved
 `POST /admin/merchants` requires an existing ADMIN JWT, which meant there
 was no way to create the *first* merchant on a brand-new deployment without
 already having admin credentials (previously worked around with a raw SQL
 insert while verifying the Docker image — see
-[`docs/technical/infra-verification-status.md`](docs/technical/infra-verification-status.md)).
+[`docs/technical/infra-verification-status.md`](docs/technical/tests/infra-verification-status.md)).
 Fixed with `npm run seed:admin` (`src/database/seed-admin.ts`) — an
 explicit, idempotent CLI command (not wired into automatic container
 startup the way migrations are, since issuing a credential is a
@@ -472,14 +516,17 @@ doesn't care what plaintext it's given. Backup codes are bcrypt-hashed,
 same posture as `apiKeySecretHash`, and single-use — consumed (removed
 from storage) the moment one succeeds, not just checked.
 
-**Deliberately opt-in, not mandatory for any role**: this closes the "not
-implemented anywhere" half of the PCI gap — the capability now genuinely
-exists and works — but *requiring* ADMIN-role merchants to have MFA
-enabled before they can call the admin API at all is a separate policy
-decision, not made here (an ADMIN merchant can still operate with MFA
-off, same as before). See
+**Opt-in for MERCHANT/OPERATOR/READONLY, mandatory for ADMIN**: this
+closes the "not implemented anywhere" half of the PCI gap — the
+capability genuinely exists and works — and a later pass closed the
+other half: `RolesGuard` now rejects any request from an ADMIN-role
+caller whose merchant doesn't have `mfaEnabled`, on every
+`@Roles(...)`-gated route (`POST /auth/mfa/enroll`/`confirm` stay
+reachable regardless, since neither carries `@Roles()`, so an
+ADMIN merchant always has a way to enroll rather than being locked out
+with no path back in). See
 [`docs/technical/security-and-compliance.md`](docs/technical/security-and-compliance.md)
-for why this line wasn't crossed in this pass.
+for what this still doesn't cover.
 
 **A real dependency issue found along the way**: `otplib`'s current major
 version (v13) rebuilt its crypto internals on `@noble`/`@scure`, which
@@ -566,7 +613,7 @@ already-confirmed charge. Manage it via `POST /admin/merchants`
 converting the merchant's payout leg needs two separately-currency-balanced
 ledger legs linked by a new `FX_CLEARING` account type, not just a third
 entry — in
-[`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#fx-conversion-merchant-settlement-currency).
+[`docs/business-domain/fx-conversion.md`](docs/business-domain/fx-conversion.md#fx-conversion-merchant-settlement-currency).
 
 **Two real bugs found verifying the "clear a setting back to null" path**
 (both fixed):
@@ -700,7 +747,7 @@ ledger event that created it.
 return its now-current state. That re-fetch reliably came back still
 `HELD` — this app's `DataSource` routes plain reads to a Postgres replica
 (`app.module.ts`'s `replication` config; see
-[`infra-verification-status.md`](docs/technical/infra-verification-status.md)'s
+[`infra-verification-status.md`](docs/technical/tests/infra-verification-status.md)'s
 measured ~1s replication lag), and the re-fetch, running microseconds
 after the transaction committed to master, lost that race every time.
 Fixed by returning the already-mutated in-memory `ReserveHold` aggregate
@@ -1017,7 +1064,7 @@ now:
   functions as this system's answer to "who bears FX risk between charge
   and settlement time" (the platform does, by locking the rate at charge
   time and never re-quoting it for that payment's lifecycle), in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#refunds-and-lost-disputes-replay-the-original-charge-time-rate).
+  [`docs/business-domain/fx-conversion.md`](docs/business-domain/fx-conversion.md#refunds-and-lost-disputes-replay-the-original-charge-time-rate).
 - **Presentment currency.** `POST /payments/charge` accepts an optional
   `presentmentCurrency` and returns a computed `presentmentAmount` for
   display — purely informational, doesn't touch what's actually
@@ -1145,18 +1192,17 @@ part of the proceeds directly to its own sellers:
   recipient's own merchantId; whatever's left still credits the platform
   — a split doesn't have to add up to the full payout. Full ledger
   mechanics, including the double-entry shape, in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#marketplace-splits).
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#marketplace-splits).
 - Rejected up front (before the PSP is ever called, see the real bug
   below): an unknown/non-connected/wrong-platform recipient
   (`SPLIT_RECIPIENT_INVALID`, 422), a split total exceeding the net
-  payout (`SPLIT_EXCEEDS_NET_AMOUNT`, 422), `captureMethod: "manual"`
+  payout (`SPLIT_EXCEEDS_NET_AMOUNT`, 422), and `captureMethod: "manual"`
   together with `splits` (`SPLIT_REQUIRES_AUTOMATIC_CAPTURE`, 409, since
   `PaymentLifecycleService.capture()` doesn't accept splits and would
-  silently drop them), and a platform merchant with an active
-  settlement-currency conversion (`SPLIT_WITH_SETTLEMENT_CONVERSION_UNSUPPORTED`,
-  409 — deciding which FX rate applies to a partly-platform,
-  partly-connected-account charge is a real design question this phase
-  doesn't attempt).
+  silently drop them). A platform merchant's own settlement-currency
+  conversion and each split recipient's own are no longer mutually
+  exclusive — see
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#splits--each-partys-own-settlement-currency-conversion-phase-2).
 
 **A real bug found and fixed during implementation, not just during
 testing**: `ChargeLedgerParamsResolverService.resolve()` — which now
@@ -1229,7 +1275,7 @@ either. Closed now:
   resolution path now pass this through. Full math and the (pre-existing,
   unrelated to splits) "a refund never gives back the platform fee"
   reasoning in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#reversing-a-split-on-refund-or-dispute-loss).
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#reversing-a-split-on-refund-or-dispute-loss).
 
 **A real bug found during implementation, not just during testing**:
 `splits` used to only be recorded on the `Payment` aggregate inside
@@ -1307,7 +1353,7 @@ rolling reserve, unlike a real marketplace processor. Closed now:
   sent" vs. "still on the books," so there's nothing for a ledger entry
   to move. Full design and the "ledger balance vs. available balance"
   reasoning in
-  [`docs/business-domain/ledger-and-settlement.md`](docs/business-domain/ledger-and-settlement.md#payout-scheduling-for-connected-accounts).
+  [`docs/business-domain/marketplace-and-payouts.md`](docs/business-domain/marketplace-and-payouts.md#payout-scheduling-for-connected-accounts).
 
 New tables: `payouts`, `payout_sweep_runs`; new `merchants` columns
 `payout_reserve_bps`/`payout_reserve_hold_days`. New port method
@@ -1560,6 +1606,376 @@ would need its own webhook-driven confirmation. See
 [`docs/business-domain/future-directions.md`](docs/business-domain/future-directions.md#marketplace--split-payments)
 for the fuller framing.
 
+### Real bank/ACH/wire transfer rail — ✅ resolved
+The bank-rail gap the section above ended on: `BankTransferPort` had
+exactly one implementation, `MockBankTransferAdapter`, resolving every
+transfer synchronously as `SENT` — nothing modeling that a real ACH/wire
+transfer is accepted first and settles hours-to-days later. Closed with
+two real, async-settling adapters and a provider switch, not just a
+type change:
+
+- **`BankTransferResponse.status`** (`SENT` | `PENDING` | `FAILED`) —
+  `MockBankTransferAdapter` still returns `SENT` (unchanged behavior,
+  still the default); new `AchBankTransferAdapter`/`WireBankTransferAdapter`
+  return `PENDING` on acceptance, modeled on the shape a real ACH/wire
+  provider's REST API actually exposes (`202 { id, status: 'pending' }`,
+  final outcome via webhook) rather than pretending to settle inline.
+- **`BANK_TRANSFER_PROVIDER`** (`mock` (default) / `ach` / `wire`) picks
+  which adapter `BankTransferPort` resolves to, via a `useFactory`
+  binding in `payment.module.ts` — the same "one env var, one concrete
+  adapter" idiom `scripts/jobs/backup-storage/get-backup-storage.ts`
+  already uses for `DELETION_BACKUP_STORAGE`, just resolved inside Nest
+  DI instead of a standalone script (these adapters have their own
+  injected `ConfigService`).
+- **`Payout.transferStatus`** gained `PENDING_CONFIRMATION`, sitting
+  between `NOT_INITIATED` and `INITIATED` — `recordTransferPending()`
+  is the new entry point a real rail's acceptance lands in;
+  `recordTransferInitiated()` now fires either immediately (mock) or
+  later, from `PENDING_CONFIRMATION`, once a real rail's async webhook
+  confirms settlement.
+- **`POST /webhooks/bank-transfer`** (`BankTransferWebhookGuard`,
+  identical HMAC scheme to `StripeWebhookGuard`) — `PayoutService.confirmTransfer()`
+  looks the `Payout` up by `transferId` (`PayoutPort.findByTransferId()`,
+  now indexed — see the new migration below) and moves it from
+  `PENDING_CONFIRMATION` to `INITIATED`/`FAILED`. Idempotent: a duplicate
+  delivery for an already-resolved transfer, or a delivery for an
+  unrecognized `transferId`, is logged and returned `200`, not treated
+  as an error — the same posture the Stripe/Adyen webhook handlers
+  already take toward redelivery.
+- **`1788450000000-AddPayoutTransferIdIndex`** — a plain index on
+  `payouts.transfer_id`; without it, every real-rail settlement callback
+  would be a full table scan on `payouts`' steady-state hot path once
+  `BANK_TRANSFER_PROVIDER=ach`/`wire` is in use.
+
+New mock-psp endpoints: `POST /ach/transfers`/`POST /wire/transfers`
+(decline markers: `merchantId` containing "transferreject" for an
+outright synchronous rejection, "transferfail" for an accept-then-fail-
+during-clearing outcome) — genuinely two-phase, unlike `/bank/transfers`.
+`scheduleBankTransferSettlement()` in `scripts/mock-psp/server.js` really
+does call back `POST /webhooks/bank-transfer` asynchronously with a real
+computed HMAC signature (`APP_BASE_URL`/`BANK_TRANSFER_WEBHOOK_SECRET`,
+wired in `docker-compose.yml`'s `mock-psp` service pointing at the `api`
+container's DNS name) — verified directly with `curl` against the
+running `mock-psp` container (`POST /ach/transfers` returns `pending`
+immediately; the container log shows the deferred signed callback firing
+~200ms later). The Jest e2e suite itself can't observe that live round
+trip (`api` runs in-process there, not as a container `mock-psp` could
+reach), so it verifies the receiving side directly instead — the same
+posture `webhooks.e2e-spec.ts` already takes toward Stripe/Adyen
+webhooks: a real computed signature, POSTed straight at
+`POST /webhooks/bank-transfer`.
+
+Verified against real infrastructure: new `test/bank-transfer-rail.e2e-spec.ts`
+(11 tests) — initiating a transfer against the ACH rail lands the payout
+in `PENDING_CONFIRMATION` with a real `transferId`, not `INITIATED`; a
+second initiation attempt while pending is rejected 409; a correctly-
+signed `settled` webhook confirms it to `INITIATED`; a correctly-signed
+`failed` webhook moves it to `FAILED` with the given reason; redelivering
+the same `settled` webhook twice is idempotent; a webhook for an unknown
+`transferId` is a no-op `200`; a missing or invalid
+`X-Bank-Transfer-Signature` is rejected `401`; the outright-rejection
+marker fails synchronously without ever reaching
+`PENDING_CONFIRMATION`; and the same `PENDING_CONFIRMATION` -> webhook
+-> `INITIATED` flow is reconfirmed against the Wire rail, proving the
+mechanism generalizes across providers, not just ACH. Regression-checked:
+`test/marketplace-payouts.e2e-spec.ts` (15/15) and `test/webhooks.e2e-spec.ts`
+(15/15) both still pass unchanged against the mock rail's synchronous
+path.
+
+**Known simplifications**: same honest posture as
+`docs/technical/tests/contract-testing.md` toward the Stripe/Adyen
+sandbox — the mechanism is real and genuinely runnable end-to-end
+against `mock-psp`'s stand-in, but no real ACH/wire provider has ever
+actually been called with real credentials, since none exist anywhere
+in this repository or its CI. The KYC-review and reserve-follow-up-
+transfer gaps the section above already named are unaffected by this
+entry — still open.
+
+### Real dispute notification delivery (email/Slack/webhook) — ✅ resolved
+`DisputeService.recordDispute()`/`resolveByPspDisputeId()` had emitted
+real, structured `dispute.created`/`dispute.resolved` events since
+before this entry — but `grep -rn "@OnEvent" src` came back empty:
+nothing in this codebase had ever actually subscribed to them. A
+merchant's only way to learn about a dispute was polling
+`GET /admin/disputes`. Closed with a per-merchant channel, not a single
+global one:
+
+- **`MerchantEntity.disputeNotificationChannel`** (`EMAIL` | `SLACK` |
+  `WEBHOOK`, defaults to `WEBHOOK`) + **`disputeNotificationTarget`**
+  (nullable — no target means no notification is sent, not an error) —
+  new `PATCH /admin/merchants/:id/dispute-notification-channel`, same
+  "platform configures it on the merchant's behalf" idiom every other
+  per-merchant policy setting in this codebase already uses (fee-rate,
+  reserve-policy, settlement-currency — there's no merchant self-service
+  endpoint precedent here to break from).
+- **`DisputeNotificationListener`** — the actual `@OnEvent('dispute.created')`/
+  `@OnEvent('dispute.resolved')` subscriber, running on the same global
+  `EventEmitter2` instance `app.module.ts` registers (see
+  `payment.module.ts`'s own docblock for why this module deliberately
+  never calls `EventEmitterModule.forRoot()` again itself — a second
+  call would silently split the event bus in two). Delegates to
+  `DisputeNotificationDispatcherService`, which looks up the merchant's
+  channel/target and never lets a delivery failure propagate back into
+  dispute processing (try/catch + log only).
+- **Three adapters, one new port (`DisputeNotificationPort`)** —
+  `WebhookDisputeNotificationAdapter` (default) signs the payload with
+  the merchant's *own* `hmacSecretCiphertext` (decrypted via
+  `VaultTransitService`, the same key that already signs their inbound
+  requests) using the identical `${timestamp}.${rawBody}` HMAC-SHA256
+  scheme `StripeWebhookGuard` verifies incoming PSP webhooks with — a
+  merchant can verify this notification is genuinely from this platform
+  without provisioning a second credential.
+  `SlackDisputeNotificationAdapter` POSTs Slack's own `{text}` shape
+  straight to an Incoming Webhook URL (no separate credential — the
+  URL's secrecy is the access control). `EmailDisputeNotificationAdapter`
+  POSTs `{to, subject, body}` to `EMAIL_PROVIDER_URL`, mocked by a new
+  `scripts/mock-psp/server.js` endpoint, `/v1/email/send`, mimicking a
+  real transactional-email API's shape.
+- **`1788450100000-AddMerchantDisputeNotificationChannel`** — the two
+  new `merchants` columns.
+
+Verified against real infrastructure: new `test/dispute-notification.e2e-spec.ts`
+(8 tests) — a merchant defaults to `WEBHOOK` with no target configured
+and gets no notification attempt at all until one is set; the webhook
+channel delivers `dispute.created` and `dispute.resolved` with a
+signature independently recomputed from the merchant's own
+`hmacSecret` and verified byte-for-byte against the captured body; the
+Slack channel posts the real `{text}` shape with no signature header;
+the email channel posts `{to, subject, body}` to the mocked provider;
+clearing the target goes back to no notification; an unrecognized
+channel value is rejected `422`. All three channels' delivery is
+verified against a same-process capture HTTP server, not a mocked
+`fetch()` — a real socket, a real request, a real parsed body.
+Regression-checked: `dispute-policy.e2e-spec.ts` (6/6) still passes
+unchanged.
+
+**Known simplifications**: same "mechanism is real, but nothing has
+called a real third-party API with real credentials" posture as
+everywhere else in this codebase — no real Slack workspace or SMTP/email
+API has ever received one of these. Subscription events
+(`subscription.past_due`/`subscription.canceled`) still have no
+subscriber at all — this entry only wires up the dispute events, not a
+generic cross-cutting notification bus.
+
+### Real async KYC review (Persona) — ✅ resolved
+`KYCProviderPort` had exactly one implementation, `MockKYCProviderAdapter`,
+resolving every application synchronously — `MerchantEntity.kycStatus`
+was a strict `NOT_STARTED`/`VERIFIED`/`REJECTED` three-state model with
+no room for a review that takes hours to days, the way a real identity/
+business verification actually does. Closed with the same real-adapter-
+plus-provider-switch shape as the bank-transfer rail:
+
+- **`KYCVerificationResult.status`** (`APPROVED` | `REJECTED` | `PENDING`)
+  — `MockKYCProviderAdapter` still returns `APPROVED`/`REJECTED`
+  (unchanged behavior, still the default); new `PersonaKycProviderAdapter`
+  returns `PENDING` on submission, modeled on the shape a real Persona/
+  Onfido-style API actually exposes (`202 { id, status: 'pending' }`,
+  final decision via webhook).
+- **`KYC_PROVIDER`** (`mock` (default) / `persona`) picks which adapter
+  `KYCProviderPort` resolves to, via a `useFactory` binding in
+  `merchant.module.ts` — identical idiom to `BANK_TRANSFER_PROVIDER`.
+- **`MerchantEntity.kycStatus`** gained `PENDING_REVIEW`, sitting
+  between `NOT_STARTED` and `VERIFIED`/`REJECTED`, plus a new
+  `kycApplicationId` column to correlate the eventual decision back to
+  the merchant.
+- **`POST /webhooks/kyc`** (`KycWebhookGuard`, identical HMAC scheme to
+  `StripeWebhookGuard`/`BankTransferWebhookGuard`) — `MerchantService.confirmKyc()`
+  looks the merchant up by `kycApplicationId` and moves it from
+  `PENDING_REVIEW` to `VERIFIED`/`REJECTED`. Idempotent, same posture as
+  `PayoutService.confirmTransfer()`. Deliberately its own
+  `KycWebhookController` inside `MerchantModule`, not folded into
+  `PaymentModule`'s `WebhookController` — KYC review is a `MerchantModule`
+  concern (`MerchantEntity.kycStatus`), and `MerchantModule` must never
+  depend on `PaymentModule` (the reverse already holds).
+- **`1788450200000-AddMerchantKycApplicationId`** — the new indexed
+  column.
+
+New mock-psp endpoint: `POST /persona/kyc-applications` (markers:
+`legalName` containing "invalidinput" for an outright synchronous
+rejection — malformed submission, a real provider can tell immediately;
+"reject" for accepted-then-declined-during-review) — genuinely
+two-phase, unlike `/kyc/verify`. `scheduleKycDecision()` really does call
+back `POST /webhooks/kyc` asynchronously with a real computed HMAC
+signature, verified directly with `curl` against the running `mock-psp`
+container.
+
+**A real, previously-undiscovered bug found and fixed along the way**:
+running `kyc-review.e2e-spec.ts` alongside other e2e files in the same
+Jest worker intermittently failed with a spurious 404
+`PLATFORM_MERCHANT_NOT_FOUND` — passed every time in isolation, the
+signature of the master/replica streaming-lag race this codebase already
+knows about and has fixed elsewhere (see `findMerchantOnMaster()`'s own
+docblock and `docs/technical/ci-cd.md`'s replica-lag section covering 11
+other files with the identical bug). `MerchantService.createMerchant()`'s
+platform-merchant lookup, when onboarding a `CONNECTED` merchant, was
+still using the plain (replica-routed) `merchantRepo.findOne()` instead
+of `findMerchantOnMaster()` — a platform merchant created moments
+earlier (commits to master) and immediately referenced as
+`platformMerchantId` could race the ~1s replica lag. Same one-line fix
+as the other 11 files; reconfirmed clean across repeated combined runs
+afterward.
+
+Verified against real infrastructure: new `test/kyc-review.e2e-spec.ts`
+(9 tests) — submitting against the real provider returns
+`PENDING_REVIEW` with a real `applicationId`, not an immediate decision;
+a correctly-signed `approved`/`rejected` webhook resolves it to
+`VERIFIED`/`REJECTED`; redelivering the same webhook twice is
+idempotent; a webhook for an unknown `applicationId` is a no-op `200`; a
+missing/invalid `X-KYC-Signature` is rejected `401`; the provider's
+outright-rejection marker fails synchronously without ever reaching
+`PENDING_REVIEW`; and a `PENDING_REVIEW` merchant's payout stays
+KYC-blocked, same as `NOT_STARTED`/`REJECTED`. Regression-checked:
+`marketplace-payouts.e2e-spec.ts` (15/15, the mock-provider path) still
+passes unchanged.
+
+**Known simplifications**: same posture as everywhere else in this
+codebase — the mechanism is real and genuinely runnable end-to-end
+against `mock-psp`'s stand-in, but no real Persona/Onfido account has
+ever actually been called with real credentials.
+
+### Reserve follow-up transfer — ✅ resolved
+The gap the bank-transfer-rail entry above named explicitly: transfer
+initiation only ever covered `netAmount` — if a reserve was released
+*after* that transfer already ran, there was no mechanism to ever send
+it. Closed with a second, fully independent transfer track, not a
+special case bolted onto the first one:
+
+- **`Payout.reserveTransferStatus`/`reserveTransferId`/`reserveTransferInitiatedAt`/
+  `reserveTransferError`** — a complete second quad, parallel to the
+  existing netAmount one. `recordReserveTransferPending()`/
+  `recordReserveTransferInitiated()`/`recordReserveTransferFailed()`
+  mirror the netAmount methods exactly. Eligibility
+  (`PayoutPort.findReserveTransferEligible()`) is just "reserve
+  released, has an amount, not KYC-blocked, not already
+  initiated/pending" — no dependency on the netAmount transfer's own
+  status at all, so a reserve released before, during, or long after
+  that transfer is equally eligible for its own transfer the moment it
+  releases.
+- **`PayoutService.initiateReserveTransfer()`** + daily
+  `@Cron(EVERY_DAY_AT_3AM)` sweep `initiateEligibleReserveTransfers()`
+  — same real-vs-mock-rail behavior as the netAmount path (`PENDING` on
+  a real rail lands this in `PENDING_CONFIRMATION`, confirmed later via
+  the same `POST /webhooks/bank-transfer` receiver).
+- **`confirmTransfer()` now checks both legs** — a real rail's webhook
+  reports on a `transferId` with no idea which of a payout's two
+  transfers it belongs to, so this checks the netAmount transferId
+  first, then the reserve one, before giving up as unrecognized.
+- **`POST /admin/marketplace/payouts/:id/initiate-reserve-transfer`** +
+  **`POST /admin/marketplace/initiate-eligible-reserve-transfers`** —
+  mirror the netAmount admin endpoints exactly.
+- **`1788450300000-AddPayoutReserveTransfer`** — the four new columns
+  plus an index on `reserve_transfer_id`.
+
+**A real, previously-undiscovered doc bug found along the way**:
+`PayoutSummaryDto.transferStatus`'s Swagger `enum` array was never
+updated when the bank-transfer-rail entry above added
+`PENDING_CONFIRMATION` to `PayoutTransferStatus` — it still listed only
+`NOT_INITIATED`/`INITIATED`/`FAILED`. The TypeScript type itself was
+always correct (typed via `PayoutTransferStatus`, not a separate
+hand-copied union); only the generated API documentation was
+incomplete. Fixed alongside adding the equivalent `reserveTransferStatus`
+property.
+
+Verified against real infrastructure: new
+`test/reserve-followup-transfer.e2e-spec.ts` (8 tests) — every test
+deliberately transfers `netAmount` *first*, then releases the reserve,
+the exact ordering the original gap was about: initiating a reserve
+transfer before release is rejected `409` even though netAmount's own
+transfer already succeeded; releasing and then transferring produces a
+real, separate `reserveTransferId` distinct from `transferId`, with
+netAmount's transfer completely untouched; a second attempt is rejected
+`409`; a decline is recorded `FAILED` independent of `transferStatus`;
+the reserve-transfer sweep picks up exactly this scenario; a
+KYC-blocked payout can't transfer its reserve even once released; and,
+against the real ACH rail, a reserve transfer lands
+`PENDING_CONFIRMATION` and a signed webhook confirms it to `INITIATED`
+independent of the netAmount leg's own confirmation. Regression-checked:
+`marketplace-payouts.e2e-spec.ts` (15/15) and `bank-transfer-rail.e2e-spec.ts`
+(11/11) both still pass unchanged.
+
+### Agentic payment human-approval hold — ✅ resolved
+The last Agentic Payments gap: the original framing this section
+described ("ask me first for anything above $200") had never actually
+been built — a charge either fit the delegation's spend policy or was
+rejected outright, with no "hold for human approval" state in between.
+Closed with a genuinely new async flow, not an extension bolted onto
+the existing synchronous reserve-then-charge path:
+
+- **`SpendPolicy.requireApprovalAboveAmount`** — must not exceed
+  `perTransactionLimit` (a threshold above the hard cap could never
+  trigger). Unset (every delegation created before this existed) means
+  no approval gate: every charge within the other limits auto-executes
+  exactly as before.
+- **`ChargeApproval`** (new aggregate) — the `PENDING_APPROVAL` hold
+  state. `PaymentController.charge()`'s AGENT branch now checks
+  `delegation.spendPolicy.requiresApproval(amount)` *after* reserving
+  spend (`reserveSpendOrThrow()` changed to return the loaded
+  `Delegation`, not `void`, so this doesn't cost a second query) — the
+  reservation happens either way, before the approval decision, so a
+  flurry of pending requests can't collectively bust the monthly budget
+  before any of them is decided. If gated, the original
+  `ChargePaymentDto` is stored verbatim (JSONB) on the `ChargeApproval`
+  and `POST /payments/charge` returns `status: 'PENDING_APPROVAL'` with
+  an `approvalId` — no `Payment` row exists yet, the PSP was never
+  called.
+- **`buildCheckoutSagaInput()`** (new shared helper) — the
+  splits/binInfo-from-`ChargePaymentDto` derivation that used to live
+  inline in `PaymentController.charge()`, extracted so
+  `ChargeApprovalService.approve()` can replay the *exact* deferred
+  request through the identical logic the immediate-execution path
+  uses, instead of a second, drift-prone copy.
+- **`ChargeApprovalController`** (`POST /charge-approvals/:id/approve`/`.../deny`,
+  `GET /charge-approvals`/`:id`) — same MERCHANT-self-scoped /
+  ADMIN-cross-merchant access model as `DelegationController`. Approving
+  executes the deferred charge in that same request (no further async
+  step); denying releases the reservation, the PSP is never called.
+- **`1788450400000-AddDelegationRequireApprovalAboveAmount`** +
+  **`1788450500000-CreateChargeApprovals`** — the new column and table.
+
+**Two real, previously-undiscovered bugs found along the way**:
+
+1. **A genuine new-entity registration gap.** `ChargeApprovalEntity` was
+   added to `payment.module.ts`'s `TypeOrmModule.forFeature([...])` but
+   not to `app.module.ts`'s runtime entity list or
+   `data-source.ts`'s CLI/migration entity list — both are explicit
+   arrays in this codebase, not auto-discovered (see
+   `docs/technical/architecture.md`'s own comment on `data-source.ts`
+   documenting this exact footgun, hit here for the first time in this
+   project rather than just documented). Surfaced immediately as
+   `EntityMetadataNotFoundError: No metadata for "ChargeApprovalEntity"
+   was found` the first time `test/charge-approval.e2e-spec.ts` ran.
+2. Same replica-lag bug class as the KYC entry above, this time in
+   `PayoutSummaryDto.transferStatus`'s Swagger `enum` array (still
+   listed only `NOT_INITIATED`/`INITIATED`/`FAILED`, missing
+   `PENDING_CONFIRMATION` from the bank-transfer-rail entry) — a
+   documentation-only gap this time (the TypeScript type itself was
+   correct), fixed alongside adding `reserveTransferStatus`.
+
+Verified against real infrastructure: new `test/charge-approval.e2e-spec.ts`
+(10 tests) — a charge at or below the threshold auto-executes with no
+approval created; a charge above it returns `PENDING_APPROVAL` with no
+`Payment` row yet; the reservation is visible on the delegation
+immediately, before any decision; approving actually executes the
+charge (`SUCCEEDED`, real `pspTransactionId`, a real `Payment` row); a
+second approval attempt is rejected `409`; denying releases the
+reservation and never calls the PSP; a charge above `perTransactionLimit`
+is still rejected outright, never routed to approval; a delegation with
+no `requireApprovalAboveAmount` is completely unaffected; cross-merchant
+access is rejected `403`; ADMIN can act across merchants. Regression-
+checked: `agentic-payments.e2e-spec.ts` (10/10, the ungated path) plus
+`payments.e2e-spec.ts`/`marketplace-splits.e2e-spec.ts`/
+`cross-border-settlement.e2e-spec.ts`/`plans.e2e-spec.ts`/
+`reserve.e2e-spec.ts`/`risk-tiering.e2e-spec.ts`/`dispute-policy.e2e-spec.ts`
+(79 tests total) all still pass unchanged — confirming the
+`PaymentController.charge()` refactor didn't break any existing charge
+path.
+
+**Known simplifications**: liability/dispute attribution for an
+agent-initiated charge and a different risk-scoring posture for agent
+transactions (both still named in
+`docs/business-domain/future-directions.md#agentic-payments`) are
+unaffected by this entry — still open.
+
 ### Dunning decline-codes — ✅ resolved
 The last Recurring Billing / Subscriptions gap: every failed billing
 attempt was retried identically on the same day 1/3/7 backoff schedule
@@ -1768,37 +2184,45 @@ starting it; that file gives the *business* reasoning in full.
   all done)** — the platform/connected-account relationship, charge-time
   split rules, proportional refund/dispute-loss reversal, batched payout
   scheduling with a rolling reserve, a real (mocked) KYC review gating
-  payouts (not charges), and real (mocked) bank-transfer initiation are
-  now real, Tier 3 above. What's still missing: a real KYC review (the
-  mock decision is synchronous and marker-driven, not an actual
-  reviewer); a follow-up transfer for a reserve released after its
-  payout's net amount was already sent; and a real bank/ACH/wire rail
-  (the mock resolves "sent" synchronously, a real one settles over days).
+  payouts (not charges), real (mocked) bank-transfer initiation, and a
+  follow-up transfer for a reserve released after its payout's net
+  amount was already sent (a fully independent second transfer track,
+  not a special case bolted onto the first) are now real, Tier 3 above.
+  What's still missing: a real KYC review (the mock decision is
+  synchronous and marker-driven, not an actual reviewer) and a real
+  bank/ACH/wire rail (the mock resolves "sent" synchronously, a real one
+  settles over days).
 - **Merchant risk tiering & reserves (mechanism and a basic auto-policy
   done, real underwriting still open)** — the reserve-hold mechanism and
   a working `RiskTieringService` (trailing lost-dispute rate ->
   `reserveBps`/`reserveHoldDays`, both directions, with a manual-override
-  escape hatch) are now real, Tier 3 above. What's still missing is a
-  *real* risk model: the three tiers built here are deliberately simple,
-  round thresholds illustrating the mechanism, not something calibrated
-  against real fraud/chargeback data. A production system would also
-  weigh MCC code, account tenure, and dispute *reason* codes (fraud vs.
-  "product not as described" carry very different signal) rather than a
-  single lost-dispute-rate number, and would probably use a continuous
-  function instead of 3 buckets.
+  escape hatch) are now real, Tier 3 above. MCC code and account tenure
+  now feed in too, as escalation-only modifiers on top of the base
+  lost-dispute-rate tier (a clean dispute history doesn't excuse a
+  high-risk MCC; a low-risk MCC doesn't excuse a bad dispute history) —
+  not the single-signal model this item originally described. What's
+  still missing is a *real* risk model beyond that: the three tiers and
+  escalation thresholds are deliberately simple, round numbers
+  illustrating the mechanism, not something calibrated against real
+  fraud/chargeback data; dispute *reason* codes still don't feed in at
+  all (fraud vs. "product not as described" carry very different signal,
+  and nothing here distinguishes them yet); and a real model would
+  probably use a continuous function instead of discrete tiers.
 - **Dispute resolution policy layer (mechanism done, real calibration
   still open)** — auto-accept/contest by amount and reason code,
   reason-code-specific evidence guidance, and a structured
   `dispute.created`/`dispute.resolved` notification hook are now real,
-  Tier 3 above. What's still missing: the thresholds/reason table are
-  illustrative, not calibrated against real chargeback win-rate data. The
-  connection between this and `RiskTieringService` is one-way —
-  `RiskTieringService` already reads dispute *outcomes* (lost-dispute
-  rate) to set a merchant's reserve, but the dispute policy doesn't read
-  a merchant's risk tier back to inform auto-accept/contest decisions.
-  Also missing: decline-code-nuanced learning from past outcomes, and no
-  actual email/Slack/paging integration subscribed to the new event hook
-  yet.
+  Tier 3 above. The `RiskTieringService` connection is now two-way, not
+  one: `RiskTieringService` reads dispute *outcomes* (lost-dispute rate)
+  to set a merchant's reserve, and `dispute-policy.ts`'s
+  `decideAutoDisposition()` reads that same risk tier back to scale the
+  auto-accept threshold (LOW tier ×0.5, HIGH tier ×2) and extend the
+  auto-contestable reason set for LOW-risk merchants. What's still
+  missing: the thresholds/reason table and the tier multipliers
+  themselves are illustrative, not calibrated against real chargeback
+  win-rate data; decline-code-nuanced learning from past outcomes; and
+  no actual email/Slack/paging integration subscribed to the new event
+  hook yet.
 - **Cross-border settlement & tax (VAT/tax and a real hedging product
   remain open)** — the settlement-conversion mechanism, refunds/lost
   disputes netting cleanly against it, and presentment currency are all
@@ -1811,18 +2235,19 @@ starting it; that file gives the *business* reasoning in full.
   the charge-time rate and reusing it for that payment's refunds/disputes
   — see Tier 3 above) but not in the broader sense of a merchant wanting
   to lock in a rate *before* committing to a sale.
-- **Agentic payments (delegation + spend-policy enforcement done, human-
-  approval/agent-specific risk scoring still open)** — a merchant can now
-  authorize an autonomous agent via a real, atomically-enforced
-  `Delegation`/`SpendPolicy` (per-transaction limit, rolling monthly
-  limit, category allowlist), scoped to exactly one route
-  (`POST /payments/charge`) and revocable in real time via the existing
-  JWT jti-revocation mechanism, Tier 3 above. What's still missing: no
-  "hold for human approval" above a threshold (a charge either fits the
-  policy or is rejected outright); no agent-specific risk scoring
-  (`calculateRiskScore()` treats an agent charge like a human one); and
-  no per-request agent signing (the delegation JWT's own possession is
-  this MVP's authenticity proof).
+- **Agentic payments (delegation + spend-policy enforcement, human-
+  approval hold, and per-agent request signing all done — agent-specific
+  risk scoring still open)** — a merchant can now authorize an autonomous
+  agent via a real, atomically-enforced `Delegation`/`SpendPolicy`
+  (per-transaction limit, rolling monthly limit, category allowlist),
+  scoped to exactly one route (`POST /payments/charge`) and revocable in
+  real time via the existing JWT jti-revocation mechanism; a charge above
+  `requireApprovalAboveAmount` holds for human approval instead of
+  auto-executing or being rejected outright; and every delegation gets
+  its own HMAC signing key, verified by `HmacSignatureGuard` on every
+  agent-initiated charge the same way a merchant's own key is — all
+  Tier 3 above. What's still missing: agent-specific risk scoring
+  (`calculateRiskScore()` treats an agent charge like a human one).
 
 ### AI agents / agentic payments
 
@@ -1835,27 +2260,21 @@ for the business framing. What follows is the technical detail on the
 genuinely remaining gaps, deliberately left open because they're new
 design surface, not oversights:
 
-- **Pre-authorized intents with a human-approval step.** The business
-  framing this section originally called for ("ask me first for
-  anything above $200") isn't built — `reserveSpendOrThrow()` either
-  admits a charge or rejects it outright; there's no "hold pending human
-  review" intermediate state. That's a genuinely new async flow (the
-  charge request would need to pause, not just succeed/fail synchronously)
-  closer to Stripe's SetupIntent/mandate model than an extension of the
-  current reserve-then-charge path.
+- **Pre-authorized intents with a human-approval step — ✅ resolved**,
+  see "Agentic payment human-approval hold" above: a charge above
+  `SpendPolicy.requireApprovalAboveAmount` (but within the delegation's
+  hard per-transaction limit) now holds in a `PENDING_APPROVAL` state
+  (`ChargeApproval` aggregate) instead of auto-executing or being
+  rejected outright — spend is reserved either way before the approval
+  decision, so pending requests can't collectively bust the monthly
+  budget while waiting. What's still open: no SLA/expiry on a pending
+  approval sitting unactioned, and no notification to the human approver
+  that one exists (they have to poll `GET /charge-approvals`).
 - **Risk scoring for non-human initiators.** `PaymentAggregate.calculateRiskScore()`
   still reasons about amount and card origin only — an agent-initiated
   charge is scored identically to a human one. A real model would weigh
   velocity within the agent's own spend policy and whether this
   agent/principal pairing has transacted with this merchant before.
-- **Per-request agent signing.** `HmacSignatureGuard` exempts an
-  `AGENT`-authenticated request from the HMAC requirement entirely
-  (see that guard's docblock) rather than requiring a per-agent signing
-  key — the delegation JWT's own bearer-token possession is this MVP's
-  authenticity proof. Extending HMAC-style request signing to
-  per-agent keys (rather than the merchant's own secret, which an agent
-  should never hold) is real, scoped follow-up work, not a gap in the
-  underlying mechanism.
 - **Standards alignment.** Stripe's agentic commerce tooling, Google's
   Agent Payments Protocol, and various agent-to-agent authorization
   proposals are all still evolving; `Delegation`/`SpendPolicy` implement

@@ -1,4 +1,20 @@
-import { IsString, MinLength, MaxLength, Matches, IsArray, ArrayNotEmpty, ArrayMaxSize, IsIn, IsBoolean, IsInt, IsOptional, IsNumberString, ValidateNested, Min, Max } from 'class-validator';
+import {
+  IsString,
+  MinLength,
+  MaxLength,
+  Matches,
+  IsArray,
+  ArrayNotEmpty,
+  ArrayMaxSize,
+  IsIn,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsNumberString,
+  ValidateNested,
+  Min,
+  Max,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -17,11 +33,32 @@ export class CreateMerchantDto {
   @Matches(/^[a-zA-Z0-9_-]+$/, { message: 'merchantId may only contain letters, numbers, underscores and hyphens' })
   merchantId: string;
 
-  @ApiProperty({ example: 'Acme Corp' })
+  @ApiProperty({ example: 'Acme Corp', description: 'Display name — not treated as a verified legal identity' })
   @IsString()
   @MinLength(1)
   @MaxLength(255)
   name: string;
+
+  @ApiPropertyOptional({
+    example: 'Acme Corporation Inc.',
+    description:
+      'Registered legal name, if known at onboarding time. Sanctions/watchlist screening runs against this at full confidence when supplied; falls back to `name` at degraded confidence when omitted. See docs/business-domain/merchants.md.',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  legalName?: string;
+
+  @ApiPropertyOptional({
+    example: '12-3456789',
+    description: 'Tax identification number (EIN, VAT number, etc.), if known at onboarding time.',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  taxId?: string;
 
   @ApiProperty({ example: ['MERCHANT'], enum: VALID_ROLES, isArray: true })
   @IsArray()
@@ -41,7 +78,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 'EUR',
-    description: 'Currency to pay this merchant out in, if different from whatever currency a charge was made in. Omit to settle in whatever currency was charged (the default).',
+    description:
+      'Currency to pay this merchant out in, if different from whatever currency a charge was made in. Omit to settle in whatever currency was charged (the default).',
   })
   @IsOptional()
   @IsString()
@@ -51,7 +89,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 1000,
-    description: 'Reserve rate in basis points of each charge\'s net amount (1000 = 10%) withheld into a per-merchant reserve instead of paid out immediately. Omit for no reserve (the default).',
+    description:
+      "Reserve rate in basis points of each charge's net amount (1000 = 10%) withheld into a per-merchant reserve instead of paid out immediately. Omit for no reserve (the default).",
   })
   @IsOptional()
   @IsInt()
@@ -72,7 +111,8 @@ export class CreateMerchantDto {
   @ApiPropertyOptional({
     example: 'PLATFORM',
     enum: ['PLATFORM', 'CONNECTED'],
-    description: 'Marketplace role. Omit for the default, PLATFORM (a flat peer, unchanged from before this existed). CONNECTED requires platformMerchantId.',
+    description:
+      'Marketplace role. Omit for the default, PLATFORM (a flat peer, unchanged from before this existed). CONNECTED requires platformMerchantId.',
   })
   @IsOptional()
   @IsIn(['PLATFORM', 'CONNECTED'])
@@ -80,7 +120,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 'merchant_acme_platform',
-    description: 'Required, and only allowed, when accountType is CONNECTED — the parent platform merchant this account is onboarded under.',
+    description:
+      'Required, and only allowed, when accountType is CONNECTED — the parent platform merchant this account is onboarded under.',
   })
   @IsOptional()
   @IsString()
@@ -89,7 +130,7 @@ export class CreateMerchantDto {
   @ApiPropertyOptional({
     example: 1000,
     description:
-      'Rolling reserve in basis points (1000 = 10%) withheld from this merchant\'s share of each marketplace payout sweep. Only meaningful for a CONNECTED merchant. Omit for no rolling reserve (the default).',
+      "Rolling reserve in basis points (1000 = 10%) withheld from this merchant's share of each marketplace payout sweep. Only meaningful for a CONNECTED merchant. Omit for no rolling reserve (the default).",
   })
   @IsOptional()
   @IsInt()
@@ -99,7 +140,8 @@ export class CreateMerchantDto {
 
   @ApiPropertyOptional({
     example: 90,
-    description: 'Days a payout\'s withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0/omitted.',
+    description:
+      "Days a payout's withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0/omitted.",
   })
   @IsOptional()
   @IsInt()
@@ -111,7 +153,8 @@ export class CreateMerchantDto {
     example: ['STRIPE', 'ADYEN'],
     enum: VALID_PSP_PROVIDERS,
     isArray: true,
-    description: 'PSPs this merchant\'s charges may route through. Omit for the default: every PSP this system has an adapter for (currently STRIPE and ADYEN).',
+    description:
+      "PSPs this merchant's charges may route through. Omit for the default: every PSP this system has an adapter for (currently STRIPE and ADYEN).",
   })
   @IsOptional()
   @IsArray()
@@ -135,7 +178,11 @@ export class UpdateFeeRateDto {
 }
 
 export class FeeTierDto {
-  @ApiProperty({ example: '10000000', description: 'This tier applies once the merchant\'s trailing current-calendar-month SUCCEEDED charge volume (in minor units, same currency as the charge being priced) reaches this amount' })
+  @ApiProperty({
+    example: '10000000',
+    description:
+      "This tier applies once the merchant's trailing current-calendar-month SUCCEEDED charge volume (in minor units, same currency as the charge being priced) reaches this amount",
+  })
   @IsNumberString()
   minVolumeMinorUnits: string;
 
@@ -149,7 +196,8 @@ export class FeeTierDto {
 export class UpdateFeeTiersDto {
   @ApiProperty({
     type: [FeeTierDto],
-    description: 'Volume-based fee schedule, sorted ascending by minVolumeMinorUnits (strictly increasing, no duplicates) — supersedes platformFeeBps once a threshold is reached. Send an empty array to clear it and fall back to the flat platformFeeBps rate for every charge.',
+    description:
+      'Volume-based fee schedule, sorted ascending by minVolumeMinorUnits (strictly increasing, no duplicates) — supersedes platformFeeBps once a threshold is reached. Send an empty array to clear it and fall back to the flat platformFeeBps rate for every charge.',
   })
   @IsArray()
   @ArrayMaxSize(20)
@@ -170,14 +218,93 @@ export class UpdateSettlementCurrencyDto {
   settlementCurrency?: string | null;
 }
 
+export class UpdateDisputeNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel DisputeNotificationDispatcherService uses for this merchant's dispute events.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-disputes',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (DisputeNotificationDispatcherService then skips notifying this merchant entirely).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
+export class UpdateSubscriptionNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel SubscriptionNotificationDispatcherService uses for this merchant's subscription.past_due/subscription.canceled events. Independent of disputeNotificationChannel.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-subscriptions',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (SubscriptionNotificationDispatcherService then skips notifying this merchant entirely).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
+export class UpdateAmlReviewNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel AmlReviewNotificationDispatcherService uses for this merchant's aml_review.flagged event. Independent of disputeNotificationChannel/subscriptionNotificationChannel.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-aml-review',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (AmlReviewNotificationDispatcherService then skips notifying this merchant entirely).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
+export class UpdateMccCodeDto {
+  @ApiPropertyOptional({
+    example: '5411',
+    description:
+      'ISO 18245 Merchant Category Code (4 digits). Drives industryRiskCategory via a static risk lookup table (src/modules/merchant/mcc-risk-lookup.ts) — an MCC not in that table resolves to UNKNOWN, the same as leaving this unset. Omit or send null to clear it.',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}$/, { message: 'mccCode must be exactly 4 digits' })
+  mccCode?: string | null;
+}
+
 export class UpdateReservePolicyDto {
-  @ApiProperty({ example: 1000, description: 'Reserve rate in basis points of each charge\'s net amount (1000 = 10%). 0 disables the reserve.' })
+  @ApiProperty({
+    example: 1000,
+    description: "Reserve rate in basis points of each charge's net amount (1000 = 10%). 0 disables the reserve.",
+  })
   @IsInt()
   @Min(0)
   @Max(10_000)
   reserveBps: number;
 
-  @ApiProperty({ example: 90, description: 'Days a reserve hold sits before it becomes releasable. Ignored if reserveBps is 0.' })
+  @ApiProperty({
+    example: 90,
+    description: 'Days a reserve hold sits before it becomes releasable. Ignored if reserveBps is 0.',
+  })
   @IsInt()
   @Min(0)
   @Max(3650)
@@ -185,13 +312,21 @@ export class UpdateReservePolicyDto {
 }
 
 export class UpdatePayoutReservePolicyDto {
-  @ApiProperty({ example: 1000, description: 'Rolling reserve in basis points withheld from each marketplace payout sweep (1000 = 10%). 0 disables it.' })
+  @ApiProperty({
+    example: 1000,
+    description:
+      'Rolling reserve in basis points withheld from each marketplace payout sweep (1000 = 10%). 0 disables it.',
+  })
   @IsInt()
   @Min(0)
   @Max(10_000)
   payoutReserveBps: number;
 
-  @ApiProperty({ example: 90, description: 'Days a payout\'s withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0.' })
+  @ApiProperty({
+    example: 90,
+    description:
+      "Days a payout's withheld rolling reserve sits before it becomes releasable. Ignored if payoutReserveBps is 0.",
+  })
   @IsInt()
   @Min(0)
   @Max(3650)
@@ -203,7 +338,8 @@ export class UpdatePspEntitlementDto {
     example: ['STRIPE', 'ADYEN'],
     enum: VALID_PSP_PROVIDERS,
     isArray: true,
-    description: 'PSPs this merchant\'s charges may route through. Must be non-empty. Omitting a PSP here does not affect its liveness for other merchants — this is a per-merchant allowlist, not a global kill switch (use the routing health endpoint / circuit breaker for that).',
+    description:
+      "PSPs this merchant's charges may route through. Must be non-empty. Omitting a PSP here does not affect its liveness for other merchants — this is a per-merchant allowlist rather than a global kill switch (use the routing health endpoint / circuit breaker for that).",
   })
   @IsArray()
   @ArrayNotEmpty()
@@ -212,7 +348,11 @@ export class UpdatePspEntitlementDto {
 }
 
 export class UpdateRiskTierAutoDto {
-  @ApiProperty({ example: true, description: 'true: RiskTieringService\'s daily sweep may adjust this merchant\'s reserve policy automatically. false: leave it exactly as set (an operator\'s manual reserve-policy change already sets this to false as a side effect).' })
+  @ApiProperty({
+    example: true,
+    description:
+      "true: RiskTieringService's daily sweep may adjust this merchant's reserve policy automatically. false: leave it exactly as set (an operator's manual reserve-policy change already sets this to false as a side effect).",
+  })
   @IsBoolean()
   enabled: boolean;
 }
@@ -224,7 +364,8 @@ export class UpdateAmbiguousRiskFlagDto {
 
   @ApiProperty({
     example: 'Manually flagging after 3 customer complaints about failed charges this week',
-    description: 'Required — always needs a stated justification, same posture as AmbiguousPaymentService\'s manual resolution audit trail. Setting this also disables ambiguousRiskAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../ambiguous-risk-auto.',
+    description:
+      "Required — always needs a stated justification, same posture as AmbiguousPaymentService's manual resolution audit trail. Setting this also disables ambiguousRiskAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../ambiguous-risk-auto.",
   })
   @IsString()
   @MinLength(1)
@@ -233,9 +374,133 @@ export class UpdateAmbiguousRiskFlagDto {
 }
 
 export class UpdateAmbiguousRiskAutoDto {
-  @ApiProperty({ example: true, description: 'true: AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).' })
+  @ApiProperty({
+    example: true,
+    description:
+      "true: AmbiguousRiskMonitoringService's automated flag/auto-clear logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).",
+  })
   @IsBoolean()
   enabled: boolean;
+}
+
+export class UpdateAmlReviewFlagDto {
+  @ApiProperty({ example: true, description: 'true to flag this merchant for AML review, false to clear the flag.' })
+  @IsBoolean()
+  flagged: boolean;
+
+  @ApiProperty({
+    example: 'Manually flagging pending compliance review of recent chargebacks',
+    description:
+      'Required — same audit-trail posture as UpdateAmbiguousRiskFlagDto.reason. Setting this also disables amlReviewAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../aml-review-auto.',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  reason: string;
+}
+
+export class UpdateAmlReviewAutoDto {
+  @ApiProperty({
+    example: true,
+    description:
+      "true: AmlReviewMonitoringService's automated flag logic may manage this merchant again. false: leave it exactly as set (a manual flag/clear already sets this to false as a side effect).",
+  })
+  @IsBoolean()
+  enabled: boolean;
+}
+
+export class UpdateSanctionsReviewDto {
+  @ApiProperty({
+    example: 'CLEARED',
+    enum: ['CLEARED', 'CONFIRMED'],
+    description:
+      'CLEARED: this match is a false positive — resets sanctionsScreeningStatus back to CLEAR. CONFIRMED: this is a real match — sanctionsScreeningStatus is left exactly as it was (stays visibly flagged).',
+  })
+  @IsIn(['CLEARED', 'CONFIRMED'])
+  resolution: 'CLEARED' | 'CONFIRMED';
+
+  @ApiProperty({
+    example: 'Common name, confirmed via secondary ID document this is not the same individual',
+    description: 'Required — same audit-trail posture as UpdateAmlReviewFlagDto.reason.',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  reason: string;
+}
+
+export class UpdateSanctionsNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel SanctionsNotificationDispatcherService uses for this merchant's sanctions-screening events. Independent of every other *-notification-channel setting.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-sanctions',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (no notification sent until one is set).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
+}
+
+export class BeneficialOwnerDto {
+  @ApiProperty({ example: 'Jane Doe' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  name: string;
+
+  @ApiProperty({
+    example: 30,
+    description:
+      'Ownership percentage (0-100). Real UBO regulations generally require identifying anyone at or above 25% — not enforced here, just recorded.',
+  })
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  ownershipPercentage: number;
+}
+
+export class SubmitKybDto {
+  @ApiProperty({ example: 'Acme Marketplace Sellers LLC', description: 'Registered business/legal name' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  legalName: string;
+
+  @ApiProperty({
+    example: '12-3456789',
+    description:
+      'Tax identification / company registration number — not validated against any real registry by this mock',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  taxId: string;
+
+  @ApiProperty({ example: 'US', description: 'ISO 3166-1 alpha-2 country of registration' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(2)
+  country: string;
+
+  @ApiPropertyOptional({
+    type: [BeneficialOwnerDto],
+    description: 'Beneficial owners, if known at submission time. Omit if not yet collected.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => BeneficialOwnerDto)
+  beneficialOwners?: BeneficialOwnerDto[];
 }
 
 export class SubmitKycDto {
@@ -245,7 +510,11 @@ export class SubmitKycDto {
   @MaxLength(255)
   legalName: string;
 
-  @ApiProperty({ example: '12-3456789', description: 'Tax identification number (EIN, VAT number, etc.) — not validated against any real registry by this mock' })
+  @ApiProperty({
+    example: '12-3456789',
+    description:
+      'Tax identification number (EIN, VAT number, etc.) — not validated against any real registry by this mock',
+  })
   @IsString()
   @MinLength(1)
   @MaxLength(64)
@@ -268,56 +537,262 @@ export class MerchantSummaryDto {
   @ApiProperty({ example: true })
   isActive: boolean;
 
-  @ApiProperty({ example: 150, description: 'Basis points — 150 = 1.5%. The rate actually used for any given charge may be lower if feeTiers is set and this merchant\'s trailing monthly volume has reached a tier.' })
+  @ApiProperty({
+    example: 150,
+    description:
+      "Basis points — 150 = 1.5%. The rate actually used for any given charge may be lower if feeTiers is set and this merchant's trailing monthly volume has reached a tier.",
+  })
   platformFeeBps: number;
 
-  @ApiPropertyOptional({ type: [FeeTierDto], description: 'Volume-based fee schedule, if configured — absent/empty means every charge uses the flat platformFeeBps rate' })
+  @ApiPropertyOptional({
+    type: [FeeTierDto],
+    description:
+      'Volume-based fee schedule, if configured — absent/empty means every charge uses the flat platformFeeBps rate',
+  })
   feeTiers?: FeeTierDto[];
 
   @ApiProperty({ example: 'EUR', nullable: true, description: 'null means "settle in whatever currency was charged"' })
   settlementCurrency: string | null;
 
-  @ApiProperty({ example: 1000, description: 'Basis points of net amount withheld per charge into a reserve — 0 means no reserve' })
+  @ApiProperty({
+    example: 1000,
+    description: 'Basis points of net amount withheld per charge into a reserve — 0 means no reserve',
+  })
   reserveBps: number;
 
   @ApiProperty({ example: 90, description: 'Days a reserve hold sits before it becomes releasable' })
   reserveHoldDays: number;
 
-  @ApiProperty({ example: true, description: 'Whether RiskTieringService\'s daily sweep may adjust reserveBps/reserveHoldDays automatically for this merchant' })
+  @ApiProperty({
+    example: true,
+    description:
+      "Whether RiskTieringService's daily sweep may adjust reserveBps/reserveHoldDays automatically for this merchant",
+  })
   riskTierAutoManaged: boolean;
+
+  @ApiPropertyOptional({ example: '5411', nullable: true, description: 'ISO 18245 Merchant Category Code, if set' })
+  mccCode?: string | null;
+
+  @ApiProperty({
+    example: 'UNKNOWN',
+    enum: ['LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'],
+    description: 'Derived from mccCode via a static risk lookup table — UNKNOWN when no mccCode is set',
+  })
+  industryRiskCategory: 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
 
   @ApiProperty({ example: 'PLATFORM', enum: ['PLATFORM', 'CONNECTED'] })
   accountType: 'PLATFORM' | 'CONNECTED';
 
-  @ApiProperty({ example: null, nullable: true, description: 'The parent platform merchant\'s merchantId — only set when accountType is CONNECTED' })
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: "The parent platform merchant's merchantId — only set when accountType is CONNECTED",
+  })
   platformMerchantId: string | null;
 
-  @ApiProperty({ example: 1000, description: 'Basis points withheld from each marketplace payout sweep as a rolling reserve — 0 means none. Only meaningful for a CONNECTED merchant' })
+  @ApiProperty({
+    example: 1000,
+    description:
+      'Basis points withheld from each marketplace payout sweep as a rolling reserve — 0 means none. Only meaningful for a CONNECTED merchant',
+  })
   payoutReserveBps: number;
 
-  @ApiProperty({ example: 90, description: 'Days a payout\'s withheld rolling reserve sits before it becomes releasable' })
+  @ApiProperty({
+    example: 90,
+    description: "Days a payout's withheld rolling reserve sits before it becomes releasable",
+  })
   payoutReserveHoldDays: number;
 
-  @ApiProperty({ example: 'NOT_STARTED', enum: ['NOT_STARTED', 'VERIFIED', 'REJECTED'], description: 'Onboarding/KYC review status — only meaningful for a CONNECTED merchant, gates payouts (not charges)' })
-  kycStatus: 'NOT_STARTED' | 'VERIFIED' | 'REJECTED';
+  @ApiProperty({
+    example: 'NOT_STARTED',
+    enum: ['NOT_STARTED', 'PENDING_REVIEW', 'VERIFIED', 'REJECTED'],
+    description:
+      'Onboarding/KYC review status — only meaningful for a CONNECTED merchant, gates payouts (not charges). PENDING_REVIEW only occurs with KYC_PROVIDER=persona (a real async-reviewing provider); the mock provider always resolves straight to VERIFIED/REJECTED.',
+  })
+  kycStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
 
-  @ApiProperty({ example: ['STRIPE', 'ADYEN'], enum: VALID_PSP_PROVIDERS, isArray: true, description: 'PSPs this merchant\'s charges may route through' })
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      "The KYC provider's own application id — set while kycStatus is PENDING_REVIEW, used to look this merchant back up when POST /webhooks/kyc reports a decision.",
+  })
+  kycApplicationId: string | null;
+
+  @ApiProperty({
+    example: 'NOT_STARTED',
+    enum: ['NOT_STARTED', 'PENDING_REVIEW', 'VERIFIED', 'REJECTED'],
+    description:
+      'Business (not individual) verification status — independent of kycStatus, only meaningful for a CONNECTED merchant. Not currently wired into any payout gate; see docs/business-domain/merchants.md.',
+  })
+  kybStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      "The KYB provider's own application id — set while kybStatus is PENDING_REVIEW, used to look this merchant back up when POST /webhooks/kyb reports a decision.",
+  })
+  kybApplicationId: string | null;
+
+  @ApiProperty({
+    example: ['STRIPE', 'ADYEN'],
+    enum: VALID_PSP_PROVIDERS,
+    isArray: true,
+    description: "PSPs this merchant's charges may route through",
+  })
   enabledPspProviders: string[];
 
-  @ApiProperty({ example: false, description: 'Passive risk-observation flag — set when this merchant\'s AMBIGUOUS payment incidents cross a volume or streak threshold. Does not affect how charges are processed; visibility only.' })
+  @ApiProperty({
+    example: false,
+    description:
+      "Passive risk-observation flag — set when this merchant's AMBIGUOUS payment incidents cross a volume or streak threshold. Does not affect how charges are processed; visibility only.",
+  })
   ambiguousRiskFlagged: boolean;
 
   @ApiProperty({ example: null, nullable: true })
   ambiguousRiskFlaggedAt: string | null;
 
-  @ApiProperty({ example: null, nullable: true, description: 'Why this merchant is flagged — automated summary or an operator\'s own stated reason' })
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: "Why this merchant is flagged — automated summary or an operator's own stated reason",
+  })
   ambiguousRiskFlagReason: string | null;
 
-  @ApiProperty({ example: null, nullable: true, description: 'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically' })
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically',
+  })
   ambiguousRiskFlaggedBy: string | null;
 
-  @ApiProperty({ example: true, description: 'Whether AmbiguousRiskMonitoringService\'s automated flag/auto-clear logic may manage this merchant\'s ambiguousRiskFlagged' })
+  @ApiProperty({
+    example: true,
+    description:
+      "Whether AmbiguousRiskMonitoringService's automated flag/auto-clear logic may manage this merchant's ambiguousRiskFlagged",
+  })
   ambiguousRiskAutoManaged: boolean;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel this merchant's dispute.created/dispute.resolved notifications go out on.",
+  })
+  disputeNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no notification is sent for this merchant.',
+  })
+  disputeNotificationTarget: string | null;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel this merchant's subscription.past_due/subscription.canceled notifications go out on. Independent of disputeNotificationChannel.",
+  })
+  subscriptionNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no subscription notification is sent for this merchant.',
+  })
+  subscriptionNotificationTarget: string | null;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Passive AML-review observation flag (HIGH industryRiskCategory merchants only) — set when AmlReviewMonitoringService sees enough hard-decline events in a rolling window. Does not affect how charges are processed; visibility only.',
+  })
+  amlReviewFlagged: boolean;
+
+  @ApiProperty({ example: null, nullable: true })
+  amlReviewFlaggedAt: string | null;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: "Why this merchant is flagged — automated summary or an operator's own stated reason",
+  })
+  amlReviewFlagReason: string | null;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      'merchantId of the ADMIN/OPERATOR who manually flagged/cleared this merchant — null when the current state was set automatically',
+  })
+  amlReviewFlaggedBy: string | null;
+
+  @ApiProperty({
+    example: true,
+    description:
+      "Whether AmlReviewMonitoringService's automated flag logic may manage this merchant's amlReviewFlagged",
+  })
+  amlReviewAutoManaged: boolean;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel this merchant's aml_review.flagged notification goes out on, if it ever trips.",
+  })
+  amlReviewNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no AML-review notification is sent for this merchant.',
+  })
+  amlReviewNotificationTarget: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true, description: 'Registered legal name, if supplied' })
+  legalName?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true, description: 'Tax identification number, if supplied' })
+  taxId?: string | null;
+
+  @ApiProperty({
+    example: 'CLEAR',
+    enum: ['NOT_SCREENED', 'CLEAR', 'POTENTIAL_MATCH', 'HIT'],
+    description:
+      'Sanctions/watchlist screening outcome. A HIT blocks the onboarding/KYC action that would have produced it — a HIT seen here only ever comes from the periodic sweep finding a merchant clean at onboarding but since listed.',
+  })
+  sanctionsScreeningStatus: 'NOT_SCREENED' | 'CLEAR' | 'POTENTIAL_MATCH' | 'HIT';
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  sanctionsScreenedAt?: string | null;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description: 'The matched list entry and score, if any — null when CLEAR/NOT_SCREENED',
+  })
+  sanctionsMatchDetails?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  sanctionsReviewedBy?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  sanctionsReviewedAt?: string | null;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel this merchant's sanctions-screening notifications go out on.",
+  })
+  sanctionsNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description: 'Channel-specific destination — null means no sanctions notification is sent for this merchant.',
+  })
+  sanctionsNotificationTarget?: string | null;
 
   @ApiProperty()
   createdAt: string;

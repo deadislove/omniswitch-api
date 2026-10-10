@@ -67,7 +67,7 @@ npm run job:create-partitions
 through `monthsAhead` ahead, on both tables) — a fixed number every
 run. `partitionsCreated` is the list of tables this specific run
 actually had to create; an **empty array is the expected steady-state
-result**, not a sign something's wrong — it means every partition in
+result**, rather than a sign something's wrong — it means every partition in
 range already existed. Only the first run after a gap (or the very
 first run after this CronJob was deployed) should show entries here.
 
@@ -75,7 +75,7 @@ first run after this CronJob was deployed) should show entries here.
 
 Child partitions are named `payments_partitioned_YYYY_MM` /
 `ledger_outbox_partitioned_YYYY_MM` — **not** `payments_YYYY_MM` — even
-though the parent tables are `payments`/`ledger_outbox`, not
+though the parent tables are `payments`/`ledger_outbox`, never
 `payments_partitioned`. This job matches that existing naming
 convention deliberately; see
 [`../../technical/databases/architecture.md`](../../technical/databases/architecture.md#partitioning)
@@ -86,10 +86,10 @@ partitions).
 ## Failure modes
 
 This job runs a handful of lightweight DDL statements
-(`CREATE TABLE IF NOT EXISTS ... PARTITION OF`), not a data-volume
-operation — `activeDeadlineSeconds: 600` in the CronJob spec reflects
+(`CREATE TABLE IF NOT EXISTS ... PARTITION OF`) rather than a
+data-volume operation — `activeDeadlineSeconds: 600` in the CronJob spec reflects
 that. A failure here is almost always a connection issue or a
 permissions problem (the DB role running migrations/jobs needs
-`CREATE` on the parent tables), not a data problem. It's always safe
+`CREATE` on the parent tables) — rarely a data problem. It's always safe
 to just re-run — `IF NOT EXISTS` means a partial prior run left
 nothing to clean up.

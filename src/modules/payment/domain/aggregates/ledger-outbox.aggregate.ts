@@ -41,14 +41,7 @@ export class LedgerOutboxEvent {
     eventType: string;
     entries: LedgerEntry[];
   }): LedgerOutboxEvent {
-    return new LedgerOutboxEvent(
-      params.id,
-      params.paymentId,
-      params.eventType,
-      params.entries,
-      'PENDING',
-      new Date(),
-    );
+    return new LedgerOutboxEvent(params.id, params.paymentId, params.eventType, params.entries, 'PENDING', new Date());
   }
 
   static reconstitute(params: {
@@ -97,9 +90,7 @@ export class LedgerOutboxEvent {
 
     for (const [currency, { debits, credits }] of byCurrency) {
       if (debits !== credits) {
-        throw new Error(
-          `Double-entry imbalance for ${currency}: debits=${debits}, credits=${credits}`,
-        );
+        throw new Error(`Double-entry imbalance for ${currency}: debits=${debits}, credits=${credits}`);
       }
     }
   }
@@ -116,7 +107,7 @@ export class LedgerOutboxEvent {
    * currency than the charge would leave that group permanently
    * unbalanced. Instead it's two separately-balanced legs linked by an
    * FX_CLEARING account — standard double-entry treatment for a currency
-   * conversion, not a special case bolted onto validateDoubleEntry() itself:
+   * conversion rather than a special case bolted onto validateDoubleEntry() itself:
    *   - Charge-currency group: PSP_SETTLEMENT debit, FEE credit,
    *     FX_CLEARING credit (net amount) — still balances exactly as before.
    *   - Settlement-currency group: FX_CLEARING debit, MERCHANT credit
@@ -128,8 +119,8 @@ export class LedgerOutboxEvent {
    * aggregate that tracks when it becomes releasable). Always taken out of
    * the *charge*-currency net amount, before any settlement conversion —
    * a reserve is the platform temporarily not paying out funds it already
-   * holds in the charge currency, not a separate currency-conversion
-   * question. That composes cleanly with settlementConversion above: the
+   * holds in the charge currency — a distinct concern from
+   * currency conversion. That composes cleanly with settlementConversion above: the
    * RESERVE credit is just a fourth entry in the charge-currency group
    * (which still balances, since it's carved out of the same net amount
    * that would otherwise have gone entirely to MERCHANT or FX_CLEARING),
@@ -144,13 +135,15 @@ export class LedgerOutboxEvent {
    * whatever's left after all splits still goes to `params.merchantId` (a
    * split doesn't have to add up to the full payout — see
    * ChargeLedgerParamsResolverService.resolve()'s SPLIT_EXCEEDS_NET_AMOUNT
-   * check for why it never exceeds it). Mutually exclusive with
-   * `settlementConversion` by construction (the resolver rejects a split
-   * request for a merchant with an active settlement-currency conversion,
-   * since deciding which FX rate applies to a charge that's partly
-   * "platform pricing" and partly "connected-account pricing" is a real
-   * design question this system doesn't attempt) — this method doesn't
-   * re-check that, it trusts the resolver already did.
+   * check for why it never exceeds it). `splits` and `settlementConversion`
+   * can now coexist: each split may carry its *own* `settlementConversion`
+   * (that recipient's own settlement currency, independent rate), and the
+   * top-level `settlementConversion` — if present — converts whatever's
+   * left over after all splits (`remaining` below) rather than the full payout.
+   * A charge with no splits is just the degenerate case where `remaining`
+   * equals the whole payout. This method doesn't re-validate the split
+   * amounts/recipients, it trusts ChargeLedgerParamsResolverService.resolve()
+   * already did.
    */
   static createChargeEntries(params: {
     id: string;
@@ -169,6 +162,11 @@ export class LedgerOutboxEvent {
     splits?: {
       merchantId: string;
       amount: Money;
+      settlementConversion?: {
+        convertedAmount: Money;
+        rate: number;
+        provider: string;
+      };
     }[];
   }): LedgerOutboxEvent {
     const netAmount = params.amount.subtract(params.platformFee);
@@ -201,10 +199,38 @@ export class LedgerOutboxEvent {
       });
     }
 
-    if (params.splits && params.splits.length > 0) {
-      let remaining = payoutAmount;
-      for (const split of params.splits) {
-        remaining = remaining.subtract(split.amount);
+    let remaining = payoutAmount;
+    for (const split of params.splits ?? []) {
+      remaining = remaining.subtract(split.amount);
+      if (split.settlementConversion) {
+        const { convertedAmount, rate, provider } = split.settlementConversion;
+        const fxDescription =
+          `FX conversion (split) ${split.amount.currency.code}->${convertedAmount.currency.code} ` +
+          `@ ${rate} (${provider}) for payment ${params.paymentId}`;
+        entries.push(
+          {
+            accountId: 'FX_CLEARING_ACCOUNT',
+            accountType: 'FX_CLEARING',
+            entryType: 'CREDIT',
+            amount: split.amount,
+            description: fxDescription,
+          },
+          {
+            accountId: 'FX_CLEARING_ACCOUNT',
+            accountType: 'FX_CLEARING',
+            entryType: 'DEBIT',
+            amount: convertedAmount,
+            description: fxDescription,
+          },
+          {
+            accountId: split.merchantId,
+            accountType: 'MERCHANT',
+            entryType: 'CREDIT',
+            amount: convertedAmount,
+            description: `Marketplace split payout (settled in ${convertedAmount.currency.code}) for payment ${params.paymentId}`,
+          },
+        );
+      } else {
         entries.push({
           accountId: split.merchantId,
           accountType: 'MERCHANT',
@@ -213,51 +239,49 @@ export class LedgerOutboxEvent {
           description: `Marketplace split payout for payment ${params.paymentId}`,
         });
       }
-      if (!remaining.isZero()) {
+    }
+
+    if (!remaining.isZero()) {
+      if (params.settlementConversion) {
+        const { convertedNetAmount, rate, provider } = params.settlementConversion;
+        const fxDescription =
+          `FX conversion ${remaining.currency.code}->${convertedNetAmount.currency.code} ` +
+          `@ ${rate} (${provider}) for payment ${params.paymentId}`;
+        entries.push(
+          {
+            accountId: 'FX_CLEARING_ACCOUNT',
+            accountType: 'FX_CLEARING',
+            entryType: 'CREDIT',
+            amount: remaining,
+            description: fxDescription,
+          },
+          {
+            accountId: 'FX_CLEARING_ACCOUNT',
+            accountType: 'FX_CLEARING',
+            entryType: 'DEBIT',
+            amount: convertedNetAmount,
+            description: fxDescription,
+          },
+          {
+            accountId: params.merchantId,
+            accountType: 'MERCHANT',
+            entryType: 'CREDIT',
+            amount: convertedNetAmount,
+            description: `Payment received (settled in ${convertedNetAmount.currency.code}) for payment ${params.paymentId}`,
+          },
+        );
+      } else {
         entries.push({
           accountId: params.merchantId,
           accountType: 'MERCHANT',
           entryType: 'CREDIT',
           amount: remaining,
-          description: `Payment received (after marketplace split) for payment ${params.paymentId}`,
+          description:
+            params.splits && params.splits.length > 0
+              ? `Payment received (after marketplace split) for payment ${params.paymentId}`
+              : `Payment received for payment ${params.paymentId}`,
         });
       }
-    } else if (params.settlementConversion) {
-      const { convertedNetAmount, rate, provider } = params.settlementConversion;
-      const fxDescription =
-        `FX conversion ${payoutAmount.currency.code}->${convertedNetAmount.currency.code} ` +
-        `@ ${rate} (${provider}) for payment ${params.paymentId}`;
-      entries.push(
-        {
-          accountId: 'FX_CLEARING_ACCOUNT',
-          accountType: 'FX_CLEARING',
-          entryType: 'CREDIT',
-          amount: payoutAmount,
-          description: fxDescription,
-        },
-        {
-          accountId: 'FX_CLEARING_ACCOUNT',
-          accountType: 'FX_CLEARING',
-          entryType: 'DEBIT',
-          amount: convertedNetAmount,
-          description: fxDescription,
-        },
-        {
-          accountId: params.merchantId,
-          accountType: 'MERCHANT',
-          entryType: 'CREDIT',
-          amount: convertedNetAmount,
-          description: `Payment received (settled in ${convertedNetAmount.currency.code}) for payment ${params.paymentId}`,
-        },
-      );
-    } else {
-      entries.push({
-        accountId: params.merchantId,
-        accountType: 'MERCHANT',
-        entryType: 'CREDIT',
-        amount: payoutAmount,
-        description: `Payment received for payment ${params.paymentId}`,
-      });
     }
 
     return LedgerOutboxEvent.create({
@@ -309,6 +333,49 @@ export class LedgerOutboxEvent {
   }
 
   /**
+   * Factory: Withhold *more* into an already-`HELD` reserve — the
+   * opposite direction of createReserveReleaseEntries() above. Booked
+   * when RiskTieringService escalates a merchant's tier while one of
+   * their charges is still holding a reserve at the *old*, lower rate
+   * (see ReserveService.topUpHeldReservesForMerchant()) — the merchant's
+   * MERCHANT balance already received the full net amount at charge
+   * time (net of the original, smaller reserve slice), so topping up the
+   * reserve now means clawing part of that back, same direction a
+   * platform pulling money it's already credited would take in any other
+   * ledger.
+   */
+  static createReserveTopUpEntries(params: {
+    id: string;
+    paymentId: string;
+    merchantId: string;
+    amount: Money;
+  }): LedgerOutboxEvent {
+    const entries: LedgerEntry[] = [
+      {
+        accountId: params.merchantId,
+        accountType: 'MERCHANT',
+        entryType: 'DEBIT',
+        amount: params.amount,
+        description: `Reserve topped up (risk tier escalation) for payment ${params.paymentId}`,
+      },
+      {
+        accountId: `${params.merchantId}_RESERVE`,
+        accountType: 'RESERVE',
+        entryType: 'CREDIT',
+        amount: params.amount,
+        description: `Reserve topped up (risk tier escalation) for payment ${params.paymentId}`,
+      },
+    ];
+
+    return LedgerOutboxEvent.create({
+      id: params.id,
+      paymentId: params.paymentId,
+      eventType: 'RESERVE_TOPPED_UP',
+      entries,
+    });
+  }
+
+  /**
    * Factory: Create refund ledger entries.
    *
    * `settlementConversion` — present when the *original charge* this
@@ -320,11 +387,11 @@ export class LedgerOutboxEvent {
    * lines that never net against each other, silently leaving the
    * merchant either short-refunded or over-refunded depending on which
    * way the rate moved since the charge. Uses the *original* charge-time
-   * rate, not a fresh one — refunding at a different rate than the money
+   * rate rather than a fresh one — refunding at a different rate than the money
    * was paid out at would just create a new mismatch instead of fixing
    * the old one. Same two-leg-via-FX_CLEARING shape as
    * createChargeEntries()'s settlementConversion, just with every entry
-   * type flipped (this reverses a payout, not creates one):
+   * type flipped (this reverses a payout instead of creating one):
    *   - Charge-currency group: PSP_SETTLEMENT credit, FX_CLEARING debit
    *     (refund amount) — balances on its own.
    *   - Settlement-currency group: FX_CLEARING credit, MERCHANT debit
@@ -336,12 +403,16 @@ export class LedgerOutboxEvent {
    * payment would debit only the charging (platform) merchant for the
    * full amount, even though part of that money was never credited to the
    * platform in the first place — see this method's `splits` param
-   * docblock below for the proportional-reversal math. Mutually exclusive
-   * with `settlementConversion` by construction (a merchant with an
-   * active settlement conversion can't create a split charge — see
-   * ChargeLedgerParamsResolverService.resolve()'s
-   * SPLIT_WITH_SETTLEMENT_CONVERSION_UNSUPPORTED check) — this method
-   * doesn't re-check that, it trusts the caller already did.
+   * docblock below for the proportional-reversal math. `splits` and
+   * `settlementConversion` can now coexist (mirroring createChargeEntries()):
+   * each split may replay its *own* original rate against its proportional
+   * share, and the top-level `settlementConversion` — if present — replays
+   * the platform's own original rate against whatever's left after all
+   * split debits (`platformDebitMinorUnits` below) rather than the full
+   * refund amount. Both `rate`/`provider` here are the *original charge-time*
+   * values (see PaymentAggregate.recordSettlementConversion()/recordSplits()) —
+   * this method computes the converted amount itself from the correctly
+   * proportioned base, the caller doesn't pre-convert.
    */
   static createRefundEntries(params: {
     id: string;
@@ -349,7 +420,7 @@ export class LedgerOutboxEvent {
     merchantId: string;
     refundAmount: Money;
     settlementConversion?: {
-      convertedRefundAmount: Money;
+      currency: string;
       rate: number;
       provider: string;
     };
@@ -357,18 +428,25 @@ export class LedgerOutboxEvent {
      * The *original* charge-time splits and the full original charge
      * amount they were carved out of — needed together, since a partial
      * refund reverses each recipient's share in the same proportion the
-     * charge itself split (refundAmount / originalChargeAmount), not a
+     * charge itself split (refundAmount / originalChargeAmount), never a
      * fixed amount. Computed in integer minor units (floor division per
      * split, remainder absorbed by the platform's own debit) rather than
      * floating-point fractions, so a full refund (refundAmount ==
      * originalChargeAmount) reproduces each split's exact original amount
      * with no rounding drift, and a partial refund can never claw back
      * more than `refundAmount` in total regardless of how many splits
-     * there are.
+     * there are. Each split's own `settlementConversion` (if the original
+     * charge converted that recipient's share) is the *original* rate,
+     * replayed against this split's proportional debit.
      */
     splits?: {
       merchantId: string;
       amount: Money;
+      settlementConversion?: {
+        currency: string;
+        rate: number;
+        provider: string;
+      };
     }[];
     originalChargeAmount?: Money;
   }): LedgerOutboxEvent {
@@ -382,6 +460,52 @@ export class LedgerOutboxEvent {
       },
     ];
 
+    const pushDebit = (accountId: string, amount: Money, descriptionSuffix: string) => {
+      entries.push({
+        accountId,
+        accountType: 'MERCHANT',
+        entryType: 'DEBIT',
+        amount,
+        description: `${descriptionSuffix} for payment ${params.paymentId}`,
+      });
+    };
+
+    const pushConvertedDebit = (
+      accountId: string,
+      debitAmount: Money,
+      conversion: { currency: string; rate: number; provider: string },
+      descriptionSuffix: string,
+    ) => {
+      const convertedAmount = debitAmount.convertTo(conversion.currency, conversion.rate, conversion.provider);
+      const fxDescription =
+        `FX conversion (refund) ${debitAmount.currency.code}->${convertedAmount.currency.code} ` +
+        `@ ${conversion.rate} (${conversion.provider}) for payment ${params.paymentId}`;
+      entries.push(
+        {
+          accountId: 'FX_CLEARING_ACCOUNT',
+          accountType: 'FX_CLEARING',
+          entryType: 'DEBIT',
+          amount: debitAmount,
+          description: fxDescription,
+        },
+        {
+          accountId: 'FX_CLEARING_ACCOUNT',
+          accountType: 'FX_CLEARING',
+          entryType: 'CREDIT',
+          amount: convertedAmount,
+          description: fxDescription,
+        },
+        {
+          accountId,
+          accountType: 'MERCHANT',
+          entryType: 'DEBIT',
+          amount: convertedAmount,
+          description: `${descriptionSuffix} (settled in ${convertedAmount.currency.code}) for payment ${params.paymentId}`,
+        },
+      );
+    };
+
+    let platformDebitMinorUnits = params.refundAmount.amountMinorUnits;
     if (params.splits && params.splits.length > 0 && params.originalChargeAmount) {
       const refundMinorUnits = params.refundAmount.amountMinorUnits;
       const chargeMinorUnits = params.originalChargeAmount.amountMinorUnits;
@@ -390,61 +514,31 @@ export class LedgerOutboxEvent {
         const debitMinorUnits = (split.amount.amountMinorUnits * refundMinorUnits) / chargeMinorUnits;
         connectedTotal += debitMinorUnits;
         if (debitMinorUnits > 0n) {
-          entries.push({
-            accountId: split.merchantId,
-            accountType: 'MERCHANT',
-            entryType: 'DEBIT',
-            amount: Money.fromMinorUnits(debitMinorUnits, params.refundAmount.currency.code),
-            description: `Marketplace split refund debit for payment ${params.paymentId}`,
-          });
+          const debitAmount = Money.fromMinorUnits(debitMinorUnits, params.refundAmount.currency.code);
+          if (split.settlementConversion) {
+            pushConvertedDebit(
+              split.merchantId,
+              debitAmount,
+              split.settlementConversion,
+              'Marketplace split refund debit',
+            );
+          } else {
+            pushDebit(split.merchantId, debitAmount, 'Marketplace split refund debit');
+          }
         }
       }
-      const platformDebitMinorUnits = refundMinorUnits - connectedTotal;
-      if (platformDebitMinorUnits > 0n) {
-        entries.push({
-          accountId: params.merchantId,
-          accountType: 'MERCHANT',
-          entryType: 'DEBIT',
-          amount: Money.fromMinorUnits(platformDebitMinorUnits, params.refundAmount.currency.code),
-          description: `Refund debit (after marketplace split reversal) for payment ${params.paymentId}`,
-        });
+      platformDebitMinorUnits = refundMinorUnits - connectedTotal;
+    }
+
+    if (platformDebitMinorUnits > 0n) {
+      const debitAmount = Money.fromMinorUnits(platformDebitMinorUnits, params.refundAmount.currency.code);
+      const descriptionSuffix =
+        params.splits && params.splits.length > 0 ? 'Refund debit (after marketplace split reversal)' : 'Refund debit';
+      if (params.settlementConversion) {
+        pushConvertedDebit(params.merchantId, debitAmount, params.settlementConversion, descriptionSuffix);
+      } else {
+        pushDebit(params.merchantId, debitAmount, descriptionSuffix);
       }
-    } else if (params.settlementConversion) {
-      const { convertedRefundAmount, rate, provider } = params.settlementConversion;
-      const fxDescription =
-        `FX conversion (refund) ${params.refundAmount.currency.code}->${convertedRefundAmount.currency.code} ` +
-        `@ ${rate} (${provider}) for payment ${params.paymentId}`;
-      entries.push(
-        {
-          accountId: 'FX_CLEARING_ACCOUNT',
-          accountType: 'FX_CLEARING',
-          entryType: 'DEBIT',
-          amount: params.refundAmount,
-          description: fxDescription,
-        },
-        {
-          accountId: 'FX_CLEARING_ACCOUNT',
-          accountType: 'FX_CLEARING',
-          entryType: 'CREDIT',
-          amount: convertedRefundAmount,
-          description: fxDescription,
-        },
-        {
-          accountId: params.merchantId,
-          accountType: 'MERCHANT',
-          entryType: 'DEBIT',
-          amount: convertedRefundAmount,
-          description: `Refund debit (settled in ${convertedRefundAmount.currency.code}) for payment ${params.paymentId}`,
-        },
-      );
-    } else {
-      entries.push({
-        accountId: params.merchantId,
-        accountType: 'MERCHANT',
-        entryType: 'DEBIT',
-        amount: params.refundAmount,
-        description: `Refund debit for payment ${params.paymentId}`,
-      });
     }
 
     return LedgerOutboxEvent.create({

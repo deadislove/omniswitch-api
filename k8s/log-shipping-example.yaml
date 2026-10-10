@@ -1,0 +1,195 @@
+# ILLUSTRATIVE EXAMPLE — not applied by any deploy path in this repo, and
+# not referenced by deployment.yaml/kustomization. Same posture as
+# k8s/external-secrets-example.yaml: shows the shape of a real fix for
+# security-and-compliance.md's Req 10.5 gap ("logs are structured but not
+# shipped anywhere tamper-evident"), not a verified, ready-to-apply
+# deployment — this repo has no real log backend (SIEM/Loki/Elasticsearch/
+# Splunk) or cluster to test it against.
+#
+# What this closes, and what it doesn't:
+# - CLOSES: log centralization. `omniswitch-api` pods already write
+#   structured JSON to stdout in production (see
+#   src/shared/logging/logger.config.ts) — that's exactly what a
+#   node-level Fluent Bit DaemonSet is built to tail
+#   (/var/log/containers/*.log, populated by the container runtime
+#   regardless of anything this app does). This manifest is that DaemonSet,
+#   forwarding to a pluggable HTTP endpoint.
+# - DOES NOT CLOSE: tamper-evidence. "Centralized" and "tamper-evident" are
+#   different properties — the second one has to come from whatever
+#   backend FLUENT_BIT_OUTPUT_HOST points at (e.g. object-lock/WORM
+#   storage, an append-only Loki index, a SIEM with its own integrity
+#   guarantees). Pointing this at a plain mutable datastore gets you
+#   centralization without tamper-evidence, which is not what Req 10.5
+#   actually asks for — pick a backend that provides it before relying on
+#   this for a compliance-relevant audit trail.
+#
+# Requires: a real value for FLUENT_BIT_OUTPUT_HOST/PORT below (the `http`
+# output plugin is a reasonable default for many HTTP-ingest backends —
+# swap the whole [OUTPUT] block for `loki`/`es`/`splunk`/`forward` if your
+# backend has a purpose-built plugin instead).
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: payments
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit-read
+rules:
+  # Kubernetes filter (below) enriches each log line with pod
+  # labels/namespace/container name — needs read access to look them up.
+  - apiGroups: ['']
+    resources: ['pods', 'namespaces']
+    verbs: ['get', 'list', 'watch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit-read
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit
+    namespace: payments
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: payments
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  parsers.conf
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*omniswitch-api*.log
+        # containerd's CRI log format ("<ts> <stream> <flags> <msg>") wraps
+        # this app's own JSON line — Docker's runtime uses a different
+        # wrapper format. Confirm which CRI your nodes actually run and
+        # swap Parser accordingly; this repo has no cluster to verify
+        # either against.
+        Parser            cri
+        Tag               omniswitch.*
+        Refresh_Interval  5
+        Mem_Buf_Limit     10MB
+
+    [FILTER]
+        # Parses this app's own JSON (the `message` field the `cri` parser
+        # above extracts) into structured fields, rather than shipping it
+        # as one opaque string — same structured-log intent
+        # logger.config.ts already has, preserved through the pipeline.
+        Name    parser
+        Match   omniswitch.*
+        Key_Name log
+        Parser  omniswitch_json
+        Reserve_Data On
+
+    [FILTER]
+        Name                kubernetes
+        Match               omniswitch.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Merge_Log           On
+        Keep_Log            Off
+
+    [OUTPUT]
+        Name          http
+        Match         omniswitch.*
+        Host          ${FLUENT_BIT_OUTPUT_HOST}
+        Port          ${FLUENT_BIT_OUTPUT_PORT}
+        URI           /
+        Format        json
+        tls           On
+        tls.verify    On
+
+  parsers.conf: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<flags>[^ ]*) (?<log>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        omniswitch_json
+        Format      json
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: payments
+  labels:
+    app: fluent-bit
+    workload-type: log-shipper
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+        workload-type: log-shipper
+    spec:
+      serviceAccountName: fluent-bit
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:3.1.9
+          env:
+            # LOG_SHIPPING_HOST/PORT don't exist in k8s/configmap.yaml —
+            # add them there (pointed at your real backend) before this
+            # manifest would actually apply cleanly; left out of the base
+            # configmap deliberately, same as every other value in this
+            # file, so this stays inert until someone adopts it on purpose.
+            - name: FLUENT_BIT_OUTPUT_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: LOG_SHIPPING_HOST
+            - name: FLUENT_BIT_OUTPUT_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: omniswitch-config
+                  key: LOG_SHIPPING_PORT
+          resources:
+            requests:
+              cpu: '50m'
+              memory: '64Mi'
+            limits:
+              cpu: '200m'
+              memory: '128Mi'
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: config
+              mountPath: /fluent-bit/etc
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: config
+          configMap:
+            name: fluent-bit-config

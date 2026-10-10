@@ -29,13 +29,13 @@ const HALF_OPEN_TRIAL_CALLS = 1;
 // for any of them to actually fail — the same "slow call rate" trip
 // Resilience4j's SlowCallRateThreshold config implements.
 // 5s is well under the adapters' 30s hard abort, so this fires on real
-// degradation, not on ordinary latency variance.
+// degradation rather than ordinary latency variance.
 const SLOW_CALL_THRESHOLD_MS = 5000;
 // Below this many recent calls, the rate isn't a reliable signal yet — one
 // slow call out of one is 100% "slow" but tells us nothing.
 const SLOW_CALL_MIN_CALLS = 5;
 // Matches Resilience4j's typical default posture: roughly half of recent
-// calls running slow is treated as a real degradation, not noise.
+// calls running slow is treated as a real degradation rather than noise.
 const SLOW_CALL_RATE_THRESHOLD = 0.5;
 // How long a run of failures stays "live" for the OPEN-trip decision.
 // failureCount's TTL is refreshed on every recordFailure() call (below), so
@@ -74,8 +74,8 @@ const METRICS_BUCKET_TTL_SECONDS = (METRICS_WINDOW_MINUTES + 5) * 60;
  * shares one view per PSP provider.
  *
  * Reported metrics (successCount/totalRequests/avgLatencyMs, via
- * getMetrics()) cover a rolling METRICS_WINDOW_MINUTES-minute window, not
- * all-time — they used to be plain cumulative counters that never reset for
+ * getMetrics()) cover a rolling METRICS_WINDOW_MINUTES-minute window rather
+ * than all-time — they used to be plain cumulative counters that never reset for
  * as long as the Redis keys lived, meaning a bad incident from months ago
  * stayed baked into the reported success rate forever. Fixed by bucketing
  * writes into per-minute keys (each with its own short TTL) and summing the
@@ -108,7 +108,7 @@ export class RedisCircuitBreakerService {
     // TTL is refreshed on every write to that bucket, which is harmless
     // here (unlike the rate limiter, over-extending this TTL doesn't change
     // the window's meaning — each bucket's *key name* is what pins it to a
-    // specific minute, not its expiry).
+    // specific minute, independent of its expiry).
     await this.cache.pipeline([
       ['incrby', bucketKey, by],
       ['expire', bucketKey, METRICS_BUCKET_TTL_SECONDS],
@@ -155,11 +155,11 @@ export class RedisCircuitBreakerService {
    * yet, or if it's HALF_OPEN and the HALF_OPEN_TRIAL_CALLS budget for
    * this recovery episode is already spent.
    *
-   * HALF_OPEN only ever gates a small, fixed number of trial calls, not
+   * HALF_OPEN only ever gates a small, fixed number of trial calls rather than
    * every caller — once the state flips, every replica's concurrent
    * traffic would otherwise pass through simultaneously (the exact
    * opposite of what HALF_OPEN exists to do: send a struggling PSP a
-   * small probe, not a resumed full burst right as it starts recovering).
+   * small probe rather than a resumed full burst right as it starts recovering).
    * The trial budget is a shared Redis INCR, so it's enforced across
    * every replica the same way the rest of this breaker's state is.
    *
@@ -238,7 +238,7 @@ export class RedisCircuitBreakerService {
       isSlow ? this.cache.expire(slowCallKey, FAILURE_WINDOW_SECONDS) : Promise.resolve(),
     ]);
 
-    // Evaluated on every call once the sample size is met, not only when
+    // Evaluated on every call once the sample size is met, beyond just when
     // *this* call was slow — otherwise a slow burst that happens to be
     // followed by one fast call would skip the check entirely, even if
     // the accumulated rate is already well past the threshold.
@@ -262,7 +262,7 @@ export class RedisCircuitBreakerService {
     const stateBeforeThisFailure = await this.cache.get<CircuitState>(this.key(provider, 'state'));
     const [failureCount] = await Promise.all([
       this.cache.incr(failureCountKey),
-      // Refreshed on every failure, not just the first — see
+      // Refreshed on every failure, beyond just the first — see
       // FAILURE_WINDOW_SECONDS above. incr() and expire() aren't atomic
       // together, so a failure landing between them could keep the
       // previous call's TTL a moment longer than intended; harmless here
@@ -335,7 +335,7 @@ export class RedisCircuitBreakerService {
    * very next failure, before FAILURE_THRESHOLD genuinely accumulated
    * again. Deliberately leaves the historical successCount/totalRequests/
    * totalLatencyMs metric buckets alone — those are reporting history,
-   * not part of the OPEN/CLOSED decision, and an operator resetting a
+   * separate from the OPEN/CLOSED decision, and an operator resetting a
    * stuck breaker has no reason to also erase what already happened.
    */
   async resetCircuit(provider: string): Promise<void> {

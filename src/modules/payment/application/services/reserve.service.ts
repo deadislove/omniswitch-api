@@ -40,9 +40,9 @@ export class ReserveService {
     private readonly dataSource: DataSource,
   ) {}
 
-  /** Called in the same DB transaction as the ledger outbox event that funded this hold — see the three ledger-booking call sites. */
+  /** Called in the same DB transaction as the ledger outbox event that funded this hold — see the four ledger-booking call sites. */
   async recordHold(
-    params: { paymentId: string; merchantId: string; amount: Money; holdDays: number },
+    params: { paymentId: string; merchantId: string; amount: Money; netAmount: Money; holdDays: number },
     transactionManager?: unknown,
   ): Promise<ReserveHold> {
     const hold = ReserveHold.create({
@@ -50,6 +50,7 @@ export class ReserveService {
       paymentId: params.paymentId,
       merchantId: params.merchantId,
       amount: params.amount,
+      netAmount: params.netAmount,
       holdDays: params.holdDays,
     });
     await this.reserveHoldPort.save(hold, transactionManager);
@@ -71,10 +72,18 @@ export class ReserveService {
   async release(id: string, options: { force?: boolean } = {}): Promise<ReserveHold> {
     const hold = await this.reserveHoldPort.findById(id);
     if (!hold) {
-      throw new NotFoundException({ statusCode: 404, error: `Reserve hold ${id} not found`, code: 'RESERVE_HOLD_NOT_FOUND' });
+      throw new NotFoundException({
+        statusCode: 404,
+        error: `Reserve hold ${id} not found`,
+        code: 'RESERVE_HOLD_NOT_FOUND',
+      });
     }
     if (hold.status !== 'HELD') {
-      throw new ConflictException({ statusCode: 409, error: `Reserve hold is already ${hold.status}`, code: 'RESERVE_HOLD_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Reserve hold is already ${hold.status}`,
+        code: 'RESERVE_HOLD_ALREADY_RELEASED',
+      });
     }
     const now = new Date();
     if (!options.force && now < hold.releaseEligibleAt) {
@@ -104,22 +113,28 @@ export class ReserveService {
     });
 
     if (!released) {
-      throw new ConflictException({ statusCode: 409, error: `Reserve hold ${id} lost a race with another release attempt`, code: 'RESERVE_HOLD_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Reserve hold ${id} lost a race with another release attempt`,
+        code: 'RESERVE_HOLD_ALREADY_RELEASED',
+      });
     }
 
     // Return the in-memory aggregate, mutated to match what was just
     // committed — not a re-fetch. This app's DataSource routes plain
     // reads to a Postgres replica (see app.module.ts's `replication`
     // config); a findById() here immediately after the transaction commits
-    // to master can race the replica's ~1s replication lag (confirmed live:
-    // this returned a stale HELD read right after a 200 release response —
-    // see docs/technical/infra-verification-status.md's note on the same
-    // lag) and report the hold as still HELD despite the write having
-    // already succeeded. Same "don't re-fetch after your own write" posture
+    // to master can race the replica's ~1s replication lag — a stale HELD
+    // read right after a 200 release response, reporting the hold as still
+    // HELD despite the write having already succeeded — see
+    // docs/technical/infra-verification-status.md's note on the same lag.
+    // Same "don't re-fetch after your own write" posture
     // DisputeService.submitEvidence()/MerchantService's update methods
     // already use.
     hold.release(now, options.force ?? false);
-    this.logger.log(`Reserve hold ${id} released (${hold.amount.toString()}) for merchant ${hold.merchantId}${options.force ? ' [forced]' : ''}`);
+    this.logger.log(
+      `Reserve hold ${id} released (${hold.amount.toString()}) for merchant ${hold.merchantId}${options.force ? ' [forced]' : ''}`,
+    );
     return hold;
   }
 
@@ -150,5 +165,58 @@ export class ReserveService {
       this.logger.log(`Reserve release sweep: ${released} released, ${failed} failed, ${holds.length} eligible`);
     }
     return { released, failed };
+  }
+
+  /**
+   * Called only by RiskTieringService when a merchant's tier *escalates*
+   * — never on de-escalation (see that service's own docblock). Recomputes
+   * each currently-HELD hold's target amount at `newReserveBps` against
+   * the hold's own `netAmount` (not the current `amount` — a hold created
+   * under a since-changed rate can't be scaled relative to itself) and
+   * tops up the difference, one hold/one ledger entry/one DB transaction
+   * at a time — a failure partway through leaves the remaining holds at
+   * their old (still-valid, just not-yet-escalated) amount rather than a
+   * half-applied batch. Holds whose target at the new rate isn't actually
+   * higher than what they already hold (the new rate is lower, or this
+   * specific hold already exceeds it for some other reason) are skipped
+   * rather than topped up to a smaller number — this method only ever adds.
+   */
+  async topUpHeldReservesForMerchant(
+    merchantId: string,
+    newReserveBps: number,
+  ): Promise<{ toppedUp: number; failed: number }> {
+    const holds = await this.reserveHoldPort.findHeldByMerchant(merchantId);
+    let toppedUp = 0;
+    let failed = 0;
+
+    for (const hold of holds) {
+      try {
+        const targetAmount = hold.netAmount.multiply(newReserveBps / 10_000);
+        if (!targetAmount.isGreaterThan(hold.amount)) continue;
+        const additionalAmount = targetAmount.subtract(hold.amount);
+
+        await this.dataSource.transaction(async (manager) => {
+          hold.topUp(additionalAmount);
+          await this.reserveHoldPort.save(hold, manager);
+          const topUpEvent = LedgerOutboxEvent.createReserveTopUpEntries({
+            id: uuidv4(),
+            paymentId: hold.paymentId,
+            merchantId: hold.merchantId,
+            amount: additionalAmount,
+          });
+          await this.ledgerOutbox.saveWithPayment(hold.paymentId, topUpEvent, manager);
+        });
+        toppedUp++;
+        this.logger.log(
+          `Reserve hold ${hold.id} topped up by ${additionalAmount.toString()} (tier escalation) for merchant ${merchantId}`,
+        );
+      } catch (err: unknown) {
+        failed++;
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Reserve top-up: failed to top up hold ${hold.id} for merchant ${merchantId}: ${msg}`);
+      }
+    }
+
+    return { toppedUp, failed };
   }
 }

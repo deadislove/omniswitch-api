@@ -224,11 +224,11 @@ spec:
 # namespace, pgbouncer/postgres/redis/vault each also need an explicit
 # Ingress-allow rule naming which pod is allowed to reach them, or they
 # refuse the connection even though the source's Egress rule permits
-# sending it. Confirmed live: applying only rules 1-7 to a real
-# NetworkPolicy-enforcing CNI (kind + Calico) left every one of these
-# four connections timing out from a pod labeled `app: omniswitch-api`,
-# despite rules 4/6/7 explicitly allowing that egress — the traffic
-# left the source pod and was dropped on arrival at the destination.
+# sending it: against a real NetworkPolicy-enforcing CNI (kind + Calico),
+# rules 1-7 alone leave every one of these four connections timing out
+# from a pod labeled `app: omniswitch-api`, despite rules 4/6/7
+# explicitly allowing that egress — the traffic leaves the source pod
+# and is dropped on arrival at the destination.
 #
 # allow-ingress-to-pgbouncer accepts two independent sources (each
 # `from` list entry is its own OR'd condition, not ANDed together):

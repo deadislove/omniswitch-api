@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Param, Query, UseGuards, HttpCode, HttpStatus, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Query,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsIn, IsString } from 'class-validator';
 import { ReserveService } from '../services/reserve.service';
@@ -40,7 +50,10 @@ class ReserveHoldSummaryDto {
   @ApiProperty({ enum: RESERVE_HOLD_STATUSES })
   status: ReserveHoldStatus;
 
-  @ApiProperty({ description: 'When this hold becomes eligible for release (the scheduled sweep or a manual, non-forced release both honor this)' })
+  @ApiProperty({
+    description:
+      'When this hold becomes eligible for release (the scheduled sweep or a manual, non-forced release both honor this)',
+  })
   releaseEligibleAt: string;
 
   @ApiProperty()
@@ -54,7 +67,10 @@ class ReleaseSweepResultDto {
   @ApiProperty({ example: 3, description: 'Holds successfully released by this sweep' })
   released: number;
 
-  @ApiProperty({ example: 0, description: 'Eligible holds that failed to release (logged individually; the sweep does not abort on one failure)' })
+  @ApiProperty({
+    example: 0,
+    description: 'Eligible holds that failed to release (logged individually; the sweep does not abort on one failure)',
+  })
   failed: number;
 }
 
@@ -103,14 +119,21 @@ export class ReserveAdminController {
   async getById(@Param('id') id: string): Promise<ReserveHoldSummaryDto> {
     const hold = await this.reserveService.findById(id);
     if (!hold) {
-      throw new NotFoundException({ statusCode: 404, error: `Reserve hold ${id} not found`, code: 'RESERVE_HOLD_NOT_FOUND' });
+      throw new NotFoundException({
+        statusCode: 404,
+        error: `Reserve hold ${id} not found`,
+        code: 'RESERVE_HOLD_NOT_FOUND',
+      });
     }
     return toSummary(hold);
   }
 
   @Post(':id/release')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Manually release a hold — bypasses releaseEligibleAt (an operator override, e.g. a merchant that has since proven low-risk)' })
+  @ApiOperation({
+    summary:
+      'Manually release a hold — bypasses releaseEligibleAt (an operator override, e.g. a merchant that has since proven low-risk)',
+  })
   @ApiResponse({ status: 200, type: ReserveHoldSummaryDto })
   @ApiResponse({ status: 404, description: 'Reserve hold not found' })
   @ApiResponse({ status: 409, description: 'Reserve hold is already RELEASED' })
@@ -121,7 +144,10 @@ export class ReserveAdminController {
 
   @Post('release-eligible')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Run the release sweep now instead of waiting for the daily schedule — releases every HELD hold whose releaseEligibleAt has passed' })
+  @ApiOperation({
+    summary:
+      'Run the release sweep now instead of waiting for the daily schedule — releases every HELD hold whose releaseEligibleAt has passed',
+  })
   @ApiResponse({ status: 200, type: ReleaseSweepResultDto })
   async releaseEligible(): Promise<ReleaseSweepResultDto> {
     return this.reserveService.releaseEligible();

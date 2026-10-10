@@ -21,7 +21,10 @@ import { BackupStorage } from './backup-storage.interface';
 export class S3BackupStorage implements BackupStorage {
   private readonly client: S3Client;
 
-  constructor(private readonly bucket: string, region: string) {
+  constructor(
+    private readonly bucket: string,
+    region: string,
+  ) {
     this.client = new S3Client({ region });
   }
 

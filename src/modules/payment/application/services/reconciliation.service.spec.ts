@@ -10,24 +10,25 @@ import { Money } from '../../domain/value-objects/money.vo';
 
 // ─── Mock Factories ──────────────────────────────────────────────────────────
 
-const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> => ({
-  save: jest.fn(),
-  findById: jest.fn(),
-  findByIdOnMaster: jest.fn(),
-  findByIdempotencyKey: jest.fn(),
-  findByPspTransactionId: jest.fn(),
-  findByMerchantId: jest.fn(),
-  update: jest.fn(),
-  existsById: jest.fn(),
-  count: jest.fn(),
-  findByProviderAndDateRange: jest.fn(),
-  countByStatusAndProvider: jest.fn(),
-  sumSucceededVolumeSince: jest.fn(),
-  findAmbiguousOlderThan: jest.fn(),
-  countAmbiguousIncidentsSince: jest.fn(),
-  findRecentAmbiguousFlags: jest.fn(),
-  findAmbiguousEligibleForAutoResolution: jest.fn(),
-} as unknown as jest.Mocked<PaymentRepositoryPort>);
+const createMockPaymentRepository = (): jest.Mocked<PaymentRepositoryPort> =>
+  ({
+    save: jest.fn(),
+    findById: jest.fn(),
+    findByIdOnMaster: jest.fn(),
+    findByIdempotencyKey: jest.fn(),
+    findByPspTransactionId: jest.fn(),
+    findByMerchantId: jest.fn(),
+    update: jest.fn(),
+    existsById: jest.fn(),
+    count: jest.fn(),
+    findByProviderAndDateRange: jest.fn(),
+    countByStatusAndProvider: jest.fn(),
+    sumSucceededVolumeSince: jest.fn(),
+    findAmbiguousOlderThan: jest.fn(),
+    countAmbiguousIncidentsSince: jest.fn(),
+    findRecentAmbiguousFlags: jest.fn(),
+    findAmbiguousEligibleForAutoResolution: jest.fn(),
+  }) as unknown as jest.Mocked<PaymentRepositoryPort>;
 
 const createMockReconciliationRepo = (): jest.Mocked<ReconciliationPort> => ({
   save: jest.fn().mockResolvedValue(undefined),
@@ -41,12 +42,14 @@ function createMockProcessorFactory(fetchSettlementTransactions: jest.Mock): Pay
   } as unknown as PaymentProcessorFactory;
 }
 
-function makePayment(overrides: {
-  pspTransactionId?: string;
-  amount?: Money;
-  status?: PaymentStatus;
-  pspProvider?: PSPProvider;
-} = {}): PaymentAggregate {
+function makePayment(
+  overrides: {
+    pspTransactionId?: string;
+    amount?: Money;
+    status?: PaymentStatus;
+    pspProvider?: PSPProvider;
+  } = {},
+): PaymentAggregate {
   return PaymentAggregate.reconstitute({
     id: randomUUID(),
     amount: overrides.amount ?? Money.of(50, 'USD'),
@@ -58,7 +61,11 @@ function makePayment(overrides: {
   });
 }
 
-function makeSettlement(overrides: { pspTransactionId: string; amount?: Money; settledAt?: Date }): PSPSettlementTransaction {
+function makeSettlement(overrides: {
+  pspTransactionId: string;
+  amount?: Money;
+  settledAt?: Date;
+}): PSPSettlementTransaction {
   return {
     pspTransactionId: overrides.pspTransactionId,
     amount: overrides.amount ?? Money.of(50, 'USD'),
@@ -88,7 +95,9 @@ describe('ReconciliationService', () => {
   it('reports CLEAN with zero mismatches when every payment has a matching PSP settlement of the same amount', async () => {
     const payment = makePayment({ pspTransactionId: 'pi_1', amount: Money.of(50, 'USD') });
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
-    fetchSettlementTransactions.mockResolvedValue([makeSettlement({ pspTransactionId: 'pi_1', amount: Money.of(50, 'USD') })]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_1', amount: Money.of(50, 'USD') }),
+    ]);
 
     const run = await service.reconcile('STRIPE', since, until);
 
@@ -118,7 +127,9 @@ describe('ReconciliationService', () => {
   it('flags AMOUNT_MISMATCH when both sides have the transaction but disagree on amount', async () => {
     const payment = makePayment({ pspTransactionId: 'pi_2', amount: Money.of(100, 'USD') });
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
-    fetchSettlementTransactions.mockResolvedValue([makeSettlement({ pspTransactionId: 'pi_2', amount: Money.of(80, 'USD') })]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_2', amount: Money.of(80, 'USD') }),
+    ]);
 
     const run = await service.reconcile('STRIPE', since, until);
 
@@ -137,7 +148,9 @@ describe('ReconciliationService', () => {
 
   it('flags UNKNOWN_AT_PSP when the PSP settled something we have no record of at all', async () => {
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([]);
-    fetchSettlementTransactions.mockResolvedValue([makeSettlement({ pspTransactionId: 'pi_orphan', amount: Money.of(20, 'USD') })]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_orphan', amount: Money.of(20, 'USD') }),
+    ]);
 
     const run = await service.reconcile('STRIPE', since, until);
 
@@ -173,7 +186,7 @@ describe('ReconciliationService', () => {
     paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
     fetchSettlementTransactions.mockResolvedValue([
       makeSettlement({ pspTransactionId: 'pi_partial2', amount: Money.of(40, 'USD') }),
-      makeSettlement({ pspTransactionId: 'pi_partial2', amount: Money.of(50, 'USD') }), // sums to 90, not 100
+      makeSettlement({ pspTransactionId: 'pi_partial2', amount: Money.of(50, 'USD') }), // sums to 90 instead of 100
     ]);
 
     const run = await service.reconcile('STRIPE', since, until);
@@ -182,6 +195,62 @@ describe('ReconciliationService', () => {
     expect(run.mismatches).toHaveLength(1);
     expect(run.mismatches[0].type).toBe('AMOUNT_MISMATCH');
     expect(run.mismatches[0].actualAmount?.equals(Money.of(90, 'USD'))).toBe(true);
+  });
+
+  it('flags CURRENCY_MISMATCH, not AMOUNT_MISMATCH, when the PSP settles in a different currency than we charged', async () => {
+    // A legitimate PSP-side currency conversion (DCC, cross-border
+    // settlement) shouldn't be indistinguishable from a same-currency
+    // amount bug — the two need different urgency.
+    const payment = makePayment({ pspTransactionId: 'pi_fx', amount: Money.of(100, 'USD') });
+    paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_fx', amount: Money.of(92, 'EUR') }),
+    ]);
+
+    const run = await service.reconcile('STRIPE', since, until);
+
+    expect(run.status).toBe('MISMATCHES_FOUND');
+    expect(run.mismatches).toEqual([
+      expect.objectContaining({
+        type: 'CURRENCY_MISMATCH',
+        paymentId: payment.id,
+        pspTransactionId: 'pi_fx',
+      }),
+    ]);
+    const mismatch = run.mismatches[0];
+    expect(mismatch.expectedAmount?.equals(Money.of(100, 'USD'))).toBe(true);
+    expect(mismatch.actualAmount?.equals(Money.of(92, 'EUR'))).toBe(true);
+  });
+
+  it('flags CURRENCY_MISMATCH, not a crashed run, when partial-capture settlement records for one pspTransactionId disagree on currency', async () => {
+    // A single pspTransactionId's settlement records reporting two
+    // different currencies can't be summed with Money.add() (it throws on
+    // a currency mismatch) — this must not abort the whole provider's run
+    // the way it would if Money.add() were called directly on both records.
+    const payment = makePayment({ pspTransactionId: 'pi_fx_partial', amount: Money.of(100, 'USD') });
+    const otherPayment = makePayment({ pspTransactionId: 'pi_clean_other', amount: Money.of(10, 'USD') });
+    paymentRepository.findByProviderAndDateRange.mockResolvedValue([payment, otherPayment]);
+    fetchSettlementTransactions.mockResolvedValue([
+      makeSettlement({ pspTransactionId: 'pi_fx_partial', amount: Money.of(40, 'USD') }),
+      makeSettlement({ pspTransactionId: 'pi_fx_partial', amount: Money.of(55, 'EUR') }),
+      makeSettlement({ pspTransactionId: 'pi_clean_other', amount: Money.of(10, 'USD') }),
+    ]);
+
+    const run = await service.reconcile('STRIPE', since, until);
+
+    // The whole run completes — the other, unrelated payment still gets
+    // judged and comes back clean, proving one bad record didn't take down
+    // the rest of this run.
+    expect(reconciliationRepo.save).toHaveBeenCalledTimes(1);
+    expect(run.status).toBe('MISMATCHES_FOUND');
+    expect(run.mismatches).toEqual([
+      expect.objectContaining({
+        type: 'CURRENCY_MISMATCH',
+        paymentId: payment.id,
+        pspTransactionId: 'pi_fx_partial',
+      }),
+    ]);
+    expect(run.mismatches[0].actualAmount).toBeUndefined();
   });
 
   it('skips a payment with no pspTransactionId rather than crashing the run', async () => {
@@ -244,8 +313,16 @@ describe('ReconciliationService', () => {
 
       await service.runScheduled();
 
-      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith('STRIPE', expect.any(Date), expect.any(Date));
-      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith('ADYEN', expect.any(Date), expect.any(Date));
+      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith(
+        'STRIPE',
+        expect.any(Date),
+        expect.any(Date),
+      );
+      expect(paymentRepository.findByProviderAndDateRange).toHaveBeenCalledWith(
+        'ADYEN',
+        expect.any(Date),
+        expect.any(Date),
+      );
       expect(reconciliationRepo.save).toHaveBeenCalledTimes(2);
     });
 

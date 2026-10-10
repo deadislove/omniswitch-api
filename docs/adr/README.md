@@ -23,7 +23,10 @@ who weren't in the room for any of these decisions.
 | [0001](./0001-hexagonal-architecture.md) | Hexagonal architecture (ports & adapters) for the payment module | Accepted |
 | [0002](./0002-transactional-outbox-for-ledger-events.md) | Transactional outbox for ledger events instead of a dual write | Accepted |
 | [0003](./0003-saga-orchestration-for-checkout.md) | Orchestrated saga with compensating actions for checkout | Accepted |
-| [0004](./0004-smart-routing-with-circuit-breaker.md) | Smart PSP routing with a shared circuit breaker, not a static primary/fallback | Accepted |
+| [0004](./0004-smart-routing-with-circuit-breaker.md) | Smart PSP routing with a shared circuit breaker instead of a static primary/fallback | Accepted |
+| [0005](./0005-first-party-node-sdk.md) | A first-party Node/TypeScript client, beyond just a documented REST API | Accepted |
+| [0006](./0006-multi-language-sdk-parity.md) | Multi-language SDK parity (Java, .NET, Python, Rust, Go) | Accepted |
+| [0007](./0007-github-packages-publishing.md) | Publish sdk/node, sdk/java, and sdk/dotnet to GitHub Packages | Accepted |
 
 ## Format
 
@@ -33,7 +36,7 @@ Each ADR follows the same shape:
 - **Context** — the problem, and the constraint that made it worth a
   written decision instead of an obvious default
 - **Decision** — what was actually built
-- **Consequences** — what this trades away, not just what it buys;
+- **Consequences** — what this trades away, beyond just what it buys;
   including a real bug the current shape fixed, if there was one
 - **Alternatives considered** — the options that lost, and why
 
@@ -42,6 +45,6 @@ Each ADR follows the same shape:
 Number sequentially (`000N-kebab-case-title.md`), add a row to the
 index above, and link it from the relevant `technical/` or
 `business-domain/` doc's "Where to look next" section. Write the
-`Consequences` section honestly — what this decision makes harder, not
-just what it makes possible — the same posture the rest of `docs/`
+`Consequences` section honestly — what this decision makes harder,
+beyond just what it makes possible — the same posture the rest of `docs/`
 already takes.

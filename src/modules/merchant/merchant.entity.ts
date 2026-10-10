@@ -45,7 +45,7 @@ export class MerchantEntity {
    * PaymentCheckoutSaga/PaymentLifecycleService.capture() to every charge
    * and capture booked to this merchant's ledger entries. Defaults to 150
    * (the rate that used to be hardcoded everywhere) so existing merchants
-   * see no behavior change. Deliberately basis points, not a float
+   * see no behavior change. Deliberately basis points rather than a float
    * percentage/decimal — avoids the rounding ambiguity of "is 1.5 already a
    * fraction or a percent" at every call site that reads it.
    */
@@ -81,7 +81,7 @@ export class MerchantEntity {
   // TypeScript's emitted design:type reflection metadata, which collapses
   // any union type (string | null) to bare Object; without this it fails
   // at DataSource.initialize() with `Data type "Object" ... is not
-  // supported`, not at compile time, so it's easy to miss.
+  // supported` — that failure shows up at runtime rather than compile time, so it's easy to miss.
   @Column({ name: 'mfa_secret_ciphertext', type: 'varchar', nullable: true })
   mfaSecretCiphertext?: string | null;
 
@@ -143,11 +143,34 @@ export class MerchantEntity {
    * sets a reserve policy by hand (PATCH .../reserve-policy) — a manual
    * override should stick until explicitly re-enabled
    * (PATCH .../risk-tier-auto), the same "manual input pauses automation"
-   * behavior a thermostat or autoscaler uses, not something the next
-   * sweep tick should silently clobber.
+   * behavior a thermostat or autoscaler uses — the next sweep tick should
+   * never silently clobber it.
    */
   @Column({ name: 'risk_tier_auto_managed', default: true })
   riskTierAutoManaged: boolean;
+
+  /**
+   * ISO 18245 Merchant Category Code, set by an operator
+   * (PATCH .../mcc-code) — not self-declared by the merchant, same
+   * "platform sets it on the merchant's behalf" posture as
+   * platformFeeBps/reserveBps. Null (the default, every merchant before
+   * this existed) means RiskTieringService treats industryRiskCategory
+   * as UNKNOWN — no risk escalation either way. See mcc-risk-lookup.ts.
+   */
+  @Column({ name: 'mcc_code', type: 'varchar', nullable: true })
+  mccCode?: string | null;
+
+  /**
+   * Denormalized from mccCode via mcc-risk-lookup.ts at the moment
+   * mccCode is set — stored rather than looked up fresh on every
+   * RiskTieringService evaluation so a future change to the lookup
+   * table's classifications doesn't silently rewrite risk history for
+   * evaluations that already ran under the old classification. Defaults
+   * to 'UNKNOWN' (no mccCode set), which RiskTieringService never
+   * escalates on.
+   */
+  @Column({ name: 'industry_risk_category', type: 'varchar', default: 'UNKNOWN' })
+  industryRiskCategory: 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
 
   /**
    * Marketplace role. Every merchant defaults to 'PLATFORM' (a flat peer,
@@ -171,7 +194,7 @@ export class MerchantEntity {
    * check. Deliberately one level deep only: a CONNECTED merchant can't
    * itself have connected accounts (MerchantService.createMerchant()
    * rejects that), the same "platform vs. seller" shape Stripe Connect and
-   * Adyen for Platforms use, not an arbitrary org tree.
+   * Adyen for Platforms use, rather than an arbitrary org tree.
    */
   // Explicit type: 'varchar' — same reason as mfaSecretCiphertext's
   // comment above (TypeScript's `string | null` union collapses to bare
@@ -203,19 +226,21 @@ export class MerchantEntity {
    * Onboarding/KYC review status — only meaningful for a `CONNECTED`
    * merchant. Defaults to `NOT_STARTED` for every merchant (existing
    * `PLATFORM` merchants are unaffected — nothing reads this field for
-   * them). Gates *payouts* only, not charges — a `CONNECTED` merchant can
+   * them). Gates *payouts* only, leaving charges unaffected — a `CONNECTED` merchant can
    * still receive split credits into its ledger balance before KYC
    * clears (`PayoutService.runSweep()` still creates a `Payout` for it,
    * just marked `kycBlocked`), the same `charges_enabled`/
    * `payouts_enabled` distinction real Stripe Connect draws. See
    * MerchantService.submitKyc() and
-   * docs/business-domain/ledger-and-settlement.md#connected-account-kyc.
-   * Deliberately a synchronous three-state model (no `PENDING` sitting
-   * in the database for days) — a real KYC provider review is genuinely
-   * async over days; this system's mock decision resolves immediately.
+   * docs/business-domain/marketplace-and-payouts.md#connected-account-kyc.
+   * `PENDING_REVIEW` sits between `NOT_STARTED` and `VERIFIED`/`REJECTED`
+   * for a real, async-reviewing provider (`PersonaKycProviderAdapter`) —
+   * `MockKYCProviderAdapter` skips it entirely (`NOT_STARTED` ->
+   * `VERIFIED`/`REJECTED` in one call, same as before this state
+   * existed) since it resolves synchronously.
    */
   @Column({ name: 'kyc_status', type: 'varchar', default: 'NOT_STARTED' })
-  kycStatus: 'NOT_STARTED' | 'VERIFIED' | 'REJECTED';
+  kycStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
 
   /** Captured at KYC submission time — never shown back except in the merchant's own summary, same posture as any other identity field. */
   @Column({ name: 'kyc_legal_name', type: 'varchar', nullable: true })
@@ -225,16 +250,114 @@ export class MerchantEntity {
   kycTaxId?: string | null;
 
   /**
+   * Set when `kycStatus` becomes `PENDING_REVIEW` — the provider's own
+   * application id, used to look this merchant back up when
+   * `POST /webhooks/kyc` reports a decision (`MerchantService.confirmKyc()`).
+   * `null` whenever `kycStatus` isn't `PENDING_REVIEW` (a synchronous
+   * mock decision never sets this at all).
+   */
+  @Column({ name: 'kyc_application_id', type: 'varchar', nullable: true })
+  @Index()
+  kycApplicationId?: string | null;
+
+  /**
+   * KYB (Know Your Business) review status — structurally identical to
+   * `kycStatus` but answers a different question: not "is this
+   * individual who they say they are" but "is this business real,
+   * registered, and who actually owns/controls it." Only meaningful for
+   * a `CONNECTED` merchant, same scope as `kycStatus`. Deliberately does
+   * **not** gate payouts the way `kycStatus` does — see
+   * docs/business-domain/merchants.md#step-3--kyb-for-connected-merchants-only
+   * for why this is captured as an underwriting data point for now,
+   * instead of being wired into an automated gate, matching this codebase's own
+   * "visibility first, automation later" posture for a new signal.
+   */
+  @Column({ name: 'kyb_status', type: 'varchar', default: 'NOT_STARTED' })
+  kybStatus: 'NOT_STARTED' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+
+  @Column({ name: 'kyb_legal_name', type: 'varchar', nullable: true })
+  kybLegalName?: string | null;
+
+  @Column({ name: 'kyb_tax_id', type: 'varchar', nullable: true })
+  kybTaxId?: string | null;
+
+  @Column({ name: 'kyb_country', type: 'varchar', nullable: true })
+  kybCountry?: string | null;
+
+  /**
+   * Beneficial owners (name + ownership percentage) submitted with this
+   * KYB application, if any — real UBO regulations (FinCEN's CDD Rule,
+   * EU AMLD) generally require identifying anyone at or above a 25%
+   * ownership threshold; this field only records that data without
+   * enforcing it. **Retention policy for this field remains an open question** — see
+   * docs/business-domain/merchants.md's KYB section: this is exactly the
+   * kind of PII a real deployment needs a documented retention period
+   * for (docs/compliance/data-retention.md), which this pass captures
+   * the data to support but doesn't itself resolve.
+   */
+  @Column({ name: 'kyb_beneficial_owners', type: 'jsonb', nullable: true })
+  kybBeneficialOwners?: { name: string; ownershipPercentage: number }[] | null;
+
+  @Column({ name: 'kyb_application_id', type: 'varchar', nullable: true })
+  @Index()
+  kybApplicationId?: string | null;
+
+  /**
+   * Which channel `DisputeNotificationDispatcherService` uses for this
+   * merchant's `dispute.created`/`dispute.resolved` notifications.
+   * Defaults to `WEBHOOK` — the only channel that requires no
+   * merchant-side setup beyond a URL (unlike Slack, which needs an
+   * Incoming Webhook already configured in their workspace, or email,
+   * which needs a real transactional-email provider in production).
+   * See `disputeNotificationTarget` below and
+   * docs/business-domain/disputes.md.
+   */
+  @Column({ name: 'dispute_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  disputeNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  /**
+   * The channel-specific destination: a webhook URL, a Slack Incoming
+   * Webhook URL, or an email address, depending on
+   * `disputeNotificationChannel`. `null` (the default for every
+   * merchant created before this existed, and any merchant that hasn't
+   * configured one) means "nothing to notify" —
+   * `DisputeNotificationDispatcherService.notify()` skips silently
+   * rather than sending to an empty/wrong destination.
+   */
+  @Column({ name: 'dispute_notification_target', type: 'varchar', nullable: true })
+  disputeNotificationTarget?: string | null;
+
+  /**
+   * Same shape as `disputeNotificationChannel` but for
+   * `SubscriptionNotificationDispatcherService`'s
+   * `subscription.past_due`/`subscription.canceled` notifications —
+   * kept as an independent field rather than shared with disputes, since a
+   * merchant might reasonably want (e.g.) Slack for disputes and email
+   * for billing/dunning events. See `subscriptionNotificationTarget`
+   * below.
+   */
+  @Column({ name: 'subscription_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  subscriptionNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  /**
+   * The channel-specific destination for subscription notifications —
+   * same "`null` means don't send" semantics as
+   * `disputeNotificationTarget`.
+   */
+  @Column({ name: 'subscription_notification_target', type: 'varchar', nullable: true })
+  subscriptionNotificationTarget?: string | null;
+
+  /**
    * PSPs this merchant is allowed to route charges through — see
    * SmartRoutingStrategy.filterAvailableProviders() and
    * PaymentCheckoutSaga.execute(). Defaults to every PSP this system
    * actually has an adapter for (`STRIPE`/`ADYEN` — see
    * PaymentProcessorFactory's constructor), so every existing merchant's
    * routing behavior is unchanged unless this is explicitly narrowed via
-   * PATCH .../psp-entitlement. Deliberately `string[]`, not the payment
+   * PATCH .../psp-entitlement. Deliberately `string[]` instead of the payment
    * module's `PSPProvider` type — the merchant module has no reason to
    * depend on the payment module (payment already depends on merchant,
-   * not the reverse; see MerchantModule's `exports`), so the known-value
+   * never the reverse; see MerchantModule's `exports`), so the known-value
    * set (`STRIPE`/`ADYEN`) is validated at the DTO layer
    * (UpdatePspEntitlementDto) instead of the entity/column.
    */
@@ -259,9 +382,9 @@ export class MerchantEntity {
    * The basis for AmbiguousRiskMonitoringService's daily auto-clear
    * sweep: cleared once AMBIGUOUS_RISK_AUTO_CLEAR_DAYS has passed since
    * this timestamp. Deliberately re-touched to "now" on every *new*
-   * AMBIGUOUS incident while already flagged, not just set once at
+   * AMBIGUOUS incident while already flagged, rather than only set once at
    * initial flagging — the 2-month countdown is meant to measure "how
-   * long since this merchant's most recent incident," not "how long
+   * long since this merchant's most recent incident" rather than "how long
    * since they were first flagged," so a merchant with an ongoing
    * trickle of incidents should never auto-clear mid-trickle. Null
    * whenever ambiguousRiskFlagged is false.
@@ -301,6 +424,142 @@ export class MerchantEntity {
    */
   @Column({ name: 'ambiguous_risk_auto_managed', default: true })
   ambiguousRiskAutoManaged: boolean;
+
+  /**
+   * Passive AML-review observation flag — scoped to
+   * `industryRiskCategory === 'HIGH'` merchants only, set when
+   * `AmlReviewMonitoringService` sees `AML_REVIEW_HARD_DECLINE_THRESHOLD`
+   * hard-decline events (see decline-code-classifier.ts) within a
+   * trailing `AML_REVIEW_WINDOW_DAYS` window. Same "visibility only, no
+   * automated blocking" posture as `ambiguousRiskFlagged` above — a
+   * high-MCC industry's disproportionate money-laundering exposure needs
+   * a human to actually look at the merchant instead of an automated block.
+   */
+  @Column({ name: 'aml_review_flagged', default: false })
+  amlReviewFlagged: boolean;
+
+  /** Same re-touch-on-new-incident semantics as ambiguousRiskFlaggedAt above. Null whenever amlReviewFlagged is false. */
+  @Column({ name: 'aml_review_flagged_at', type: 'timestamp', nullable: true })
+  amlReviewFlaggedAt?: Date;
+
+  /** Same posture as ambiguousRiskFlagReason above. */
+  @Column({ name: 'aml_review_flag_reason', type: 'varchar', nullable: true })
+  amlReviewFlagReason?: string;
+
+  /** Same posture as ambiguousRiskFlaggedBy above. */
+  @Column({ name: 'aml_review_flagged_by', type: 'varchar', nullable: true })
+  amlReviewFlaggedBy?: string;
+
+  /** Same "manual input pauses automation" posture as ambiguousRiskAutoManaged above. */
+  @Column({ name: 'aml_review_auto_managed', default: true })
+  amlReviewAutoManaged: boolean;
+
+  /**
+   * Notification channel for AML-review flag trips — independent of
+   * disputeNotificationChannel/subscriptionNotificationChannel above,
+   * same "each event family picks its own channel" reasoning as those
+   * two. Unlike AmbiguousRiskMonitoringService (deliberately silent —
+   * see its docblock), a HIGH-industry merchant crossing this threshold
+   * is compliance-relevant enough to page someone in real time.
+   */
+  @Column({ name: 'aml_review_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  amlReviewNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  /** Channel-specific destination for AML-review notifications — same posture as subscriptionNotificationTarget above. */
+  @Column({ name: 'aml_review_notification_target', type: 'varchar', nullable: true })
+  amlReviewNotificationTarget?: string | null;
+
+  /**
+   * Real-world legal identity, captured optionally at `POST
+   * /admin/merchants` — unlike `name` (a display name never treated as
+   * verified), this is what sanctions/watchlist screening runs against
+   * at full confidence. Distinct from `kycLegalName`/`kycTaxId` below:
+   * those are CONNECTED-only, captured at KYC submission, and gate
+   * payouts; these apply to every merchant regardless of `accountType`
+   * and exist purely to support the sanctions check, which is a legal
+   * obligation independent of marketplace role. `submitKyc()` also
+   * updates these two fields from the freshly submitted `legalName` —
+   * the more authoritative source, once it exists — and re-screens at
+   * full confidence. See
+   * docs/business-domain/merchants.md#step-1--identity-capture-and-sanctions-screening-at-creation.
+   */
+  @Column({ name: 'legal_name', type: 'varchar', nullable: true })
+  legalName?: string | null;
+
+  @Column({ name: 'tax_id', type: 'varchar', nullable: true })
+  taxId?: string | null;
+
+  /**
+   * Sanctions/watchlist screening outcome. `NOT_SCREENED` only occurs
+   * for a merchant that predates this field (a migration doesn't
+   * retroactively screen existing rows — see
+   * `SanctionsScreeningSweepService`'s docblock for why the weekly sweep
+   * *does* pick these up going forward). `HIT` blocks the action that
+   * would have produced it (`createMerchant()`/`submitKyc()` both throw
+   * before persisting anything) — a `HIT` value stored here only ever
+   * comes from the periodic sweep discovering a merchant that was
+   * `CLEAR`/`POTENTIAL_MATCH` at onboarding but has since appeared on
+   * the list. See
+   * docs/business-domain/risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening.
+   */
+  @Column({ name: 'sanctions_screening_status', type: 'varchar', default: 'NOT_SCREENED' })
+  sanctionsScreeningStatus: 'NOT_SCREENED' | 'CLEAR' | 'POTENTIAL_MATCH' | 'HIT';
+
+  /**
+   * Whether the most recent screening ran against a real `legalName`
+   * (`FULL`) or fell back to the display `name` because no `legalName`
+   * was ever supplied (`DEGRADED`) — a weaker signal, good enough to
+   * catch an obvious exact-name match, but no substitute for a real
+   * legal name. `null` whenever `sanctionsScreeningStatus` is
+   * `NOT_SCREENED`.
+   */
+  @Column({ name: 'sanctions_screening_confidence', type: 'varchar', nullable: true })
+  sanctionsScreeningConfidence?: 'FULL' | 'DEGRADED' | null;
+
+  @Column({ name: 'sanctions_screened_at', type: 'timestamp', nullable: true })
+  sanctionsScreenedAt?: Date | null;
+
+  /** Human-readable evidence for a reviewer — the matched list entry's display name and match score, e.g. "USAMA BIN LADIN (score=0.941)". Null when CLEAR. */
+  @Column({ name: 'sanctions_match_details', type: 'varchar', nullable: true })
+  sanctionsMatchDetails?: string | null;
+
+  /**
+   * Set by `PATCH /admin/merchants/:id/sanctions-review` — an operator's
+   * determination on a `POTENTIAL_MATCH`/`HIT` (false positive vs.
+   * confirmed). Unlike `ambiguousRiskFlaggedBy`/`amlReviewFlaggedBy`,
+   * recording this does **not** pause automatic re-screening — see
+   * `sanctionsReviewResolution`'s docblock for why.
+   */
+  @Column({ name: 'sanctions_reviewed_by', type: 'varchar', nullable: true })
+  sanctionsReviewedBy?: string | null;
+
+  @Column({ name: 'sanctions_reviewed_at', type: 'timestamp', nullable: true })
+  sanctionsReviewedAt?: Date | null;
+
+  /**
+   * `CLEARED` (false positive) or `CONFIRMED` (a real match, escalated
+   * outside this system). Deliberately doesn't disable future
+   * screening the way `riskTierAutoManaged`/`ambiguousRiskAutoManaged`/
+   * `amlReviewAutoManaged` disable their sweeps on manual override — a
+   * cleared false positive today is a determination about *this specific
+   * match*, rather than a request to stop checking this merchant at all; the
+   * next scheduled sweep still runs and may find a genuinely new match.
+   */
+  @Column({ name: 'sanctions_review_resolution', type: 'varchar', nullable: true })
+  sanctionsReviewResolution?: 'CLEARED' | 'CONFIRMED' | null;
+
+  /**
+   * Notification channel for sanctions-screening events — independent
+   * of every other `*NotificationChannel` field, same "each event
+   * family picks its own channel" reasoning as
+   * `amlReviewNotificationChannel`. Fires for `POTENTIAL_MATCH`/`HIT`,
+   * never for `CLEAR`.
+   */
+  @Column({ name: 'sanctions_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  sanctionsNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @Column({ name: 'sanctions_notification_target', type: 'varchar', nullable: true })
+  sanctionsNotificationTarget?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

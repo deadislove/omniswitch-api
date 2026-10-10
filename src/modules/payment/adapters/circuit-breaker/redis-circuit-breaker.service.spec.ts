@@ -4,8 +4,8 @@ import { CachePort } from '../../ports/outbound/cache.port';
 /**
  * In-memory CachePort with real TTL semantics (keyed off Date.now(), which
  * jest's fake timers override) — needed to prove the sliding-window fix
- * actually behaves correctly over time, not just that expire() was called
- * with the right argument.
+ * actually behaves correctly over time — not just that expire() was
+ * called with the right argument.
  */
 class FakeCachePort extends CachePort {
   private store = new Map<string, { value: unknown; expiresAt: number | null }>();
@@ -211,7 +211,7 @@ describe('RedisCircuitBreakerService', () => {
     // yet), then one fast call that happens to be the 5th sample. The rate
     // (4/5 = 80%) is well past threshold and must still open the circuit —
     // the trip decision has to be evaluated on every call once the sample
-    // size is met, not only on calls that were themselves slow.
+    // size is met, including calls that weren't themselves slow.
     for (let i = 0; i < 4; i++) {
       await breaker.recordSuccess('STRIPE', 6_000);
     }
@@ -246,7 +246,7 @@ describe('RedisCircuitBreakerService', () => {
     jest.advanceTimersByTime(31_000);
     await breaker.assertAvailable('STRIPE'); // admits the trial call, state -> HALF_OPEN
 
-    // The trial call itself fails — a single failure, not FAILURE_THRESHOLD
+    // The trial call itself fails — a single failure, rather than FAILURE_THRESHOLD
     // (5) of them, must be enough to snap back to OPEN: the PSP is still
     // down, and letting more real traffic through while re-accumulating
     // the failure count is exactly the thundering-herd problem restated.
@@ -319,7 +319,7 @@ describe('RedisCircuitBreakerService', () => {
     await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
 
     // A single failure right after reset must not immediately re-trip —
-    // proves failureCount was actually cleared, not just the state field.
+    // proves failureCount was actually cleared, beyond just the state field.
     await breaker.recordFailure('STRIPE');
     await expect(breaker.assertAvailable('STRIPE')).resolves.toBeUndefined();
   });
@@ -335,7 +335,7 @@ describe('RedisCircuitBreakerService', () => {
     jest.advanceTimersByTime(61_000);
 
     // A fresh burst of fast calls afterward should not inherit the earlier
-    // slow calls — this is a fresh window, not a naive all-time count.
+    // slow calls — this is a fresh window rather than a naive all-time count.
     for (let i = 0; i < 5; i++) {
       await breaker.recordSuccess('STRIPE', 50);
     }

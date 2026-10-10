@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { existsSync, rmSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { AppDataSource } from '../src/database/data-source';
 import { archivePayments, archiveLedgerOutbox } from '../src/jobs/run-archiving-job';
 import { runDeletion } from '../src/jobs/run-deletion-job';
@@ -96,7 +96,9 @@ describe('Data retention jobs — archiving and deletion (e2e)', () => {
 
     const stillLive = await AppDataSource.query(`SELECT "id" FROM "payments" WHERE "id" = $1`, [disputedId]);
     expect(stillLive).toHaveLength(1);
-    const notArchived = await AppDataSource.query(`SELECT "id" FROM "archive"."payments" WHERE "id" = $1`, [disputedId]);
+    const notArchived = await AppDataSource.query(`SELECT "id" FROM "archive"."payments" WHERE "id" = $1`, [
+      disputedId,
+    ]);
     expect(notArchived).toHaveLength(0);
 
     await AppDataSource.query(`DELETE FROM "disputes" WHERE "payment_id" = $1`, [disputedId]);
@@ -109,7 +111,9 @@ describe('Data retention jobs — archiving and deletion (e2e)', () => {
 
     await archiveLedgerOutbox();
 
-    const archived = await AppDataSource.query(`SELECT "id" FROM "archive"."ledger_outbox" WHERE "id" = $1`, [published]);
+    const archived = await AppDataSource.query(`SELECT "id" FROM "archive"."ledger_outbox" WHERE "id" = $1`, [
+      published,
+    ]);
     expect(archived).toHaveLength(1);
     const stillLive = await AppDataSource.query(`SELECT "id" FROM "ledger_outbox" WHERE "id" = $1`, [pending]);
     expect(stillLive).toHaveLength(1);
@@ -134,7 +138,7 @@ describe('Data retention jobs — archiving and deletion (e2e)', () => {
       expect(result.backupFile).not.toBeNull();
       expect(existsSync(result.backupFile as string)).toBe(true);
 
-      const backupContent = JSON.parse(require('fs').readFileSync(result.backupFile as string, 'utf8'));
+      const backupContent = JSON.parse(readFileSync(result.backupFile as string, 'utf8'));
       expect(backupContent.payments.some((p: { id: string }) => p.id === id)).toBe(true);
 
       const stillInArchive = await AppDataSource.query(`SELECT "id" FROM "archive"."payments" WHERE "id" = $1`, [id]);
@@ -244,20 +248,18 @@ describe('drop-cutover-tables (e2e)', () => {
   });
 
   it('does not drop the table before the retention window has elapsed', async () => {
-    await AppDataSource.query(
-      `INSERT INTO "schema_cutover_log" ("table_name", "cutover_at") VALUES ($1, now())`,
-      [dummyTable],
-    );
+    await AppDataSource.query(`INSERT INTO "schema_cutover_log" ("table_name", "cutover_at") VALUES ($1, now())`, [
+      dummyTable,
+    ]);
 
     const results = await dropCutoverTables();
     const result = results.find((r) => r.tableName === dummyTable);
     expect(result?.eligible).toBe(false);
     expect(result?.dropped).toBe(false);
 
-    const stillExists = await AppDataSource.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_name = $1`,
-      [dummyTable],
-    );
+    const stillExists = await AppDataSource.query(`SELECT 1 FROM information_schema.tables WHERE table_name = $1`, [
+      dummyTable,
+    ]);
     expect(stillExists).toHaveLength(1);
   });
 
@@ -272,13 +274,14 @@ describe('drop-cutover-tables (e2e)', () => {
     expect(result?.eligible).toBe(true);
     expect(result?.dropped).toBe(true);
 
-    const stillExists = await AppDataSource.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_name = $1`,
-      [dummyTable],
-    );
+    const stillExists = await AppDataSource.query(`SELECT 1 FROM information_schema.tables WHERE table_name = $1`, [
+      dummyTable,
+    ]);
     expect(stillExists).toHaveLength(0);
 
-    const logRow = await AppDataSource.query(`SELECT 1 FROM "schema_cutover_log" WHERE "table_name" = $1`, [dummyTable]);
+    const logRow = await AppDataSource.query(`SELECT 1 FROM "schema_cutover_log" WHERE "table_name" = $1`, [
+      dummyTable,
+    ]);
     expect(logRow).toHaveLength(0);
   });
 });

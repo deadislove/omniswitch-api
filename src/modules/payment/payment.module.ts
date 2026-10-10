@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 // Entities
 import { PaymentEntity } from './adapters/persistence/entities/payment.entity';
@@ -13,9 +13,13 @@ import { PlanEntity } from './adapters/persistence/entities/plan.entity';
 import { PayoutEntity } from './adapters/persistence/entities/payout.entity';
 import { PayoutSweepRunEntity } from './adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from './adapters/persistence/entities/delegation.entity';
+import { ChargeApprovalEntity } from './adapters/persistence/entities/charge-approval.entity';
 
 // Repositories
-import { PaymentTypeOrmRepository, LedgerOutboxTypeOrmRepository } from './adapters/persistence/repositories/payment-typeorm.repository';
+import {
+  PaymentTypeOrmRepository,
+  LedgerOutboxTypeOrmRepository,
+} from './adapters/persistence/repositories/payment-typeorm.repository';
 import { ReconciliationTypeOrmRepository } from './adapters/persistence/repositories/reconciliation-typeorm.repository';
 import { DisputeTypeOrmRepository } from './adapters/persistence/repositories/dispute-typeorm.repository';
 import { ReserveHoldTypeOrmRepository } from './adapters/persistence/repositories/reserve-hold-typeorm.repository';
@@ -23,7 +27,11 @@ import { SubscriptionTypeOrmRepository } from './adapters/persistence/repositori
 import { PlanTypeOrmRepository } from './adapters/persistence/repositories/plan-typeorm.repository';
 import { PayoutTypeOrmRepository } from './adapters/persistence/repositories/payout-typeorm.repository';
 import { MockBankTransferAdapter } from './adapters/bank/mock-bank-transfer.adapter';
+import { AchBankTransferAdapter } from './adapters/bank/ach-bank-transfer.adapter';
+import { WireBankTransferAdapter } from './adapters/bank/wire-bank-transfer.adapter';
+import { BankTransferWebhookGuard } from './adapters/bank/bank-transfer-webhook.guard';
 import { DelegationTypeOrmRepository } from './adapters/persistence/repositories/delegation-typeorm.repository';
+import { ChargeApprovalTypeOrmRepository } from './adapters/persistence/repositories/charge-approval-typeorm.repository';
 
 // Ports
 import { PaymentRepositoryPort } from './ports/outbound/payment-repository.port';
@@ -38,6 +46,7 @@ import { PlanPort } from './ports/outbound/plan.port';
 import { PayoutPort } from './ports/outbound/payout.port';
 import { BankTransferPort } from './ports/outbound/bank-transfer.port';
 import { DelegationPort } from './ports/outbound/delegation.port';
+import { ChargeApprovalPort } from './ports/outbound/charge-approval.port';
 
 // Adapters
 import { RedisCacheAdapter } from './adapters/cache/redis-cache.adapter';
@@ -65,9 +74,28 @@ import { RiskTieringService } from './application/services/risk-tiering.service'
 import { PlanService } from './application/services/plan.service';
 import { PayoutService } from './application/services/payout.service';
 import { DelegationService } from './application/services/delegation.service';
+import { ChargeApprovalService } from './application/services/charge-approval.service';
 import { LegalHoldService } from './application/services/legal-hold.service';
 import { AmbiguousPaymentService } from './application/services/ambiguous-payment.service';
 import { AmbiguousRiskMonitoringService } from './application/services/ambiguous-risk-monitoring.service';
+import { AmlReviewMonitoringService } from './application/services/aml-review-monitoring.service';
+import { AmlReviewNotificationDispatcherService } from './application/services/aml-review-notification-dispatcher.service';
+import { EmailAmlReviewNotificationAdapter } from './adapters/notifications/email-aml-review-notification.adapter';
+import { SlackAmlReviewNotificationAdapter } from './adapters/notifications/slack-aml-review-notification.adapter';
+import { WebhookAmlReviewNotificationAdapter } from './adapters/notifications/webhook-aml-review-notification.adapter';
+import { PspFeeScheduleService } from './application/services/psp-fee-schedule.service';
+import { PspCostReconciliationService } from './application/services/psp-cost-reconciliation.service';
+import { ReservePolicyEscalationListener } from './application/services/reserve-policy-escalation.listener';
+import { DisputeNotificationDispatcherService } from './application/services/dispute-notification-dispatcher.service';
+import { DisputeNotificationListener } from './application/services/dispute-notification.listener';
+import { EmailDisputeNotificationAdapter } from './adapters/notifications/email-dispute-notification.adapter';
+import { SlackDisputeNotificationAdapter } from './adapters/notifications/slack-dispute-notification.adapter';
+import { WebhookDisputeNotificationAdapter } from './adapters/notifications/webhook-dispute-notification.adapter';
+import { SubscriptionNotificationDispatcherService } from './application/services/subscription-notification-dispatcher.service';
+import { SubscriptionNotificationListener } from './application/services/subscription-notification.listener';
+import { EmailSubscriptionNotificationAdapter } from './adapters/notifications/email-subscription-notification.adapter';
+import { SlackSubscriptionNotificationAdapter } from './adapters/notifications/slack-subscription-notification.adapter';
+import { WebhookSubscriptionNotificationAdapter } from './adapters/notifications/webhook-subscription-notification.adapter';
 
 // Controller
 import { PaymentController } from './application/controllers/payment.controller';
@@ -82,9 +110,12 @@ import { RiskTieringAdminController } from './application/controllers/risk-tieri
 import { PlanController } from './application/controllers/plan.controller';
 import { MarketplacePayoutAdminController } from './application/controllers/marketplace-payout-admin.controller';
 import { DelegationController } from './application/controllers/delegation.controller';
+import { ChargeApprovalController } from './application/controllers/charge-approval.controller';
 import { LegalHoldAdminController } from './application/controllers/legal-hold-admin.controller';
 import { AmbiguousPaymentAdminController } from './application/controllers/ambiguous-payment-admin.controller';
 import { AmbiguousRiskAdminController } from './application/controllers/ambiguous-risk-admin.controller';
+import { AmlReviewAdminController } from './application/controllers/aml-review-admin.controller';
+import { PspCostReconciliationAdminController } from './application/controllers/psp-cost-reconciliation-admin.controller';
 
 // Webhook Guards
 import { StripeWebhookGuard } from './adapters/psp/stripe/stripe-webhook.guard';
@@ -101,6 +132,9 @@ import { DegradedPspAwareThrottlerGuard } from '../../shared/guards/degraded-psp
 // Merchant (per-merchant HMAC secret lookup)
 import { MerchantModule } from '../merchant/merchant.module';
 import { VaultModule } from '../../shared/vault/vault.module';
+import { WebhookDeliveryLogModule } from '../../shared/webhook-delivery-log/webhook-delivery-log.module';
+import { WebhookDeliveryReplayService } from './application/services/webhook-delivery-replay.service';
+import { WebhookDeliveryAdminController } from './application/controllers/webhook-delivery-admin.controller';
 
 @Module({
   imports: [
@@ -108,15 +142,28 @@ import { VaultModule } from '../../shared/vault/vault.module';
     AuthModule,
     MerchantModule,
     VaultModule,
-    TypeOrmModule.forFeature([PaymentEntity, LedgerOutboxEntity, ReconciliationRunEntity, DisputeEntity, ReserveHoldEntity, SubscriptionEntity, PlanEntity, PayoutEntity, PayoutSweepRunEntity, DelegationEntity]),
+    WebhookDeliveryLogModule,
+    TypeOrmModule.forFeature([
+      PaymentEntity,
+      LedgerOutboxEntity,
+      ReconciliationRunEntity,
+      DisputeEntity,
+      ReserveHoldEntity,
+      SubscriptionEntity,
+      PlanEntity,
+      PayoutEntity,
+      PayoutSweepRunEntity,
+      DelegationEntity,
+      ChargeApprovalEntity,
+    ]),
     // No separate ThrottlerModule registration here: @nestjs/throttler's
     // ThrottlerModule is @Global(), so there is exactly one
     // ThrottlerStorageService/THROTTLER_OPTIONS for the whole app regardless
     // of how many modules call forRoot/forRootAsync — a second registration
     // doesn't get MerchantThrottlerGuard its own counters, it just resolves
-    // to the same global one (confirmed live: a supposedly-independent
-    // "burst limit=5" registration here was silently ignored in favor of
-    // AppModule's limit=10). MerchantThrottlerGuard reuses the same
+    // to the same global one — a supposedly-independent "burst limit=5"
+    // registration here would be silently ignored in favor of AppModule's
+    // limit=10. MerchantThrottlerGuard reuses the same
     // 'default'/'burst' tiers as the global IP-keyed guard; they stay
     // independent per-merchant vs per-IP anyway because ThrottlerGuard's
     // generateKey() hashes the tracker value into the storage key.
@@ -127,14 +174,34 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // on *every* call, so a second forRoot() (this module used to have one)
     // doesn't harmlessly collapse into app.module.ts's — it creates a
     // genuinely separate EventEmitter2 instance, silently splitting the
-    // app's event bus in two. Confirmed live: an e2e test listening via
-    // `app.get(EventEmitter2)` (resolving to AppModule's instance) never
-    // received events DisputeService emitted (resolving to this module's
-    // instance) — 0 received, not a timing flake. AppModule's registration
-    // already covers the whole app via @Global(); this one was pure
-    // duplication that happened to be actively harmful, not just redundant.
+    // app's event bus in two: a listener via `app.get(EventEmitter2)`
+    // (resolving to AppModule's instance) would never receive events
+    // DisputeService emits (resolving to this module's instance) — 0
+    // received, rather than a timing flake. AppModule's registration already
+    // covers the whole app via @Global(); a second one here would be pure
+    // duplication that's actively harmful, beyond just redundant.
   ],
-  controllers: [PaymentController, WebhookController, OutboxAdminController, ReconciliationAdminController, DisputeAdminController, ReserveAdminController, SubscriptionController, SubscriptionAdminController, RiskTieringAdminController, PlanController, MarketplacePayoutAdminController, DelegationController, LegalHoldAdminController, AmbiguousPaymentAdminController, AmbiguousRiskAdminController],
+  controllers: [
+    PaymentController,
+    WebhookController,
+    OutboxAdminController,
+    ReconciliationAdminController,
+    DisputeAdminController,
+    ReserveAdminController,
+    SubscriptionController,
+    SubscriptionAdminController,
+    RiskTieringAdminController,
+    PlanController,
+    MarketplacePayoutAdminController,
+    DelegationController,
+    ChargeApprovalController,
+    LegalHoldAdminController,
+    AmbiguousPaymentAdminController,
+    AmbiguousRiskAdminController,
+    AmlReviewAdminController,
+    PspCostReconciliationAdminController,
+    WebhookDeliveryAdminController,
+  ],
   providers: [
     // PSP Adapters
     StripePSPAdapter,
@@ -187,13 +254,43 @@ import { VaultModule } from '../../shared/vault/vault.module';
       provide: PayoutPort,
       useClass: PayoutTypeOrmRepository,
     },
+    // Real adapters as ordinary providers (each has its own ConfigService
+    // dependency), then a useFactory picks which one BankTransferPort
+    // actually resolves to at DI-container build time — BANK_TRANSFER_PROVIDER
+    // ('mock' (default) / 'ach' / 'wire'). Every existing caller of
+    // BankTransferPort (PayoutService) is unaffected by which one wins.
+    MockBankTransferAdapter,
+    AchBankTransferAdapter,
+    WireBankTransferAdapter,
     {
       provide: BankTransferPort,
-      useClass: MockBankTransferAdapter,
+      useFactory: (
+        mock: MockBankTransferAdapter,
+        ach: AchBankTransferAdapter,
+        wire: WireBankTransferAdapter,
+        config: ConfigService,
+      ) => {
+        const provider = config.get<string>('BANK_TRANSFER_PROVIDER', 'mock');
+        switch (provider) {
+          case 'mock':
+            return mock;
+          case 'ach':
+            return ach;
+          case 'wire':
+            return wire;
+          default:
+            throw new Error(`Unknown BANK_TRANSFER_PROVIDER: "${provider}" (expected mock/ach/wire)`);
+        }
+      },
+      inject: [MockBankTransferAdapter, AchBankTransferAdapter, WireBankTransferAdapter, ConfigService],
     },
     {
       provide: DelegationPort,
       useClass: DelegationTypeOrmRepository,
+    },
+    {
+      provide: ChargeApprovalPort,
+      useClass: ChargeApprovalTypeOrmRepository,
     },
 
     // Application Services
@@ -213,9 +310,47 @@ import { VaultModule } from '../../shared/vault/vault.module';
     PlanService,
     PayoutService,
     DelegationService,
+    ChargeApprovalService,
     LegalHoldService,
     AmbiguousPaymentService,
     AmbiguousRiskMonitoringService,
+    PspFeeScheduleService,
+    PspCostReconciliationService,
+    ReservePolicyEscalationListener,
+
+    // Dispute notification channel adapters + the @OnEvent listener that
+    // actually subscribes dispute.created/dispute.resolved to something,
+    // for the first time (see DisputeNotificationListener's docblock).
+    EmailDisputeNotificationAdapter,
+    SlackDisputeNotificationAdapter,
+    WebhookDisputeNotificationAdapter,
+    DisputeNotificationDispatcherService,
+    DisputeNotificationListener,
+
+    // Subscription notification channel adapters + the @OnEvent listener
+    // that actually subscribes subscription.past_due/subscription.canceled
+    // to something, for the first time (see SubscriptionNotificationListener's
+    // docblock) — a separate channel/target pair per merchant from disputes.
+    EmailSubscriptionNotificationAdapter,
+    SlackSubscriptionNotificationAdapter,
+    WebhookSubscriptionNotificationAdapter,
+    SubscriptionNotificationDispatcherService,
+    SubscriptionNotificationListener,
+
+    // AML-review notification channel adapters + dispatcher — called
+    // directly by AmlReviewMonitoringService, instead of via an @OnEvent
+    // listener (see AmlReviewNotificationDispatcherService's docblock
+    // for why this event family doesn't need one).
+    EmailAmlReviewNotificationAdapter,
+    SlackAmlReviewNotificationAdapter,
+    WebhookAmlReviewNotificationAdapter,
+    AmlReviewNotificationDispatcherService,
+    AmlReviewMonitoringService,
+
+    // Webhook delivery log — read/replay side (the write side is called
+    // directly from inside each Webhook*NotificationAdapter above,
+    // itself injecting WebhookDeliveryLogModule's exported service).
+    WebhookDeliveryReplayService,
 
     // Auth
     JwtAuthGuard,
@@ -227,6 +362,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     // Webhook signature guards
     StripeWebhookGuard,
     AdyenWebhookGuard,
+    BankTransferWebhookGuard,
   ],
   exports: [
     PaymentRepositoryPort,
@@ -234,6 +370,7 @@ import { VaultModule } from '../../shared/vault/vault.module';
     PaymentProcessorFactory,
     CachePort,
     LedgerOutboxPort,
+    ReconciliationPort,
   ],
 })
 export class PaymentModule {}

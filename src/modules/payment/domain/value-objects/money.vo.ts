@@ -24,11 +24,7 @@ export class Money {
   private readonly _currency: Currency;
   private readonly _fxSnapshot?: FXRateSnapshot;
 
-  private constructor(
-    amountMinorUnits: bigint,
-    currency: Currency,
-    fxSnapshot?: FXRateSnapshot,
-  ) {
+  private constructor(amountMinorUnits: bigint, currency: Currency, fxSnapshot?: FXRateSnapshot) {
     if (amountMinorUnits < 0n) {
       throw new Error(`Money amount cannot be negative: ${amountMinorUnits}`);
     }
@@ -138,17 +134,12 @@ export class Money {
   }
 
   equals(other: Money): boolean {
-    return (
-      this._currency.equals(other._currency) &&
-      this._amountMinorUnits === other._amountMinorUnits
-    );
+    return this._currency.equals(other._currency) && this._amountMinorUnits === other._amountMinorUnits;
   }
 
   private assertSameCurrency(other: Money): void {
     if (!this._currency.equals(other._currency)) {
-      throw new Error(
-        `Currency mismatch: ${this._currency.code} vs ${other._currency.code}. Use convertTo() first.`,
-      );
+      throw new Error(`Currency mismatch: ${this._currency.code} vs ${other._currency.code}. Use convertTo() first.`);
     }
   }
 

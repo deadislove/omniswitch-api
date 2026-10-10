@@ -43,7 +43,7 @@ local pttl = redis.call("PTTL", KEYS[1])
 return {current, pttl}
 ```
 
-This is a **fixed-window counter**, not a reproduction of
+This is a **fixed-window counter** — a different mechanism from
 `ThrottlerStorageService`'s per-hit sliding decay (each in-memory hit
 schedules its own independent `setTimeout` to decrement itself exactly `ttl`
 after it was recorded — closer to a sliding log). Fixed-window is the
@@ -51,11 +51,11 @@ standard trade-off for distributed rate limiting: a client can burst up to
 2x the limit right at a window boundary (a few requests at the very end of
 one window, a few more right at the start of the next), in exchange for O(1)
 storage and a single atomic operation per check, instead of tracking
-per-request timestamps. This is deliberate, not an oversight — a
+per-request timestamps. This is a deliberate trade-off — a
 sliding-window-log implementation in Redis is possible (sorted sets, one
 member per request) but meaningfully more expensive per check, and the
 burst-at-boundary imprecision doesn't matter for what this is actually
-protecting against (sustained abuse, not exact-millisecond fairness).
+protecting against (sustained abuse, rather than exact-millisecond fairness).
 
 Two independent dimensions share this same storage: the global IP-keyed
 guard (`APP_GUARD` in `app.module.ts`) and `MerchantThrottlerGuard`
@@ -66,6 +66,18 @@ ordering). They don't interfere with each other because
 `ThrottlerGuard.generateKey()` hashes the tracker value (IP or merchant id)
 into the storage key — different tracker, different key, independent count,
 even sharing one `ThrottlerStorageService` instance.
+
+### A third dimension: per-merchant PSP-exposure throttling
+
+`MerchantPspExposureService` (`src/modules/payment/adapters/circuit-breaker/`)
+adds a third tracker on top of the two above, built on the same
+TTL-refresh-on-write Redis pattern as `RedisCircuitBreakerService`'s own
+counters: a sliding window of which PSP a merchant's recent charges
+actually resolved to, used to tighten that specific merchant's `charge`
+rate limit when their traffic is concentrated on a currently-degraded
+PSP. Full design — the three tuned constants, the concentration
+calculation, and the actual rate-limit consequence — in
+[`merchant-psp-exposure-throttling.md`](./merchant-psp-exposure-throttling.md).
 
 ### The `@Global()` surprise
 
@@ -92,7 +104,7 @@ and merchant-keyed checks report `limit: 10` and the same internal storage
 identity, when only one of them should have. The fix: delete the redundant
 registration entirely, keep the one `ThrottlerModule.forRootAsync()` call in
 `AppModule`, and let `MerchantThrottlerGuard` share it — which is correct
-anyway, since isolation comes from the tracker-keyed storage key, not from
+anyway, since isolation comes from the tracker-keyed storage key rather than from
 having a separate module registration.
 
 **Lesson for anything else using this pattern**: if a library's module is
@@ -102,8 +114,8 @@ having a separate module registration.
 
 ### Verification
 
-Proven live with two real, independently-started app processes (not two
-requests to one process) sharing one Redis instance: a merchant's
+Proven live with two real, independently-started app processes —
+rather than two requests to one process — sharing one Redis instance: a merchant's
 `X-RateLimit-Remaining-burst` header decremented continuously across
 requests alternating between "replica A" and "replica B" (`9 → 8 → 7 → 6`,
 crossing processes between every step), and a second merchant's very next
@@ -168,10 +180,10 @@ state transition itself lands wrong, only a harmless duplicate write.
 **A separate, real bug this benign-race reasoning originally missed**:
 `assertAvailable()` used to admit *every* call once state was anything
 other than `OPEN` — so the instant the state flipped to `HALF_OPEN`,
-every replica's concurrent traffic passed through simultaneously, not
-just a single trial call, which is the opposite of what `HALF_OPEN`
-exists to do (send a struggling PSP a small probe, not a resumed full
-burst right as it may be starting to recover). Fixed with a second,
+every replica's concurrent traffic passed through simultaneously,
+beyond just a single trial call, which is the opposite of what
+`HALF_OPEN` exists to do (send a struggling PSP a small probe rather
+than a resumed full burst right as it may be starting to recover). Fixed with a second,
 independent Redis counter (`halfOpenTrialCount`, atomic `INCR`, TTL set
 only by whichever call claims slot 1) that gates `HALF_OPEN` admission
 to exactly one trial call per recovery episode; every other call arriving
@@ -181,22 +193,22 @@ accumulate again), and both the `HALF_OPEN → CLOSED` success path and the
 immediate-reopen failure path explicitly delete the trial counter so a
 leftover count from one recovery episode can't reject the next one's own
 first trial call. Verified with `redis-circuit-breaker.service.spec.ts`
-(a fake, real-TTL-semantics `CachePort`): confirmed live that, before this
-fix, a second `assertAvailable()` call issued right after the first one
-admitted the `HALF_OPEN` trial also resolved successfully instead of
-being rejected.
+(a fake, real-TTL-semantics `CachePort`): without the trial-counter
+deletion, a second `assertAvailable()` call issued right after the first
+one admitted the `HALF_OPEN` trial would also resolve successfully
+instead of being rejected.
 
 ### Verification
 
-Proven live the same way as rate limiting: the mock PSP was stopped, five
-charge attempts against Stripe were forced to fail from one replica, and a
+Same verification approach as rate limiting: stopping the mock PSP and
+forcing five charge attempts against Stripe to fail from one replica, a
 second replica — checked via `GET /payments/routing/health`, having never
-made any of those failing calls itself — reported Stripe's circuit as
+made any of those failing calls itself — reports Stripe's circuit as
 `OPEN` too.
 
 ### Known trade-offs
 
-- **Metrics are unbounded cumulative counters, not a sliding window.**
+- **Metrics are unbounded cumulative counters rather than a sliding window.**
   `successCount`/`totalRequests`/`totalLatencyMs` accumulate for as long as
   the Redis keys exist — unlike the old per-process version, they don't
   reset on a deploy/restart. This is arguably *more* correct for a shared
@@ -206,10 +218,10 @@ made any of those failing calls itself — reported Stripe's circuit as
   specifically. A time-windowed implementation (e.g., only counting the
   last 15 minutes) would be more representative of current health; that's
   tracked in [`../../DEV_README.md`](../../DEV_README.md) as a Tier 2 item,
-  not implemented here.
+  rather than implemented here.
 - Recovery timing (`RECOVERY_TIME_MS = 30000`) and failure threshold
-  (`FAILURE_THRESHOLD = 5`) are hardcoded constants, not per-PSP or
-  environment-configurable. Fine for two PSPs with similar reliability
+  (`FAILURE_THRESHOLD = 5`) are hardcoded constants that can't be tuned
+  per-PSP or per-environment. Fine for two PSPs with similar reliability
   profiles; would need to become configurable if a third PSP with very
   different failure characteristics were added.
 
@@ -227,15 +239,17 @@ state where cluster-wide state was actually needed) — but unlike those
 two, **it has not been fixed here**, only worked around, unevenly, on a
 service-by-service basis.
 
-There are thirteen of these today (fifteen counting the two purely
-read-only ones): `LedgerOutboxRelayService.relay()` (every 10s) and its
+There are fourteen of these today (two of them purely read-only —
+log/alert only, no state mutation):
+`LedgerOutboxRelayService.relay()` (every 10s) and its
 `detectStaleEvents()` (every 5min, log/alert-only — no state mutation,
 so not a duplication concern the way the others below are);
-`ReconciliationService` (hourly, not daily); `ReserveService`,
+`ReconciliationService` (hourly rather than daily); `ReserveService`,
 `SubscriptionService`, and `RiskTieringService` (all daily);
-`PayoutService`'s four separate sweeps — `runSweep()` (noon),
+`PayoutService`'s five separate sweeps — `runSweep()` (noon),
 `releaseEligibleReserves()` (midnight), `recheckKycBlocks()` (1am),
-and `initiateEligibleTransfers()` (2am); `AmbiguousPaymentService`'s
+`initiateEligibleTransfers()` (2am), and
+`initiateEligibleReserveTransfers()` (3am); `AmbiguousPaymentService`'s
 `runAutoResolutionSweep()` (every 10min) and `alertOnStale()` (every
 5min, log/alert-only, same posture as `detectStaleEvents()` above); and
 `AmbiguousRiskMonitoringService.runAutoClearSweep()` (3am). At 20
@@ -245,45 +259,45 @@ up to 20 times, all within roughly the same moment.
 ### What actually happens per service (not a uniform story)
 
 - **`ReserveService.releaseEligible()` and `SubscriptionService.runBillingSweep()`
-  are self-healing**, not by design intent but as a side effect of
-  unrelated bugs found and fixed *within* each service (see
+  are self-healing** — an incidental side effect of race
+  fixes made for unrelated reasons *within* each service (see
   `ledger-and-settlement.md` and `subscriptions.md`). `ReserveService`
   releases via an atomically-conditional `UPDATE ... WHERE status =
   'HELD'`; a second replica racing the same hold loses that race and gets
-  a caught `ConflictException`, not a double-release. `SubscriptionService`
+  a caught `ConflictException` instead of a double-release. `SubscriptionService`
   charges under a deterministic per-period payment id and checks whether
   it's already `SUCCEEDED` before charging; a second replica racing the
   same subscription+period either loses a primary-key race inside the
   saga or finds the charge already done and just advances the period.
-  Both were built to survive a *process crash* mid-sweep, not multi-replica
-  duplication specifically — but the same mechanism happens to cover both.
+  Both were built to survive a *process crash* mid-sweep rather than
+  multi-replica duplication specifically — but the same mechanism happens to cover both.
 - **`PayoutService` — mixed mechanisms, all verified race-safe.**
   `releaseEligibleReserves()`/`recheckKycBlocks()`/
-  `initiateEligibleTransfers()` each go through an atomically-conditional
-  `UPDATE ... WHERE` (`PayoutPort.markReserveReleased()`/
-  `markKycCleared()`/`markTransferInitiated()`) — the same
+  `initiateEligibleTransfers()`/`initiateEligibleReserveTransfers()` each
+  go through an atomically-conditional `UPDATE ... WHERE`
+  (`PayoutPort.markReserveReleased()`/`markKycCleared()`/
+  `markTransferInitiated()`/`markReserveTransferInitiated()`) — the same
   race-safe-by-construction pattern `ReserveService` uses. `runSweep()`
   (the noon job that creates `Payout` rows from a windowStart/windowEnd
   derived from `findLatestSweepRun()`) used a different mechanism: two
   replicas racing noon previously both read the same "last sweep" window
-  and both created a `Payout` for the same ledger credit — confirmed
-  live via a real concurrent-call reproduction, not just theorized from
-  reading the code. Fixed with a `CachePort.setNX()` distributed lock
-  around the whole method (the same primitive `IdempotencyInterceptor`
-  already uses for per-request locking, applied here to a batch job
-  instead) — a losing caller returns `null` rather than racing the
-  winner. Verified live: the same reproduction now produces exactly one
-  `Payout`, with a permanent regression test in
-  `test/marketplace-payouts.e2e-spec.ts`.
+  and both created a `Payout` for the same ledger credit, reproducible
+  with a real concurrent-call test, beyond just a theoretical read of the
+  code. Fixed with a `CachePort.setNX()` distributed lock around the
+  whole method (the same primitive `IdempotencyInterceptor` already uses
+  for per-request locking, applied here to a batch job instead) — a
+  losing caller returns `null` rather than racing the winner. The same
+  concurrent-call reproduction now produces exactly one `Payout`, with a
+  permanent regression test in `test/marketplace-payouts.e2e-spec.ts`.
 
-  **Deliberate trade-off, not an oversight**: the lock is the only
+  **A deliberate trade-off**: the lock is the only
   safeguard — there is no DB-level uniqueness constraint backstopping
   it. Adding one properly would need a new `window_start` column on
   `payouts` (today's `sweep_run_id` doesn't work as a uniqueness key
   here, since two racing calls each mint their own fresh
   `sweepRunId`), a backfill migration, and application code to treat a
   unique-violation as an expected, safely-skippable outcome — real
-  schema work, not a small addition. Skipped because the lock already
+  schema work, well beyond a small addition. Skipped because the lock already
   closes the reproduced race, and Redis being unreachable fails
   `setNX()` loudly (the sweep errors out) rather than silently granting
   every caller the lock — there's no silent-failure mode a backstop
@@ -291,10 +305,10 @@ up to 20 times, all within roughly the same moment.
   mode that a DB constraint *would* catch — a legitimately slow sweep
   outliving its lock's TTL and genuinely racing the next scheduled tick
   — is a scale problem (this method sweeps every eligible merchant in
-  one sequential pass under one global lock), not a correctness gap in
-  the lock itself. If/when that scale is reached, the DB constraint is
+  one sequential pass under one global lock), rather than a correctness
+  gap in the lock itself. If/when that scale is reached, the DB constraint is
   worth building alongside whichever sharding/batching/queue redesign
-  actually addresses the sweep's own throughput, not in isolation
+  actually addresses the sweep's own throughput, instead of in isolation
   before then.
 - **`ReconciliationService` is not self-healing** — a second replica
   running the same window's reconciliation produces a second, duplicate
@@ -307,29 +321,29 @@ up to 20 times, all within roughly the same moment.
   principle — two replicas evaluating the same merchant concurrently
   could theoretically interleave reads/writes if the underlying dispute
   data changed mid-evaluation. Low-impact in practice (tiers only
-  meaningfully change over a 90-day window, not within the seconds two
+  meaningfully change over a 90-day window — nowhere near the seconds two
   replicas' sweeps could overlap by).
 - **`LedgerOutboxRelayService` was never audited for this specifically**
   — `findPending()` + relay-and-`markPublished()` on a 10-second cycle
   across 20 replicas means the same batch of pending events is likely
   read by multiple pods before any of them finishes publishing. Whether
   that produces a duplicate publish (the in-process `EventEmitter2` emit
-  this relay currently does — see `ledger-and-settlement.md` — would fire
-  in each replica that read the same event) is a real open question, not
-  verified either way.
+  this relay currently does — see `ledger-accounting.md` — would fire
+  in each replica that read the same event) is a real, unverified open
+  question.
 - **`AmbiguousPaymentService.runAutoResolutionSweep()` reduces but
   doesn't eliminate the race**: each item re-reads the payment on the
   master and skips it if its status is no longer `AMBIGUOUS`
   immediately before acting, which closes the most obvious window, but
   two replicas could still both pass that re-read check for the same
-  payment before either one's write lands — not verified either way,
+  payment before either one's write lands — left unverified,
   same open-question posture as `LedgerOutboxRelayService` above.
   `alertOnStale()` is read-only/alert-only, same non-concern as
   `detectStaleEvents()`.
 - **`AmbiguousRiskMonitoringService.runAutoClearSweep()` is idempotent**
   — it unconditionally sets a merchant's ambiguous-risk flag to cleared;
   two replicas racing the same merchant both write the same end state,
-  not a double-effect the way creating a new row would be.
+  unlike the double-effect creating a new row would produce.
 
 ### Why this hasn't been fixed properly
 
@@ -341,10 +355,10 @@ level, or moving scheduled work out of the API pods entirely into a
 separate, single-instance worker deployment. None of that exists yet;
 building it properly (choosing a lock TTL that survives a slow run
 without either double-firing or deadlocking a legitimately-slow one) is
-real design work, not a quick add. Tracked here rather than in
+real design work, well beyond a quick add. Tracked here rather than in
 `DEV_README.md` because it's a cross-cutting infrastructure gap affecting
-every current and future `@Cron` job uniformly, not a single feature's
-loose end.
+every current and future `@Cron` job uniformly, beyond any single
+feature's loose end.
 
 **If you add a new `@Cron` job**: assume it will run concurrently across
 every replica, and design for that from the start — either make the work

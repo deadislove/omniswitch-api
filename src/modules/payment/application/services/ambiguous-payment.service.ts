@@ -9,9 +9,10 @@ import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggrega
 import { PaymentAggregate } from '../../domain/aggregates/payment.aggregate';
 import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
-import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
+import { ChargeLedgerParamsResolverService, toPaymentSplits } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
+import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 
 // Same cadence as LedgerOutboxRelayService.detectStaleEvents() — this is
 // the same category of "alert, don't act" sweep, just for AMBIGUOUS
@@ -63,8 +64,8 @@ export class AmbiguousPaymentService {
     private readonly reserveService: ReserveService,
     private readonly processorFactory: PaymentProcessorFactory,
   ) {
-    // Read directly from process.env in the constructor, not module-level
-    // consts — so an e2e test can override before createTestApp() reads
+    // Read directly from process.env in the constructor rather than
+    // module-level consts — so an e2e test can override before createTestApp() reads
     // this service's providers. Same reasoning/pattern as
     // AmbiguousRiskMonitoringService's thresholds, established after
     // PSP_BULKHEAD_MAX_CONCURRENT's hoisting bug (a module-level const
@@ -79,7 +80,8 @@ export class AmbiguousPaymentService {
   }
 
   private async getOwnedAmbiguous(paymentId: string): Promise<PaymentAggregate> {
-    // Master, not the ambient replica-routed connection — same reasoning
+    // Forced onto master rather than the ambient replica-routed
+    // connection — same reasoning
     // as PaymentLifecycleService.getOwnedPayment(): an operator resolving
     // this could plausibly be reacting to a payment that was only just
     // marked AMBIGUOUS moments earlier, and the ~1s replica lag is a real
@@ -91,7 +93,7 @@ export class AmbiguousPaymentService {
     if (payment.status !== PaymentStatus.AMBIGUOUS) {
       throw new ConflictException({
         statusCode: 409,
-        error: `Payment ${paymentId} is ${payment.status}, not AMBIGUOUS — nothing to resolve`,
+        error: `Payment ${paymentId} is ${payment.status} rather than AMBIGUOUS — nothing to resolve`,
         code: 'PAYMENT_NOT_AMBIGUOUS',
       });
     }
@@ -103,7 +105,7 @@ export class AmbiguousPaymentService {
    * PSP for a payment stuck AMBIGUOUS. SUCCEEDED books the same ledger
    * entries a webhook confirmation would (fee/reserve/split resolution,
    * transactional payment+outbox write) — this is real money being
-   * recorded as collected, not just a status flip. FAILED is the
+   * recorded as collected, beyond just a status flip. FAILED is the
    * simpler branch: no charge happened, nothing to book.
    */
   async resolve(params: {
@@ -119,7 +121,8 @@ export class AmbiguousPaymentService {
       if (!params.pspTransactionId) {
         throw new UnprocessableEntityException({
           statusCode: 422,
-          error: 'pspTransactionId is required when outcome is SUCCEEDED — an ambiguous payment never received one automatically',
+          error:
+            'pspTransactionId is required when outcome is SUCCEEDED — an ambiguous payment never received one automatically',
           code: 'PSP_TRANSACTION_ID_REQUIRED',
         });
       }
@@ -128,12 +131,16 @@ export class AmbiguousPaymentService {
       payment.recordManualAmbiguousResolution(params.resolvedBy, params.reason);
       await this.bookSucceeded(payment);
 
-      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> SUCCEEDED by ${params.resolvedBy} (pspTransactionId=${params.pspTransactionId}): ${params.reason}`);
+      this.logger.warn(
+        `Payment ${payment.id} manually resolved AMBIGUOUS -> SUCCEEDED by ${params.resolvedBy} (pspTransactionId=${params.pspTransactionId}): ${params.reason}`,
+      );
     } else {
       payment.markFailed(params.reason, 'MANUALLY_RESOLVED_AMBIGUOUS');
       payment.recordManualAmbiguousResolution(params.resolvedBy, params.reason);
       await this.paymentRepository.update(payment);
-      this.logger.warn(`Payment ${payment.id} manually resolved AMBIGUOUS -> FAILED by ${params.resolvedBy}: ${params.reason}`);
+      this.logger.warn(
+        `Payment ${payment.id} manually resolved AMBIGUOUS -> FAILED by ${params.resolvedBy}: ${params.reason}`,
+      );
     }
 
     this.publish(payment);
@@ -168,6 +175,16 @@ export class AmbiguousPaymentService {
         rate: settlementConversion.rate,
         provider: settlementConversion.provider,
       });
+      const taxRecord = buildCrossBorderTaxRecord(payment.amount, payment.binInfo);
+      if (taxRecord) payment.recordTaxRecord(taxRecord);
+    }
+    // Same re-resolve-then-finalize reasoning as
+    // WebhookProcessingService.markSucceeded() — this `resolve()` call is
+    // fresh, possibly a different FX rate than whatever `payment.splits`
+    // already held from request time. See
+    // PaymentAggregate.finalizeSplitConversions()'s docblock.
+    if (splits && splits.length > 0) {
+      payment.finalizeSplitConversions(toPaymentSplits(splits));
     }
     const outboxEvent = LedgerOutboxEvent.createChargeEntries({
       id: uuidv4(),
@@ -185,7 +202,13 @@ export class AmbiguousPaymentService {
       await this.ledgerOutbox.saveWithPayment(payment.id, outboxEvent, manager);
       if (reserveHold) {
         await this.reserveService.recordHold(
-          { paymentId: payment.id, merchantId: payment.metadata.merchantId, amount: reserveHold.amount, holdDays: reserveHold.holdDays },
+          {
+            paymentId: payment.id,
+            merchantId: payment.metadata.merchantId,
+            amount: reserveHold.amount,
+            netAmount: reserveHold.netAmount,
+            holdDays: reserveHold.holdDays,
+          },
           manager,
         );
       }
@@ -199,11 +222,16 @@ export class AmbiguousPaymentService {
    * (AmbiguousPaymentAdminController's run-now endpoint), same dual
    * pattern as AmbiguousRiskMonitoringService.runAutoClearSweep(). Every
    * item gets its own try/catch — one payment's PSP call failing (e.g. a
-   * transient network error, not a real STILL_UNKNOWN answer) must not
+   * transient network error, as opposed to a real STILL_UNKNOWN answer) must not
    * abort the whole batch, same posture as PayoutService's sweep.
    */
   @Cron(CronExpression.EVERY_10_MINUTES, { name: 'ambiguous-payment-auto-resolution' })
-  async runAutoResolutionSweep(): Promise<{ succeeded: number; failed: number; stillUnknown: number; skipped: number }> {
+  async runAutoResolutionSweep(): Promise<{
+    succeeded: number;
+    failed: number;
+    stillUnknown: number;
+    skipped: number;
+  }> {
     const eligible = await this.paymentRepository.findAmbiguousEligibleForAutoResolution(
       this.maxAutoResolutionAttempts,
       this.minAutoResolutionAgeMinutes,
@@ -225,12 +253,12 @@ export class AmbiguousPaymentService {
     payment: PaymentAggregate,
     result: { succeeded: number; failed: number; stillUnknown: number; skipped: number },
   ): Promise<void> {
-    // Re-read on master right before acting, not the (possibly
+    // Re-read on master right before acting, instead of the (possibly
     // now-stale) copy the sweep's list query returned — an operator may
     // have resolved this exact payment manually via
     // POST /admin/payments/:id/resolve-ambiguous between the sweep's
     // list query and this iteration reaching it. Silently skip rather
-    // than error: this is an expected race, not a fault, and
+    // than error: this is an expected race rather than a fault, and
     // markSucceeded()/markFailed() would throw on a payment that's no
     // longer AMBIGUOUS anyway (assertValidTransition).
     const fresh = await this.paymentRepository.findByIdOnMaster(payment.id);
@@ -254,13 +282,20 @@ export class AmbiguousPaymentService {
       await this.bookSucceeded(fresh);
       this.publish(fresh);
       result.succeeded++;
-      this.logger.warn(`Payment ${fresh.id} auto-resolved AMBIGUOUS -> SUCCEEDED via PSP query (pspTransactionId=${outcome.pspTransactionId})`);
+      this.logger.warn(
+        `Payment ${fresh.id} auto-resolved AMBIGUOUS -> SUCCEEDED via PSP query (pspTransactionId=${outcome.pspTransactionId})`,
+      );
     } else if (outcome.outcome === 'FAILED') {
-      fresh.markFailed('Auto-resolved via PSP query: the PSP has no record of this charge succeeding', outcome.errorCode ?? 'AUTO_RESOLVED_AMBIGUOUS');
+      fresh.markFailed(
+        'Auto-resolved via PSP query: the PSP has no record of this charge succeeding',
+        outcome.errorCode ?? 'AUTO_RESOLVED_AMBIGUOUS',
+      );
       await this.paymentRepository.update(fresh);
       this.publish(fresh);
       result.failed++;
-      this.logger.warn(`Payment ${fresh.id} auto-resolved AMBIGUOUS -> FAILED via PSP query (errorCode=${outcome.errorCode ?? 'unknown'})`);
+      this.logger.warn(
+        `Payment ${fresh.id} auto-resolved AMBIGUOUS -> FAILED via PSP query (errorCode=${outcome.errorCode ?? 'unknown'})`,
+      );
     } else {
       fresh.incrementAmbiguousAutoRetryCount();
       await this.paymentRepository.update(fresh);
@@ -287,8 +322,8 @@ export class AmbiguousPaymentService {
     for (const payment of stale) {
       this.logger.error(
         `Payment ${payment.id} (merchant ${payment.metadata.merchantId}, ${payment.pspProvider ?? 'unknown PSP'}) has been AMBIGUOUS for ` +
-        `>${ALERT_THRESHOLD_MINUTES}min (auto-resolution attempts so far: ${payment.ambiguousAutoRetryCount}/${this.maxAutoResolutionAttempts}) — ` +
-        `check the PSP directly if this persists, or resolve via POST /admin/payments/${payment.id}/resolve-ambiguous`,
+          `>${ALERT_THRESHOLD_MINUTES}min (auto-resolution attempts so far: ${payment.ambiguousAutoRetryCount}/${this.maxAutoResolutionAttempts}) — ` +
+          `check the PSP directly if this persists, or resolve via POST /admin/payments/${payment.id}/resolve-ambiguous`,
       );
     }
   }

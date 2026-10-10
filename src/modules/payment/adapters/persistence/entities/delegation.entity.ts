@@ -25,6 +25,10 @@ export class DelegationEntity {
   @Column({ name: 'allowed_categories', type: 'simple-array', nullable: true })
   allowedCategories: string[] | null;
 
+  /** See SpendPolicy.requireApprovalAboveAmount's docblock. Null means no approval gate — every charge within the other limits auto-executes. */
+  @Column({ name: 'require_approval_above_amount_minor_units', type: 'bigint', nullable: true })
+  requireApprovalAboveAmountMinorUnits: string | null;
+
   @Column({ type: 'varchar', default: 'ACTIVE' })
   status: DelegationStatus;
 
@@ -39,6 +43,16 @@ export class DelegationEntity {
 
   @Column({ name: 'token_expires_at', type: 'timestamptz' })
   tokenExpiresAt: Date;
+
+  // Envelope-encrypted (Vault Transit, same VaultTransitService/key as
+  // merchants.hmac_secret_ciphertext — see secret-management.md) per-agent
+  // HMAC signing key, generated once at delegation creation. Nullable: a
+  // delegation created before this column existed has no key, and
+  // HmacSignatureGuard treats that as "must be revoked and reissued to get
+  // one" rather than papering over it with a bypass — see that guard's
+  // docblock.
+  @Column({ name: 'signing_key_ciphertext', type: 'varchar', nullable: true })
+  signingKeyCiphertext: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

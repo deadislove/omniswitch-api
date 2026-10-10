@@ -62,7 +62,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
       );
     }
 
-    // Scoped by merchant, not just the raw key — this interceptor runs
+    // Scoped by merchant, beyond just the raw key — this interceptor runs
     // after JwtAuthGuard (see PaymentController's class-level @UseGuards
     // ordering), so req.user is already populated. Without this, a caller
     // who submits another merchant's *known* Idempotency-Key (leaked via
@@ -128,11 +128,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     // Mark as PROCESSING
-    await this.cache.set<IdempotencyRecord>(
-      cacheKey,
-      { status: 'PROCESSING' },
-      IDEMPOTENCY_TTL_SECONDS,
-    );
+    await this.cache.set<IdempotencyRecord>(cacheKey, { status: 'PROCESSING' }, IDEMPOTENCY_TTL_SECONDS);
 
     this.logger.debug(`Idempotency lock acquired: key=${idempotencyKey}`);
 

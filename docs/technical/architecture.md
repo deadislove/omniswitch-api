@@ -5,6 +5,9 @@
 ```
 src/
 ├── app.module.ts                  # Root module: DB, throttling, scheduling, health
+├── tracing.ts                     # OpenTelemetry SDK bootstrap — imported first in main.ts,
+│                                   # before anything auto-instrumentation needs to patch
+│                                   # (see this file's own docblock for why order matters)
 ├── main.ts                        # Bootstrap: helmet, CORS, validation, rawBody capture,
 │                                   # global 'api' prefix + URI versioning (see main.ts's
 │                                   # setGlobalPrefix exclude list for health/metrics)
@@ -20,7 +23,7 @@ src/
 ├── jobs/                          # Standalone CLI scripts, outside the Nest DI container —
 │   │                               # same pattern as database/seed-admin.ts: import AppDataSource
 │   │                               # directly, run raw SQL, exit. run-*-job.ts are each a k8s
-│   │                               # CronJob's container command, not a @Cron() method (see
+│   │                               # CronJob's container command, rather than a @Cron() method (see
 │   │                               # distributed-state.md for why @Cron() doesn't fit a
 │   │                               # once-per-cluster job at HPA scale).
 │   ├── run-archiving-job.ts       # Moves eligible payments/ledger_outbox rows to the `archive`
@@ -30,8 +33,8 @@ src/
 │   ├── backup-storage/            # Pluggable BackupStorage adapters run-deletion-job.ts
 │   │   │                          # writes to — local disk (default, what CI runs with),
 │   │   │                          # S3, GCS, Azure Blob, selected via DELETION_BACKUP_STORAGE.
-│   │   │                          # get-backup-storage.ts is a plain factory function, not
-│   │   │                          # NestJS DI — run-deletion-job.ts runs outside the Nest
+│   │   │                          # get-backup-storage.ts is a plain factory function,
+│   │   │                          # independent of NestJS DI — run-deletion-job.ts runs outside the Nest
 │   │   │                          # container. data-retention.md, "Where the backup goes."
 │   │   └── *.spec.ts              # Unit tests — real filesystem for the local adapter,
 │   │                               # mocked SDK clients for the three cloud adapters (never
@@ -40,7 +43,7 @@ src/
 │   ├── create-partitions-job.ts   # Keeps upcoming-month partitions pre-created on payments/
 │   │                               # ledger_outbox so new rows never fall into DEFAULT —
 │   │                               # k8s CronJob, weekly — data-retention.md
-│   └── drop-cutover-tables.ts     # One-time operator action (k8s Job, not a CronJob) — drops
+│   └── drop-cutover-tables.ts     # One-time operator action (k8s Job rather than a CronJob) — drops
 │                                   # payments_old/ledger_outbox_old once the cutover
 │                                   # verification window elapses — data-retention.md
 ├── shared/
@@ -73,26 +76,31 @@ src/
 │   │   │                          # applyAutoAmbiguousRiskFlag, setAmbiguousRiskFlagManual,
 │   │   │                          # setAmbiguousRiskAutoManaged
 │   │   ├── mfa.service.ts         # TOTP enroll/confirm/verify/disable (PCI DSS Req 8.4.2)
-│   │   ├── kyc-provider.port.ts + mock-kyc-provider.adapter.ts  # Connected-account KYC review
-│   │   │                          # (real HTTP call to an external verifier — mocked here)
+│   │   ├── kyc-provider.port.ts    # Mock/PersonaKycProviderAdapter — connected-account
+│   │   │                          # KYC review, selected via KYC_PROVIDER; KycWebhookGuard
+│   │   │                          # verifies Persona's async review-decision callback
 │   │   ├── auth.controller.ts     # POST /auth/token (+ mfa/enroll,confirm,verify,disable), /auth/revoke
-│   │   └── merchant-admin.controller.ts  # ADMIN-only onboarding/rotation/revocation/policy/KYC
+│   │   ├── merchant-admin.controller.ts  # ADMIN-only onboarding/rotation/revocation/policy/KYC
+│   │   └── kyc-webhook.controller.ts  # POST /webhooks/kyc — kept here rather than in payment/'s
+│   │       │                      # WebhookController, since KYC is a MerchantModule concern
+│   │       │                      # and MerchantModule must never depend on PaymentModule
 │   └── payment/                   # Owns anything that moves money — payments, disputes,
 │       │                          # reconciliation, reserves, subscriptions, plans, marketplace
 │       │                          # payouts, risk tiering, agentic-payment delegations all live
-│       │                          # here, not split into their own modules, since they all
+│       │                          # here rather than split into their own modules, since they all
 │       │                          # depend on PaymentProcessorFactory/LedgerOutboxPort
 │       ├── domain/                # Pure business logic, zero external dependencies
 │       │   ├── aggregates/        # PaymentAggregate, LedgerOutboxEvent, ReconciliationRun,
 │       │   │                      # Dispute, ReserveHold, Subscription, Plan, Payout,
-│       │   │                      # PayoutSweepRun, Delegation
+│       │   │                      # PayoutSweepRun, Delegation, ChargeApproval
 │       │   ├── value-objects/     # Money, Currency, BinInfo, PaymentStatus, SpendPolicy
 │       │   ├── events/            # Domain events (PaymentCharged, PaymentDisputed, ...)
 │       │   └── services/          # SmartRoutingStrategy, DisputePolicy
 │       ├── ports/outbound/        # One port per aggregate's persistence contract
 │       │                          # (PaymentRepositoryPort, LedgerOutboxPort,
 │       │                          # ReconciliationPort, DisputePort, ReserveHoldPort,
-│       │                          # SubscriptionPort, PlanPort, PayoutPort, DelegationPort),
+│       │                          # SubscriptionPort, PlanPort, PayoutPort, DelegationPort,
+│       │                          # ChargeApprovalPort),
 │       │                          # plus PSPAdapterPort, CachePort, FXRateProviderPort,
 │       │                          # BankTransferPort — interfaces the domain depends on
 │       ├── adapters/
@@ -100,10 +108,14 @@ src/
 │       │   │                      # ports above)
 │       │   ├── cache/             # Redis (ioredis) — idempotency locking
 │       │   ├── circuit-breaker/   # RedisCircuitBreakerService — per-PSP health, shared
-│       │   │                      # across replicas (see "A note on shared state")
+│       │   │                      # across replicas (see "A note on shared state");
+│       │   │                      # MerchantPspExposureService — per-merchant PSP routing
+│       │   │                      # concentration, feeds DegradedPspAwareThrottlerGuard
 │       │   ├── fx/                # FXRateProviderAdapter — calls mock-psp's /fx/rates
-│       │   ├── bank/              # MockBankTransferAdapter — calls mock-psp's /bank/transfers
-│       │   │                      # for marketplace payout transfer initiation
+│       │   ├── bank/              # Mock/Ach/WireBankTransferAdapter — payout transfer
+│       │   │                      # initiation, selected via BANK_TRANSFER_PROVIDER;
+│       │   │                      # BankTransferWebhookGuard verifies the two real
+│       │   │                      # rails' async settlement callback
 │       │   └── psp/
 │       │       ├── stripe/        # StripePSPAdapter + StripeWebhookGuard
 │       │       ├── adyen/         # AdyenPSPAdapter + AdyenWebhookGuard
@@ -112,10 +124,14 @@ src/
 │           ├── controllers/       # PaymentController (also the entry point for an AGENT
 │           │                      # token's delegated charge), WebhookController,
 │           │                      # SubscriptionController, PlanController,
-│           │                      # DelegationController, plus 10 focused admin controllers
+│           │                      # DelegationController, ChargeApprovalController (the
+│           │                      # PENDING_APPROVAL hold state for an above-threshold
+│           │                      # agent charge), plus 13 focused admin controllers
 │           │                      # (Outbox/Reconciliation/Dispute/Reserve/Subscription/
 │           │                      # RiskTiering/MarketplacePayout/LegalHold/AmbiguousPayment/
-│           │                      # AmbiguousRisk — LegalHold is
+│           │                      # AmbiguousRisk/AmlReview/PspCostReconciliation/
+│           │                      # WebhookDelivery —
+│           │                      # LegalHold is
 │           │                      # POST/DELETE admin/payments/:id/legal-hold, see
 │           │                      # docs/compliance/data-retention.md)
 │           ├── sagas/             # PaymentCheckoutSaga (charge, compensating txns) — also
@@ -125,15 +141,20 @@ src/
 │           │                      # ChargeLedgerParamsResolverService (fee/FX/reserve/split
 │           │                      # params, one merchant lookup shared by every
 │           │                      # ledger-booking call site), DisputeService,
-│           │                      # ReconciliationService, OutboxRecoveryService,
-│           │                      # ReserveService, SubscriptionService, RiskTieringService,
-│           │                      # PlanService, PayoutService, DelegationService (spend-policy
-│           │                      # reservation/release, agent JWT issuance/revocation),
+│           │                      # DisputeNotificationDispatcherService,
+│           │                      # ReconciliationService, PspCostReconciliationService,
+│           │                      # PspFeeScheduleService, OutboxRecoveryService,
+│           │                      # ReserveService, SubscriptionService,
+│           │                      # SubscriptionNotificationDispatcherService,
+│           │                      # RiskTieringService, PlanService, PayoutService,
+│           │                      # DelegationService (spend-policy reservation/release,
+│           │                      # agent JWT issuance/revocation), ChargeApprovalService,
 │           │                      # LegalHoldService, LedgerOutboxRelayService,
-│           │                      # AmbiguousPaymentService, AmbiguousRiskMonitoringService —
-│           │                      # several of these are recurring @Cron sweeps, each also
-│           │                      # exposed on demand via an admin POST endpoint (see the
-│           │                      # pattern table below)
+│           │                      # AmbiguousPaymentService, AmbiguousRiskMonitoringService,
+│           │                      # AmlReviewMonitoringService,
+│           │                      # AmlReviewNotificationDispatcherService — several of these
+│           │                      # are recurring @Cron sweeps, each also exposed on demand
+│           │                      # via an admin POST endpoint (see the pattern table below)
 │           ├── interceptors/      # IdempotencyInterceptor
 │           └── dto/               # ChargePaymentDto, RefundPaymentDto, SubscriptionDto,
 │                                  # PlanDto, DelegationDto, ...
@@ -199,7 +220,7 @@ same reasoning spelled out in prose.
 
 Dependency direction only ever points inward, toward `domain/` — this is
 the actual enforcement mechanism behind "domain logic never imports
-infrastructure," not just a convention:
+infrastructure" — more than just a convention:
 
 ```
 +------------------------------------------------------------+
@@ -253,8 +274,8 @@ merchant's HMAC key). This shape — `AuthModule` as a dependency-free leaf,
 specifically to avoid a cycle: if `MerchantModule` needed something from
 `PaymentModule` (it doesn't) while `PaymentModule` needs `MerchantModule`
 (it does, for HMAC lookups), that would be circular. Keep it this way when
-adding new cross-cutting auth concerns — put them in `AuthModule`, not
-directly in `PaymentModule` or `MerchantModule`.
+adding new cross-cutting auth concerns — put them in `AuthModule`,
+rather than directly in `PaymentModule` or `MerchantModule`.
 
 ## Design patterns in use
 
@@ -262,10 +283,10 @@ directly in `PaymentModule` or `MerchantModule`.
 |---|---|---|
 | Hexagonal (Ports & Adapters) | `payment/ports` vs `payment/adapters` | Domain and application logic depend on interfaces (`PSPAdapterPort`, `PaymentRepositoryPort`), never on TypeORM or a specific PSP's SDK directly |
 | Factory | `PaymentProcessorFactory` | Selects Stripe vs. Adyen at runtime based on `SmartRoutingStrategy`'s decision, with automatic fallback if the primary PSP fails |
-| Saga (orchestration, not choreography) | `PaymentCheckoutSaga` | Multi-step checkout (create intent → risk check → route → charge → confirm) with explicit compensating actions on failure |
-| Transactional Outbox | `LedgerOutboxEvent` + `LedgerOutboxRelayService` | Ledger entries are written atomically with the payment state change that confirms them, then relayed asynchronously by a cron job — see `docs/business-domain/ledger-and-settlement.md` for why *when* they're written matters |
+| Saga (orchestration rather than choreography) | `PaymentCheckoutSaga` | Multi-step checkout (create intent → risk check → route → charge → confirm) with explicit compensating actions on failure |
+| Transactional Outbox | `LedgerOutboxEvent` + `LedgerOutboxRelayService` | Ledger entries are written atomically with the payment state change that confirms them, then relayed asynchronously by a cron job — see `docs/business-domain/ledger-accounting.md` for why *when* they're written matters |
 | Repository | `PaymentTypeOrmRepository`, `MerchantService` | Isolates persistence details from application services |
-| Recurring sweep + on-demand trigger | `LedgerOutboxRelayService`, `ReconciliationService`, `ReserveService`, `SubscriptionService`, `RiskTieringService`, `PayoutService` (payout batching, reserve release, KYC-block recheck, and transfer initiation are each their own sweep), `AmbiguousPaymentService` (auto-resolution and stale-alert sweeps), `AmbiguousRiskMonitoringService` (auto-clear sweep) | Each pairs a `@Cron` schedule with an admin `POST .../run` endpoint doing the exact same work — an operator (or a test) doesn't have to wait for the schedule, and there's exactly one code path to reason about, not two. Every one of these is also individually resilient to a single item's failure (a per-item `try/catch` inside the sweep loop) — one bad subscription/reserve/merchant/payout doesn't abort the whole batch |
+| Recurring sweep + on-demand trigger | `LedgerOutboxRelayService`, `ReconciliationService`, `ReserveService`, `SubscriptionService`, `RiskTieringService`, `PayoutService` (payout batching, reserve release, KYC-block recheck, and transfer initiation are each their own sweep), `AmbiguousPaymentService` (auto-resolution and stale-alert sweeps), `AmbiguousRiskMonitoringService` (auto-clear sweep) | Each pairs a `@Cron` schedule with an admin `POST .../run` endpoint doing the exact same work — an operator (or a test) doesn't have to wait for the schedule, and there's exactly one code path to reason about instead of two. Every one of these is also individually resilient to a single item's failure (a per-item `try/catch` inside the sweep loop) — one bad subscription/reserve/merchant/payout doesn't abort the whole batch |
 | Atomic conditional update (race-safe state transition) | `ReserveHoldPort.markReserveReleased()`, `PayoutPort.markKycCleared()`/`markTransferInitiated()`, `DelegationPort.tryReserveSpend()` | A single `UPDATE ... WHERE <preconditions>` (returning affected-row count, or a computed `RETURNING`) instead of a read-then-write — so two concurrent callers (an operator's manual action racing a scheduled sweep, or two concurrent agent charges against the same delegation) can't both succeed past a limit or double-apply a transition |
 | Deterministic idempotency key | `SubscriptionService.periodPaymentId()` (`uuidv5(subscriptionId:periodEnd)`) | Crash-recovery without a distributed transaction — a background job that can't share a DB transaction with `PaymentCheckoutSaga`'s own internal one instead derives a stable id per unit of work, checks whether that id already succeeded before acting, and gets at-most-once behavior from the payment table's own primary-key uniqueness rather than a 2PC/saga-of-sagas |
 
@@ -278,12 +299,12 @@ default in-process `Map`) and PSP circuit-breaker state
 (`RedisCircuitBreakerService`, replacing per-adapter instance fields). If
 you add a new piece of cross-request state, ask whether it needs to survive
 being served by a different pod on the next request — if yes, it needs a
-shared backing store, not a class field.
+shared backing store rather than a class field.
 
 ## Request-processing pipeline
 
 For a mutating payment endpoint (`charge`, `refund`, `capture`, `cancel`),
-guards run in this order — the order is load-bearing, not incidental:
+guards run in this order — the order is load-bearing, chosen on purpose:
 
 ```
 ThrottlerGuard (global, IP-keyed)
@@ -300,12 +321,12 @@ If you add a new guard that depends on `req.user`, it must be listed *after*
 guards in array order, and `req.user` doesn't exist until `JwtAuthGuard` has
 run.
 
-`HmacSignatureGuard` is itself an example of depending on `req.user`, not
-just `req.rawBody`: it short-circuits to `true` for an `AGENT`-role caller
+`HmacSignatureGuard` is itself an example of depending on `req.user`,
+beyond just `req.rawBody`: it short-circuits to `true` for an `AGENT`-role caller
 (a `Delegation`'s token — see `docs/business-domain/future-directions.md#agentic-payments`)
 without checking any of the `X-Signature`/`X-Timestamp`/`X-Merchant-Id`
 headers at all. An agent never holds the merchant's own HMAC secret, so
-requiring one would be unsatisfiable, not just inconvenient.
+requiring one would be unsatisfiable, far more than just inconvenient.
 
 ## Testing
 
@@ -332,20 +353,20 @@ npm run test:e2e
 `docker-compose.yml`'s service credentials exactly, so no extra
 configuration is needed for that workflow. Every default can be overridden
 via real environment variables (e.g. in CI, pointing at service containers
-on different hosts/ports). Test files run with `maxWorkers: 1` — each spec
-file boots its own full `AppModule` instance against the same shared
-Postgres/Redis/Redis-backed rate limiter, and running them concurrently
-risks cross-file interference on that shared state (e.g. two files'
-merchants racing the same IP-scoped rate-limit bucket); sequential
-execution trades a bit of wall-clock time for determinism, which matters
-more here. This does mean the *whole* e2e run's request volume shares one
-60-second rate-limit window, not one per file — see `test/setup-env.ts`'s
-`RATE_LIMIT_MAX` comment for a real instance of this biting a spec file
-that had nothing to do with rate limiting.
+on different hosts/ports). Test files run with `maxWorkers: "50%"` —
+each spec file boots its own full `AppModule` instance against the same
+shared Postgres/Redis, so `test/setup-env.ts` gives each Jest worker its
+own logical Redis DB (keyed by `JEST_WORKER_ID`) and a larger DB
+connection pool (`DB_POOL_MAX=15`) to avoid concurrent workers racing
+each other's rate-limit bucket/circuit-breaker state or exhausting
+Postgres's connection limit. `"50%"` (half the host's detected cores)
+rather than a fixed number — see `docs/technical/ci-cd.md`'s "Parallelizing e2e
+workers" section for the measured host-CPU-contention root cause a fixed
+worker count ran into, and why adaptive sizing is the actual fix.
 
 `test/utils/` has the shared plumbing: `test-app.ts` (bootstrap),
 `seed.ts` (merchant creation + login through the real `/auth/token`
-endpoint, not a hand-minted JWT), `signing.ts` (HMAC/webhook signature
+endpoint rather than a hand-minted JWT), `signing.ts` (HMAC/webhook signature
 helpers matching exactly what the guards being tested verify).
 
 ## Where to look next
@@ -355,12 +376,35 @@ helpers matching exactly what the guards being tested verify).
 - [`../business-domain/payment-lifecycle.md`](../business-domain/payment-lifecycle.md) —
   the payment state machine and how charge/refund/capture/cancel/webhooks
   move a payment through it
+- [`../business-domain/ledger-accounting.md`](../business-domain/ledger-accounting.md) —
+  the double-entry bookkeeping model and the outbox pattern
+- [`../business-domain/fee-model.md`](../business-domain/fee-model.md) —
+  platform fee rate, volume tiers, and PSP interchange cost reconciliation
+- [`../business-domain/fx-conversion.md`](../business-domain/fx-conversion.md) —
+  merchant settlement currency, refund/dispute rate replay, presentment
+  currency
+- [`../business-domain/marketplace-and-payouts.md`](../business-domain/marketplace-and-payouts.md) —
+  marketplace splits, payout scheduling, KYC gating, transfer initiation
 - [`../business-domain/ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md) —
-  double-entry bookkeeping model, smart routing/fee logic, FX conversion,
-  merchant reserves, automatic risk-tier adjustment
+  smart PSP routing/circuit breaker, reconciliation, merchant reserves,
+  automatic risk-tier adjustment
 - [`../business-domain/subscriptions.md`](../business-domain/subscriptions.md) —
   the subscription state machine, billing/dunning/crash-recovery design,
   and what's deliberately simplified
+- [`../business-domain/disputes.md`](../business-domain/disputes.md) —
+  the dispute state machine, the auto-decision policy (`ACCEPT`/`CONTEST`/
+  `MANUAL_REVIEW`) and why `fraudulent` is deliberately excluded from
+  auto-contest
+- [`../business-domain/risk-and-fraud.md`](../business-domain/risk-and-fraud.md) —
+  the two independent risk signals this platform tracks per merchant
+  (chargeback-driven reserve tiering, and ambiguous-payment PSP-reliability
+  monitoring) and why they're kept separate
+- [`../business-domain/compliance-and-security.md`](../business-domain/compliance-and-security.md) —
+  why PCI DSS scope, AML/KYC, and delegation-liability considerations
+  shaped specific domain-model decisions (tokenization, the KYC
+  payout-vs-charge gate, delegation scope); the business-framing
+  counterpart to this document's own security section and
+  `compliance-certification-roadmap.md`
 - [`database-migrations.md`](./database-migrations.md) — the migration
   workflow, and why every entity has to be registered in both
   `app.module.ts` *and* `database/data-source.ts`
@@ -379,3 +423,40 @@ helpers matching exactly what the guards being tested verify).
   run, the known flaky-test classes on top of the ones described above,
   and two real CI incidents worth reading before touching either
   workflow file or `test/jest-e2e.json`
+- [`incident-response.md`](./incident-response.md) — what each Prometheus
+  alert in [`monitoring/alert.rules.yml`](../../monitoring/alert.rules.yml)
+  means and the admin endpoint/service method that actually addresses it
+- [`chaos-testing.md`](./tests/chaos-testing.md) — real fault injection
+  (`scripts/chaos/`) against the docker-compose stack: PSP outage, Redis
+  outage, Postgres primary outage, and what each one actually found
+- [`contract-testing.md`](./tests/contract-testing.md) — `test/contract/`,
+  verifying `StripePSPAdapter`/`AdyenPSPAdapter` against the real
+  Stripe/Adyen test-mode APIs instead of mock-psp; framework only, never
+  executed in this repo (no sandbox credentials available)
+- [`disaster-recovery.md`](./disaster-recovery.md) — the multi-region/
+  cross-AZ failover design (topology, RTO/RPO targets, per-component
+  plan, the failover drill runbook) and today's real single-region
+  posture; strategy documented, never drilled against real
+  infrastructure (no second region/cluster available)
+- [`api-versioning-policy.md`](./api-versioning-policy.md) — the
+  deprecation SLA for `VersioningType.URI` routes, and `@Deprecated()`
+  (`src/shared/decorators/deprecated.decorator.ts`), a real, tested
+  mechanism that adds RFC 8594 `Sunset`/`Deprecation`/`Link` headers —
+  not yet applied to any real route, since nothing is deprecated today
+- [`service-boundaries.md`](./service-boundaries.md) — evaluates
+  splitting the modular monolith into Ledger/Routing/Risk services: what
+  each would own, why `PaymentCheckoutSaga`'s own dependency list is the
+  central coupling fact any split has to reckon with, and why the
+  recommendation is not to do this yet
+- [`compliance-certification-roadmap.md`](./compliance-certification-roadmap.md) —
+  the SOC 2 certification path (Trust Service Criteria, what this repo
+  already has real evidence for vs. what's organizational-only and can't
+  come from code), plus a concrete ASV-scan/penetration-test budget and
+  cadence; PCI DSS specifics stay in
+  [`security-and-compliance.md`](./security-and-compliance.md#pci-dss-compliance)
+- [`threshold-calibration.md`](./tests/threshold-calibration.md) —
+  `scripts/calibration/`, which runs an actual precision/recall (risk
+  tiering) and break-even (dispute auto-accept) calibration against a
+  generated, seeded-reproducible synthetic dataset, since no real fraud/
+  chargeback history exists in this repo; real, reproducible numbers,
+  beyond just a description of the method

@@ -4,7 +4,7 @@
 // real /auth/token endpoint, writing their credentials to .merchants.json.
 //
 // A single-merchant load test is bottlenecked by MerchantThrottlerGuard's
-// per-merchant rate limit almost immediately — confirmed live, see
+// per-merchant rate limit almost immediately — see
 // docs/technical/load-testing.md's "single-merchant" run. Spreading load
 // across many merchants (a more realistic multi-tenant traffic shape
 // anyway) is what actually exercises this app's own processing capacity
@@ -15,6 +15,15 @@ const http = require('http');
 const TARGET = process.env.TARGET_URL || 'http://localhost:3000';
 const ADMIN_API_KEY_ID = process.env.LOAD_TEST_ADMIN_API_KEY_ID;
 const ADMIN_API_KEY_SECRET = process.env.LOAD_TEST_ADMIN_API_KEY_SECRET;
+// Since MFA became mandatory for ADMIN (roles.guard.ts), POST /auth/token
+// for an admin whose MFA is already enrolled+confirmed no longer returns a
+// directly usable token — it returns a restricted mfaPending one, only
+// good against POST /auth/mfa/verify. This script doesn't carry a TOTP
+// library/dependency to complete that itself; instead, accept an
+// already-MFA-verified admin token directly (get one via
+// POST /auth/token -> POST /auth/mfa/verify, e.g. the same way
+// test/utils/seed.ts's seedAdminMerchant() does it, or manually).
+const ADMIN_TOKEN_OVERRIDE = process.env.LOAD_TEST_ADMIN_TOKEN;
 const MERCHANT_COUNT = Number(process.env.LOAD_TEST_MERCHANT_COUNT || 20);
 
 function requestOnce(method, path, body, token) {
@@ -70,15 +79,29 @@ async function request(method, path, body, token, attempt = 1) {
 }
 
 async function main() {
-  if (!ADMIN_API_KEY_ID || !ADMIN_API_KEY_SECRET) {
-    console.error('LOAD_TEST_ADMIN_API_KEY_ID / LOAD_TEST_ADMIN_API_KEY_SECRET must be set (from npm run seed:admin)');
-    process.exit(1);
+  let adminToken = ADMIN_TOKEN_OVERRIDE;
+  if (!adminToken) {
+    if (!ADMIN_API_KEY_ID || !ADMIN_API_KEY_SECRET) {
+      console.error(
+        'LOAD_TEST_ADMIN_API_KEY_ID / LOAD_TEST_ADMIN_API_KEY_SECRET must be set (from npm run seed:admin), ' +
+          'or LOAD_TEST_ADMIN_TOKEN with an already-MFA-verified admin token',
+      );
+      process.exit(1);
+    }
+    const loginRes = await request('POST', '/api/v1/auth/token', {
+      apiKeyId: ADMIN_API_KEY_ID,
+      apiKeySecret: ADMIN_API_KEY_SECRET,
+    });
+    if (loginRes.mfaRequired) {
+      console.error(
+        'This admin has MFA enabled (mandatory for ADMIN — see roles.guard.ts) — ' +
+          'POST /auth/token only returned a restricted mfaPending token. ' +
+          'Complete POST /auth/mfa/verify yourself and pass the resulting token as LOAD_TEST_ADMIN_TOKEN.',
+      );
+      process.exit(1);
+    }
+    adminToken = loginRes.accessToken;
   }
-
-  const { accessToken: adminToken } = await request('POST', '/api/v1/auth/token', {
-    apiKeyId: ADMIN_API_KEY_ID,
-    apiKeySecret: ADMIN_API_KEY_SECRET,
-  });
 
   const merchants = [];
   for (let i = 0; i < MERCHANT_COUNT; i++) {

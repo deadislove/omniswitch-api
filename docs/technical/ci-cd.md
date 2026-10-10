@@ -1,54 +1,89 @@
 # CI/CD
 
-Two GitHub Actions workflows, plus Dependabot, run against every push and
-pull request to `main`. This document covers what each one does, why
-certain gates are blocking and others aren't, and — the main reason it's
-worth reading before touching either workflow file — two real incidents
-this pipeline has already been through, both with root causes that
-weren't obvious from the failure output alone.
+`ci.yml` and `security-scan.yml` run against every push and pull
+request to `main` — these two are this document's main subject: what
+each one does, why certain gates are blocking and others aren't, and
+two failure modes this pipeline is built to guard against, both with
+root causes that aren't obvious from the failure output alone, worth
+reading before touching either workflow file.
+
+Four other workflows exist under `.github/workflows/` with narrower,
+unrelated triggers, each documented where its subject matter actually
+lives rather than here: `chaos-drill.yml` (monthly schedule +
+`workflow_dispatch`, not push-triggered — see
+[`tests/chaos-testing.md`](./tests/chaos-testing.md)), `sdk-package.yml`
+(push to `main`, but only on `sdk/**` changes) and `sdk-publish.yml`
+(triggered by `sdk-v*` tags, not pushes — see
+[`sdk/README.md`](./sdk/README.md)), and `gitlab-mirror.yml` (push to
+`main`, unconditional — see
+[`disaster-recovery.md`](./disaster-recovery.md#known-gaps), a backup
+mechanism rather than a CI/CD gate). Dependabot (below) runs
+independently of all of these.
 
 ## `.github/workflows/ci.yml`
 
-Two jobs, run in parallel.
+Two jobs. `e2e` itself runs as a 3-way shard matrix
+(`strategy.matrix.shard: [1, 2, 3]`), so four job instances run in
+parallel in total.
 
-**`build-and-unit-test`**: `npm ci` → lint (report-only, see below) →
+**`build-and-unit-test`**: `npm ci` → lint (blocking, see below) →
 `tsc --noEmit` → `npm run build` → `npm test` (unit tests, mocked
 dependencies).
 
-**`e2e`**: brings up `postgres-master`, `postgres-replica`, `redis`,
-`vault`, `mock-psp` via `docker compose up -d --wait` (same services,
-same host-mapped ports `test/setup-env.ts` already assumes — see
+**`e2e`** (× 3 shards): each shard brings up its own, fully independent
+`postgres-master`, `postgres-replica`, `redis`, `vault`, `mock-psp` via
+`docker compose up -d --wait` (same services, same host-mapped ports
+`test/setup-env.ts` already assumes — see
 [`architecture.md`'s Testing section](./architecture.md#testing)), then
-runs `npm run test:e2e`. `api` itself is deliberately not started — the
-e2e suite talks to a Nest app booted in-process by Jest/Supertest
-(`test/utils/test-app.ts`), not to the containerized `api` service.
+runs `npm run test:e2e -- --shard=${{ matrix.shard }}/3` — Jest's own
+built-in sharding splits the spec files roughly into thirds, not a
+hand-maintained file list. Widened from 2 shards to 3 after
+host-CPU-contention-driven flakiness (see "Parallelizing e2e workers"
+below) kept surfacing as a different random spec file failing each
+run rather than the same one twice — fewer files per shard lowers
+peak CPU pressure per job, which is a mitigation for the contention
+itself, not a fix targeted at any specific test. `api` itself is
+deliberately not started —
+the e2e suite talks to a Nest app booted in-process by Jest/Supertest
+(`test/utils/test-app.ts`), rather than to the containerized `api` service. See
+["The e2e heap-threshold health check failure"](#the-e2e-heap-threshold-health-check-failure)
+for why the job runs sharded at all.
 
 Note: this job does **not** bring up `pgbouncer-master`/`pgbouncer-replica`
 — `test/setup-env.ts`'s defaults point straight at Postgres, same as
 migrations do, so the e2e suite doesn't exercise the pooler by default.
-It's been manually validated against PgBouncer separately (pointing
-`DB_MASTER_HOST`/`DB_REPLICA_HOST` at the pooler's host ports — see
-[`load-testing.md`](./load-testing.md), Finding #3) but CI itself
-doesn't cover that path.
+Pointing `DB_MASTER_HOST`/`DB_REPLICA_HOST` at the pooler's host ports
+instead exercises that path separately — see
+[`load-testing.md`](./tests/load-testing.md), Finding #3 — but CI itself
+doesn't cover it.
 
-**Lint is report-only, not blocking.** The raw (no `--fix`) codebase
-currently produces ~8.7k findings — mostly `eslint-plugin-prettier`
-formatting diffs (no `.prettierrc` exists, so prettier's default
-double-quote style fights this codebase's actual single-quote
-convention), plus a parsing error on every file under `test/` (
-`tsconfig.json` excludes `test/`, so `parserOptions.project` can't
-type-check those files at all). Both are real, pre-existing gaps —
-fixing them means a deliberate repo-wide reformat plus a
-tsconfig/`.eslintrc` adjustment, not something to do silently as a side
-effect of wiring up CI. Until that happens, this step reports findings
-without failing the build on them.
+**Lint is blocking.** It used to be report-only: with no `.prettierrc`,
+prettier's default double-quote style fought this codebase's actual
+single-quote convention, and `tsconfig.json`'s `exclude: ["test"]` meant
+`parserOptions.project` couldn't type-check anything under `test/` at
+all — together producing ~10k findings, mostly formatting diffs plus a
+parsing error on every test file, none of them a real signal. Closed by
+two additions rather than a reformat imposing a new style: `.prettierrc` (matches
+the codebase's existing single-quote/trailing-comma convention, so
+`eslint --fix` only touches the actual mismatches) and
+`tsconfig.eslint.json` (extends `tsconfig.json` with `test/**/*.ts`
+included, used only by `eslint.config.cjs`'s `parserOptions.project` —
+`tsconfig.json`'s own `exclude: ["test"]` stays untouched, since that's
+load-bearing for `nest build`: `rootDir: "./src"` means test files would
+otherwise get compiled into `dist/` too). A handful of files also carry
+`eslint-disable-next-line security/detect-non-literal-fs-filename`
+comments meant for `eslint.security.config.cjs`'s separate run rather
+than this one — `eslint.config.cjs` registers the `security` plugin (no rules
+enabled) and turns off `reportUnusedDisableDirectives` so those
+cross-referenced comments resolve as inert directives instead of erroring
+on an unknown rule or warning about suppressing nothing.
 
 ## `.github/workflows/security-scan.yml`
 
 Five independent jobs: **Trivy** (dependency CVEs, Dockerfile/
 docker-compose/k8s misconfig, secret scanning), **Bearer** (application-
 level SAST — sensitive data flows, OWASP-style rules), **Gitleaks**
-(secret scanning across full git history, not just the current tree),
+(secret scanning across full git history, beyond just the current tree),
 **ESLint security rules** (`eslint-plugin-security`, Node.js-specific
 unsafe patterns — `eval`, non-literal `fs`/`child_process` calls, timing
 attacks, etc.), and **npm audit**.
@@ -57,22 +92,21 @@ Each tool runs twice: a full report (`CRITICAL,HIGH`/`moderate`+,
 `continue-on-error`/`|| true`) for visibility, and a blocking gate scoped
 to `CRITICAL`-only severity. The blocking gate is deliberately narrow —
 today's baseline has a handful of pre-existing HIGH findings (transitive
-npm CVEs in `js-yaml`/`lodash`/`multer`, one k8s `readOnlyRootFilesystem`
-hardening recommendation) that aren't part of this pipeline's own scope
-to fix, but zero CRITICAL findings — so the gate actually catches new
-regressions instead of failing on day one and training everyone to
-ignore it.
+npm CVEs in `js-yaml`/`lodash`/`multer`) that aren't part of this
+pipeline's own scope to fix, but zero CRITICAL findings — so the gate
+actually catches new regressions instead of failing on day one and
+training everyone to ignore it.
 
-**Suppressions are scoped by exact value, not by rule or path.**
+**Suppressions are scoped by exact value rather than by rule or path.**
 `trivy-secret.yaml` and `.gitleaks.toml` both allowlist the *specific
 regex* of this codebase's known test placeholder values (e.g.
-`sk_test_placeholder`), not the underlying detection rule — verified
-live by feeding each scanner a differently-shaped fake key and
-confirming it still gets flagged. `.eslintrc.security.cjs` disables
-`security/detect-object-injection` entirely, but only after checking
-every one of its hits in this codebase and confirming all were false
-positives (e.g. `VALID_TRANSITIONS[from]` where `from` is a closed
-TypeScript enum, not attacker-controlled input) — the plugin's own docs
+`sk_test_placeholder`), rather than the underlying detection rule — feeding
+either scanner a differently-shaped fake key still gets it flagged, which
+is what the narrow, value-scoped allowlist is for. `eslint.security.config.cjs`
+disables `security/detect-object-injection` entirely, but only after
+checking every one of its hits in this codebase and confirming all were
+false positives (e.g. `VALID_TRANSITIONS[from]` where `from` is a closed
+TypeScript enum, never attacker-controlled input) — the plugin's own docs
 acknowledge that rule "100% will have false positives."
 
 ## `.github/dependabot.yml`
@@ -86,17 +120,16 @@ majors get their own), `docker` (base images in `Dockerfile` and
 
 Two categories of failure are pre-existing, intermittent, and
 unconnected to whatever change happens to be in the PR when they show
-up. Both are already documented in detail in `DEV_README.md`'s
-development history; summarized here because they're specifically
-CI-relevant:
+up:
 
 - **Rate-limit bursts** (`429 Too Many Requests`): the full e2e suite's
   cumulative request volume shares one rate-limit window (see
   [`architecture.md`'s Testing section](./architecture.md#testing)).
   Reconfirms clean on an immediate re-run essentially every time.
 - **Heap-threshold health check** (`api-versioning.e2e-spec.ts`, `503`
-  on `/health`): see the workerIdleMemoryLimit incident below for why
-  this happens and why it's still unresolved.
+  on `/health`): see
+  ["The e2e heap-threshold health check failure"](#the-e2e-heap-threshold-health-check-failure)
+  below for why this class of failure exists and what bounds it now.
 
 If a CI run fails and the failure is exactly one of these two shapes,
 in a file the current PR didn't touch, re-running the job first is
@@ -104,280 +137,322 @@ reasonable before assuming a regression.
 
 ---
 
-## Incident: replica-lag races surfaced by a routine Dependabot PR
+## Replica-lag races in read-after-write code paths
 
-**Date**: 2026-08-09. **Commit**: `478f5a6 fix: force master read to
-avoid replica-lag races and #1.`
+`app.module.ts`'s TypeORM `replication` config routes plain repository
+reads to the Postgres replica, which streams from master with genuine,
+non-zero lag (~1s, measured and documented in
+[`architecture.md`](./architecture.md)). Any code that reads a row
+shortly after writing it (its own write, or something else's) races that
+lag — fine when the replica happens to catch up inside the gap between
+the write and the follow-up read, flaky exactly when it doesn't.
 
-A Dependabot PR bumping `actions/setup-node` from v4 to v7 (a
-CI-tooling-only change) failed its `e2e` check. Every other job in that
-PR passed — the failure had nothing to do with the action version bump
-itself.
-
-**Root cause**: `app.module.ts`'s TypeORM `replication` config routes
-plain repository reads to the Postgres replica, which streams from
-master with genuine, non-zero lag (~1s, already measured and documented
-in [`architecture.md`](./architecture.md) and surfaced once before in
-`reserve.service.ts`'s `release()`). Several e2e spec files read their
-own write back immediately (`dataSource.getRepository(...).findOne()`
-right after a `POST`/`PATCH` that write just committed to master) — a
-pattern that's fine when the replica happens to catch up inside the gap
-between the HTTP response and the follow-up query, and flaky exactly
-when it doesn't.
-
-The specific failure was `fx-conversion.e2e-spec.ts`: a `PATCH` that
-clears a merchant's `settlementCurrency`, followed immediately by a
-re-read that occasionally still saw the pre-clear value.
-
-**Fix**: every affected read was rewritten to go through
-`dataSource.createQueryRunner('master')` instead of the ambient
-(replica-routed) repository. This turned out to be latent in 9 files
-total, not just the one that happened to fail this particular run — a
-full-repo sweep for the same `dataSource.getRepository(...).find/
-findOne/count` pattern found and fixed all of them:
+**Where this recurs**: e2e spec files that read their own write back
+immediately (`dataSource.getRepository(...).findOne()` right after a
+`POST`/`PATCH` that just committed to master) hit this reliably enough
+to be a known pattern rather than a one-off — a full-repo sweep for the
+`dataSource.getRepository(...).find/findOne/count` pattern against
+recently-written rows found it latent across 11 files:
 `agentic-payments`, `cross-border-settlement`, `fx-conversion`,
 `ledger-and-outbox`, `marketplace-split-refunds`, `marketplace-splits`,
-`plans`, `reserve`, `risk-tiering`, `subscriptions`, `webhooks`. One
-production code path had the identical bug for the identical reason:
-`LedgerOutboxTypeOrmRepository.findPending()` (the query the outbox
-relay's `@Cron` job uses to find work) was also reading from the
-replica — fixed the same way, since a background poller has nothing to
-gain from replica routing and everything to lose from the extra lag.
+`plans`, `reserve`, `risk-tiering`, `subscriptions`, `webhooks` (each
+now forces the read onto master — see e.g. `findOneOnMaster()` in those
+spec files). Two production code paths had the identical bug for the
+identical reason:
 
-**Verified**: `tsc --noEmit` clean; full e2e suite run to completion
-multiple times post-fix, 170/170 passing (aside from the pre-existing
-flakes above, each reconfirmed clean on immediate re-run).
+- `LedgerOutboxTypeOrmRepository.findPending()` — the query the outbox
+  relay's `@Cron` job uses to find work; a background poller has
+  nothing to gain from replica routing and everything to lose from the
+  extra lag.
+- `MerchantService.verifyCredentials()` — the method behind
+  `POST /auth/token`, i.e. **every login**, in both tests and real
+  production deployments. A merchant created via `createMerchant()`
+  (commits to master) and immediately logging in races the replica: the
+  plain (replica-routed) `findOne()` this method used can return `null`
+  before the replica catches up — indistinguishable, by design (see that
+  method's own docblock on why it doesn't leak the difference), from a
+  genuinely wrong password. This is not just a test artifact: an admin
+  onboarding a merchant who tries to log in right away is an ordinary
+  real-world sequence that hits the same window. The same fix was
+  applied to the shared `getOrThrow()` private helper, used by 10+ admin
+  mutation endpoints (`updateFeeRate`, `updateSettlementCurrency`,
+  `setActive`, ...) that could plausibly run immediately after
+  `createMerchant()` in a real flow, beyond just a test.
 
-## Incident: a heap-flake fix that worked locally and broke CI
+**Fix, applied consistently everywhere this shows up**: read through
+`dataSource.createQueryRunner('master')` instead of the ambient
+(replica-routed) repository, for any read that needs to see a write that
+may have only just committed.
 
-**Date**: 2026-08-09. **Commits**: `ab092bc fix: memory incident in the
-test stage.` (the change), followed by a revert once the actual CI
-result came back.
+**The audit lesson**: master/replica routing is an ambient property of
+the whole app's `DataSource` — it doesn't stop at the test boundary. The
+places most worth auditing for this are exactly the ones a test harness
+exercises tightly and back-to-back (`create` immediately followed by
+`read`), even though a real caller might naturally insert more of a gap
+— which is exactly why test files surface this bug class before
+production traffic patterns do.
 
-**The problem being fixed**: `test/jest-e2e.json` runs with
-`maxWorkers: 1`, so all 19 e2e spec files execute sequentially inside
-**one OS process**. Each file's `createTestApp()` calls
+## The e2e heap-threshold health check failure
+
+**The problem**: `test/jest-e2e.json` runs with `maxWorkers: 1`, so all
+19 e2e spec files execute sequentially inside **one OS process**. Each
+file's `createTestApp()` calls
 `Test.createTestingModule({ imports: [AppModule] }).compile()` — a full
-NestJS DI container + TypeORM entity metadata + class-validator
-metadata build — and that heap usage doesn't fully release between
-files. By the tail end of a ~170-second, 170-test run, cumulative heap
-usage would occasionally cross the health check's 512MB threshold
-(`src/health/health.controller.ts`), failing whichever file happened to
-run last with a `503` on `/health` — usually
-`api-versioning.e2e-spec.ts`.
+NestJS DI container + TypeORM entity metadata + class-validator metadata
+build — and that heap usage doesn't fully release between files. By the
+tail end of a ~170-second, 170-test run, cumulative heap usage can cross
+the health check's 512MB threshold (`src/health/health.controller.ts`),
+failing whichever file happens to run last with a `503` on `/health` —
+usually `api-versioning.e2e-spec.ts`.
 
-**The attempted fix**: Jest has a built-in mechanism for exactly this —
-`workerIdleMemoryLimit`. Once a worker's memory usage after finishing a
-file exceeds the configured limit, Jest kills and restarts that worker
-before handing it the next file, giving every subsequent file a
-genuinely fresh heap. `"workerIdleMemoryLimit": "400MB"` was added to
-`test/jest-e2e.json`.
+Three approaches to reducing the test harness's own memory footprint
+were tried and didn't hold up; the actual fix addressed a different
+premise entirely.
 
-**Verified locally — three consecutive full e2e runs (170/170,
-`api-versioning.e2e-spec.ts` passing every time), against the same
-Docker Compose stack CI uses.** This is the part worth being explicit
-about: local verification here wasn't skipped or rushed, and it looked
-conclusive.
-
-**What actually happened on GitHub Actions**: the very next CI run,
-against the exact same commit, failed **61 of 170 tests across 17 of 19
-suites** — including `auth.e2e-spec.ts`'s most basic "log in and get a
-JWT" test, which nothing in the change touched. The failure shapes were
-wide and inconsistent (`401` on logins that should succeed, `404`s,
-wrong business-logic values, `undefined` where a record should exist) —
-the signature of environment instability, not a logic regression in any
-one file.
-
-**Root cause**: GitHub Actions runners have far less memory/CPU headroom
-than the machine this was verified on locally. A single `ts-jest`/
-`ts-node`-compiled NestJS app boot likely already sits near or above
-400MB on that runner — meaning `workerIdleMemoryLimit: 400MB` didn't
-trigger "occasionally, near the end of the suite" the way it did
-locally. It very likely triggered **after nearly every file**, turning
-what should have been one continuous, stable run into constant
+**Jest's `workerIdleMemoryLimit` doesn't transfer to CI hardware.** This
+setting kills and restarts a worker once its memory usage after
+finishing a file exceeds a configured limit, giving every subsequent
+file a fresh heap — a plausible direct fix. Tuned and confirmed clean
+against three consecutive full local e2e runs, it still failed
+dramatically on GitHub Actions: 61 of 170 tests across 17 of 19 suites,
+including `auth.e2e-spec.ts`'s most basic "log in and get a JWT" test,
+which nothing about the change touched. GitHub Actions runners have far
+less memory/CPU headroom than a typical development machine — a single
+`ts-jest`/`ts-node`-compiled NestJS app boot likely already sits near or
+above the configured 400MB threshold on that runner, so instead of
+triggering "occasionally, near the end of the suite" the way it did
+locally, it very likely triggered after nearly every file, turning what
+should have been one continuous, stable run into constant
 worker-process churn. That churn — not any single logic bug — is the
 most plausible explanation for failures this broad and this evenly
-spread across unrelated files.
+spread across unrelated files. **The lesson**: any setting whose
+behavior depends on the *resource envelope of the machine it runs on*
+(memory limits, worker counts, timeouts tuned against wall-clock time)
+cannot be validated by local testing alone, no matter how clean the
+local results look — it needs to be checked directly against the actual
+CI runner, or replaced with an approach that doesn't depend on guessing
+at the runner's available headroom.
 
-**Resolution**: reverted. `workerIdleMemoryLimit` was removed from
-`test/jest-e2e.json`, restoring the exact config from `478f5a6` (the
-last commit confirmed clean in CI). This brings back the original,
-narrower heap-threshold flake described above — a known, occasional,
-single-file failure — which is a strictly smaller problem than a
-run that fails ~36% of all tests.
-
-**The actual lesson**: this class of setting — anything whose behavior
-depends on the *resource envelope of the machine it runs on* (memory
-limits, worker counts, timeouts tuned against wall-clock time) — cannot
-be validated by local testing alone, no matter how many times it's run
-locally or how clean the results look. GitHub Actions' `ubuntu-latest`
-runners are meaningfully more constrained than a developer laptop. A
-future attempt at fixing the heap flake this way should either be
-tuned and verified directly against a real CI run (not just Docker
-Compose on a local machine), or take a different approach that doesn't
-depend on guessing at the runner's available headroom — e.g. splitting
-the e2e run into a few smaller `jest --shard` invocations (bounding how
-much any one process accumulates) instead of recycling workers by a
-memory threshold.
-
-### A second attempt that also didn't work: forcing GC
-
-Before landing on sharding, a second idea was tried and measured, not
-just assumed: run Jest with `--expose-gc` and call `global.gc()` in an
-`afterAll` hook (`setupFilesAfterEnv`) after each spec file's own
-`app.close()`, on the theory that heap simply wasn't being reclaimed
-promptly enough between files.
-
-This one was actually falsified *locally*, before ever reaching CI —
-`jest --logHeapUsage` showed heap climbing at essentially the same rate
-with the GC hook active as without it (471MB → 670MB across the 19
-files, ~10MB/file, same trajectory that previously tripped the
-threshold). The explicit `global.gc()` calls were confirmed to actually
-run (`--expose-gc` verified present via `typeof global.gc ===
-'function'`) — they just didn't help, because the growth isn't
-reclaimable garbage. It's live, still-referenced state — most likely
-`reflect-metadata`'s global metadata registry and ts-jest's compiled-
-module cache, both of which grow with every fresh
+**Forcing garbage collection doesn't help, because the growth isn't
+reclaimable garbage.** The alternative theory: heap simply wasn't being
+reclaimed promptly enough between files, fixable by running Jest with
+`--expose-gc` and calling `global.gc()` in an `afterAll` hook after each
+spec file's own `app.close()`. Measured with `jest --logHeapUsage`, heap
+climbs at essentially the same rate with the GC hook active as without
+it (471MB → 670MB across the 19 files, ~10MB/file, same trajectory that
+trips the threshold either way) — the explicit `global.gc()` calls do
+run (confirmed via `typeof global.gc === 'function'`), they just don't
+help, because the growth is live, still-referenced state rather than garbage:
+most likely `reflect-metadata`'s global metadata registry and ts-jest's
+compiled-module cache, both of which grow with every fresh
 `Test.createTestingModule({ imports: [AppModule] }).compile()` call and
 have no reason to ever be garbage-collected within the same process.
-This ruled out any same-process fix and is why sharding (separate OS
-processes, not memory management within one process) is the current
-approach.
+This rules out any same-process fix.
 
-### A third attempt that partially worked, then was reverted: `jest --shard`
+**Sharding into separate OS processes only partially works, because the
+per-process *baseline* is already most of the threshold.** `jest --shard`
+runs the suite as several genuinely fresh Node processes instead of one,
+bounding how many files' worth of NestJS/reflect-metadata state can
+accumulate in any one process. Splitting into 4 shards of ~5 files each
+still failed: shard 2/4 hit both `api-versioning.e2e-spec.ts`'s heap
+check *and*, more tellingly, a `401` on a basic login call in
+`subscriptions.e2e-spec.ts` that nothing about sharding should affect.
+That second failure is the real signal — this isn't "19 files is too
+many for one process," it's that a single fresh process running as few
+as 5 files was already landing close enough to 512MB that normal
+run-to-run variance could tip it over, consistent with the
+`--logHeapUsage` diagnostic above showing heap already at 471MB after
+just the *first* file, before any per-file accumulation even enters the
+picture. Sharding reduces how much accumulates *across* files — it does
+nothing about the *baseline* cost of one ts-jest-compiled NestJS app
+boot, which is already most of the way to the threshold on its own.
 
-`ci.yml`'s e2e job was changed to run `npm run pretest:e2e` once
-(migrations), then four separate `npx jest --config
-./test/jest-e2e.json --shard=$i/4` invocations in sequence — each a
-genuinely fresh Node process, bounding how many files' worth of
-NestJS/reflect-metadata state could accumulate in any one process to
-~5 instead of all 19.
-
-Verified locally first (19/19 suites passing across the 4 shards), then
-actually pushed and checked against a real CI run, per this document's
-own lesson. It didn't fully work: **shard 2/4 — only 5 files —
-still failed**, both `api-versioning.e2e-spec.ts`'s heap check *and*,
-more tellingly, `subscriptions.e2e-spec.ts` with a `401` on a basic
-login call nothing about sharding should affect. That second failure
-was the real signal: this wasn't "19 files is too many for one
-process," it was that **a single fresh process running as few as 5
-files was already landing close enough to 512MB that normal run-to-run
-variance could tip it over** — consistent with the local
-`--logHeapUsage` diagnostic from the GC investigation above, which
-showed heap already at 471MB after just the *first* file, before any
-per-file accumulation even entered the picture. Sharding reduces
-*how much accumulates across files* — it does nothing about the
-*baseline* cost of one ts-jest-compiled NestJS app boot, which was
-already most of the way to the threshold on its own.
-
-### What actually fixed it: the threshold was never a fair test to begin with
-
-The 512MB/1GB thresholds in `health.controller.ts` are correctly
+**What actually fixed it: the threshold was never a fair test to begin
+with.** The 512MB/1GB thresholds in `health.controller.ts` are correctly
 calibrated against `k8s/deployment.yaml`'s real 512Mi pod memory
 limit — meaningful for a compiled `node dist/main.js` production
 process. But the e2e test harness runs that same health check inside a
-process that also carries `ts-jest`'s TypeScript compiler and Jest's
-own machinery resident in memory the entire time — overhead a real
+process that also carries `ts-jest`'s TypeScript compiler and Jest's own
+machinery resident in memory the entire time — overhead a real
 deployment never has. No amount of reducing *test* memory use (GC,
-sharding) changes that the *harness itself* was already consuming most
-of a budget sized for production.
+sharding) changes that the harness itself was already consuming most of
+a budget sized for production. `health.controller.ts`'s thresholds are
+read from `ConfigService`
+(`HEALTH_CHECK_HEAP_THRESHOLD_BYTES`/`HEALTH_CHECK_RSS_THRESHOLD_BYTES`),
+defaulting to the same 512MB/1GB — production's behavior and
+`k8s/deployment.yaml` are untouched, since no env var sets these outside
+the test environment. `test/setup-env.ts` raises them to 1.5GB/2GB for
+e2e runs only; at this point the `jest --shard` change in `ci.yml` was
+reverted, since sharding alone added CI runtime without fully solving
+the problem — see "Sharding, reintroduced" below for what changed that
+conclusion. `ConfigService.get<number>()` does not actually cast — an env var
+override comes back as a string despite the generic type argument — so
+both threshold reads in `health.controller.ts` are wrapped in
+`Number(...)` explicitly rather than relying on `checkHeap()`'s internal
+`>` comparison to coerce it correctly. Peak heap across full local e2e
+runs sits around 600–800MB — comfortably clear of the old 512MB
+threshold (which would fail) and well inside the new 1.5GB one.
 
-**Fix**: `health.controller.ts`'s thresholds are now read from
-`ConfigService` (`HEALTH_CHECK_HEAP_THRESHOLD_BYTES`/
-`HEALTH_CHECK_RSS_THRESHOLD_BYTES`), defaulting to the same
-512MB/1GB — production's behavior and `k8s/deployment.yaml` are
-untouched, since no env var sets these outside the test environment.
-`test/setup-env.ts` raises them to 1.5GB/2GB for e2e runs only. The
-`jest --shard` change in `ci.yml` was reverted (it added CI runtime
-without fully solving the problem on its own).
+**The general lesson**: all three of the attempts above tried to make
+the *test harness* use less memory. The actual fix was recognizing that
+the specific numeric threshold being asserted was calibrated for an
+environment (compiled production code) the test was never running in.
+When a test's pass/fail boundary is a hardcoded number, it's worth
+asking whether that number's calibration context still applies to the
+environment actually running the test — not just whether the code under
+test can be made to fit under it.
 
-**Verified**: two consecutive full local e2e runs with
-`--logHeapUsage`, 19/19 suites both times, peak heap 793MB and 622MB
-respectively — comfortably clear of the old 512MB threshold (which
-both runs would have failed under) and well inside the new 1.5GB one.
-`ConfigService.get<number>()` was confirmed to **not** actually cast —
-an env var override comes back as a string despite the generic type
-argument — so both threshold reads are wrapped in `Number(...)`
-explicitly rather than relying on `checkHeap()`'s internal `>`
-comparison to coerce it correctly.
+### Sharding, reintroduced — a genuine leak, disproving the earlier per-process-baseline theory
 
-**The actual, actual lesson**: after three attempts, the pattern in
-hindsight is that the first two (`workerIdleMemoryLimit`, forced GC)
-and the third (sharding) all tried to make the *test harness* use less
-memory, when the real fix was recognizing that *the specific numeric
-threshold being asserted* was calibrated for an environment (compiled
-production code) the test was never actually running in. When a
-test's pass/fail boundary is a hardcoded number, it's worth asking
-early whether that number's calibration context still applies to the
-environment actually running the test — not just whether the code
-under test can be made to fit under it.
+The 1.5GB threshold held on a development machine, but the same suite
+still tripped `HEALTH_CHECK_HEAP_THRESHOLD_BYTES` on GitHub Actions'
+smaller `ubuntu-latest` runners (2 vCPU, 7GB total, shared with
+Postgres/Redis/Vault/mock-psp's own containers). The gap turned out to
+be a real, independently-diagnosable defect, beyond just a tighter
+resource envelope: `@nestjs/schedule`'s `SchedulerOrchestrator`
+implements `onApplicationBootstrap()` (registers every `@Cron()` job)
+but has no `onApplicationShutdown()`/`onModuleDestroy()` counterpart —
+`app.close()` never stops a single registered job. This codebase has 14
+`@Cron()`-decorated methods (the ledger outbox relay's
+`EVERY_10_SECONDS` tick among them — see
+[`distributed-state.md`](./distributed-state.md)); every e2e spec file
+that boots an app via `createTestApp()` leaves all 14 running for the
+rest of that Jest worker process's life, each tick still holding a live
+closure over that "closed" app's injected `DataSource`/repositories.
+The visible symptom was intermittent `TypeORMError: Driver not
+Connected` errors from a `CronJob.<anonymous>` stack frame — a zombie
+job from an earlier, already-closed test file firing against a
+connection pool that file's own shutdown had already torn down. This is
+a genuine, unbounded leak (more test files run, more zombie jobs
+accumulate, forever) — a different failure mode than the "per-process
+baseline is already high" theory the shard experiment above ruled
+out, which was about a single fresh process's *starting* cost rather than
+runaway growth within one.
 
-## Incident: the replica-lag race was in the login path itself
+**Fix**: `test/utils/test-app.ts`'s `createTestApp()` wraps the returned
+app's `close()` to stop every job in `SchedulerRegistry` before
+delegating to the real close — one change, since every spec file's own
+`afterAll(() => app.close())` already routes through it. With the leak
+closed, reintroducing `jest --shard` (at the time,
+`strategy.matrix.shard: [1, 2]` in `ci.yml`, two independent job
+instances rather than the earlier same-job multi-shard attempt) gives
+the smaller CI runner headroom on top of the fix rather than working
+around an open leak — each shard's single worker process bootstraps a
+fraction of the test apps sequentially instead of the full suite in
+one process. (Widened to 3 shards later — see "Parallelizing e2e
+workers" below.)
 
-**Date**: 2026-08-09.
+## Parallelizing e2e workers
 
-Once the heap-threshold fix above was confirmed working on a real CI
-run (`api-versioning.e2e-spec.ts` passed), the same run surfaced a
-*different* failure in `reserve.e2e-spec.ts`: `lists reserve holds
-filtered by merchant and status` failed with `401 Unauthorized` on a
-`login()` call, immediately after that test's own `seedMerchant()`
-call — not on a stale `login()` helper, not on a flaky rate limit,
-and not reproducing locally on the first few tries.
+**Status: root cause found and measured; fix applied; residual risk is
+environment-dependent rather than a code defect.** `test/jest-e2e.json` now runs
+`maxWorkers: "50%"` (Jest's own adaptive sizing — half the host's
+detected cores, instead of a hardcoded number) and `testTimeout: 60000`. This
+section documents the real infrastructure built, the actual measured
+root cause of the flakiness an earlier pass into this only got as far as
+"unexplained," and why the fix is a worker-count *strategy* rather than a fixed
+number.
 
-This is the same replica-lag bug class as the "replica-lag races
-surfaced by a routine Dependabot PR" incident above — but that
-incident's fix only ever touched **test files** and one repository
-method (`LedgerOutboxTypeOrmRepository.findPending()`). This one is in
-`MerchantService.verifyCredentials()` — the method behind `POST
-/auth/token`, i.e. **every login, in both tests and real production
-deployments**:
+**The goal**: `maxWorkers: 1` means all e2e spec files (43 as of this
+writing) run sequentially in one process, which is slow.
+Running several files at once was blocked by every spec file's
+`AppModule` instance sharing the same Redis keyspace and the same
+Postgres `max_connections` budget — several spec files' own comments
+(`test/utils/circuit-breaker.ts`, `psp-bulkhead-isolation.e2e-spec.ts`,
+and others) already documented this as the reason cross-file
+circuit-breaker/rate-limit state has to be manually reset before/after
+certain tests.
 
-```ts
-async verifyCredentials(apiKeyId: string, apiKeySecret: string) {
-  const merchant = await this.merchantRepo.findOne({ where: { apiKeyId } });
-  // ...
-}
-```
+**What was built (isolation layer, verified correct)**: `test/setup-env.ts`
+assigns each Jest worker its own logical Redis DB, keyed by
+`JEST_WORKER_ID` — concurrent workers can no longer collide on the same
+idempotency lock, circuit-breaker window, rate-limit bucket, or JWT
+revocation key. `app.module.ts`'s Postgres pool size (`extra.max`,
+previously hardcoded to 20) is now read from a `DB_POOL_MAX` env var
+(`15` for e2e). Targeted diagnostic logging temporarily added to
+`JwtStrategy.validate()`/`JwtAuthGuard.handleRequest()` (instrumented,
+used, then removed) ruled out the most direct suspicion — a Redis
+command from one worker's `TokenRevocationService` connection observing
+another worker's revocation state. It wasn't happening: every captured
+`merchantRevoked=true` case traced to a test deliberately revoking its
+own token. **This isolation layer was never the bug.**
 
-`seedMerchant()` (the test helper) calls `MerchantService.createMerchant()`
-directly — an in-process call, no HTTP round trip — which commits to
-master. `login()` then immediately fires `POST /auth/token`, which
-calls `verifyCredentials()` above, whose plain (replica-routed)
-`findOne()` can lose the race against the replica's lag and return
-`null` — indistinguishable, by design (see that method's own docblock
-on why it doesn't leak the difference), from a genuinely wrong
-password. Locally, the gap between `seedMerchant()`'s `await` and
-`login()`'s HTTP call is usually enough wall-clock time for the
-replica to catch up, so this rarely reproduced there; on CI hardware,
-it did.
+**The actual root cause, measured directly**: a response-body diagnostic
+middleware (`test/utils/test-app.ts`, gated behind `DIAG_RESPONSES=1`,
+temporary — logs any HTTP response ≥400 to a per-worker file) plus live
+`docker stats` and host `ps`/`uptime` sampling *during* a real parallel
+run produced hard numbers:
 
-**Why this matters beyond tests**: an admin creating a merchant and
-that merchant immediately trying to log in — a completely ordinary
-onboarding sequence — could hit this exact race in a real deployment.
-This was a genuine, if narrow-window, production bug, not just a test
-artifact.
+- Host load average hit **22.61** (1-minute) on this **10-physical-core**
+  machine while 4 Jest workers ran — individual `jest-worker` child
+  processes measured at **60–85% CPU each, simultaneously** (`ps aux`
+  sampled mid-run). Four workers alone demand ~250–340% CPU; this
+  specific machine also had substantial *pre-existing, unrelated* load
+  (Safari, VS Code, WindowServer, another active IDE/CLI session
+  against a different project, Docker Desktop's own VM) — load average
+  was already 6–10 *before* any e2e run started.
+- Docker container CPU (`postgres-master`, `redis`, `mock-psp`) stayed
+  low throughout (peak ~20% on `postgres-master`) — **the bottleneck is
+  host CPU scheduling for the Node/ts-jest processes themselves; the
+  application's own infrastructure containers aren't the constraint.** This rules out the
+  containers as the constraint.
+- With that scheduling pressure confirmed, the concrete failure modes
+  it produces became explicable rather than mysterious: a
+  `risk-tiering.e2e-spec.ts` test doing 10 *sequential* real charge
+  round-trips (fixed — now `Promise.all()`, since each call already used
+  its own idempotency key and had no ordering dependency) compounded
+  per-call latency under contention into a >60s test; a `login()` call
+  immediately after `createTestApp()` returned a bare `404` on
+  `POST /api/v1/auth/token` — a route that runs successfully thousands
+  of times elsewhere in the same suite — consistent with event-loop
+  scheduling delay stretching the gap between `app.init()` resolving and
+  the underlying HTTP adapter's router being fully live long enough for
+  a request to race it, something invisible at normal scheduling
+  latency and only surfaced under measured 20+ load average. The earlier
+  investigation's `401`-with-no-guard-log pattern is almost certainly
+  the same class of race in a different guard/strategy's own
+  initialization path, rather than a logic bug in this codebase's
+  revocation checks (which the diagnostic logging separately, directly
+  ruled out).
 
-**Fix**: `MerchantService` now injects `DataSource` and reads through
-`dataSource.createQueryRunner('master')` in `verifyCredentials()`. The
-same fix was applied to the shared `getOrThrow()` private helper —
-used by 10+ admin mutation endpoints (`updateFeeRate`,
-`updateSettlementCurrency`, `setActive`, ...) — on the same reasoning:
-any of them could plausibly run immediately after `createMerchant()`
-in a real flow, not just a test.
+**The fix**: `maxWorkers: "50%"` instead of a fixed `4` — Jest's own
+adaptive sizing scales to whatever the *actual* runtime environment
+provides, rather than assuming a core count that may already be
+oversubscribed by unrelated load. `testTimeout: 60000` gives real
+per-test headroom under genuine (not pathological) contention. The
+`risk-tiering.e2e-spec.ts` fix (concurrent rather than sequential charges) is
+independently correct regardless of worker count. `DB_POOL_MAX` raised
+from `5` to `15` — `5` was sized for connection-*count* budget
+correctness (never wrong) but was too tight for this specific
+i/o-under-contention scenario found while investigating.
 
-**Verified**: `tsc --noEmit` clean; `reserve.e2e-spec.ts` and
-`auth.e2e-spec.ts` both pass in isolation; full suite passing aside
-from the pre-existing rate-limit-burst flake (unconnected, reconfirmed
-clean on immediate re-run).
+**What's still open, honestly**: this was measured and fixed against
+the one environment available to test against — a shared development
+machine that, during testing, had real, substantial *non-test* load
+from unrelated applications and another concurrent session (load
+average 6–20 with zero e2e tests running). A dedicated CI runner (e.g.
+GitHub Actions' `ubuntu-latest`, with no competing user processes) is a
+fundamentally different resource environment than what produced these
+numbers, and this repository's own tooling has no way to provision or
+measure one from here. `maxWorkers: "50%"` is the professionally correct
+choice *for that difference* — it won't oversubscribe a clean 2-vCPU
+runner the way a hardcoded `4` would, and it won't artificially
+underutilize a bigger one — but the actual acceptance test for this
+change is a real CI run rather than a further local repro on a machine this
+session has already shown to be noisy independent of anything under
+this repository's control.
 
-**The lesson this time**: the earlier replica-lag incident's fix swept
-every *test file*, but master/replica routing is an ambient property
-of the whole app's `DataSource` — it doesn't stop at the test
-boundary. Any application code that reads a row shortly after writing
-it (or shortly after *anything else* wrote it) is exposed, and the
-places most worth auditing for this are exactly the ones a test
-harness exercises tightly and back-to-back (`create` immediately
-followed by `read`) even though a real caller might naturally insert
-more of a gap — `login()` right after `seedMerchant()` being the
-tightest case in this codebase, which is exactly why it was the one
-that found the bug.
+**Follow-up — shard count widened from 2 to 3**: real CI runs kept
+confirming the residual risk above was real, not theoretical — repeated
+runs of the same PR each failed a different, unrelated spec file
+(`reserve.e2e-spec.ts` on one run, then `subscriptions.e2e-spec.ts` +
+`risk-tiering.e2e-spec.ts` + `webhook-delivery-log.e2e-spec.ts` together
+on a later run of the same unchanged branch), and a local reproduction
+under deliberately added CPU contention reproduced the same
+no-two-runs-alike pattern on `risk-tiering.e2e-spec.ts` alone (once a
+plain test timeout, once a reserve top-up that silently never ran in
+time). None of these pointed at one fixable line — fewer files per
+shard, not a code change, is the lever actually available here. `ci.yml`
+moved to `strategy.matrix.shard: [1, 2, 3]` / `--shard=N/3` on that
+basis: a direct reduction in peak concurrent CPU demand per job, same
+mitigation shape as the original 2-shard split, just narrower.

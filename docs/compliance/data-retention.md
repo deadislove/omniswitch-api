@@ -16,7 +16,7 @@ that.
 |---|---|---|---|
 | **Live** | Normal hot-path table (`payments`, `ledger_outbox`) | — | — |
 | **Archive** | Moved to a separate Postgres schema (`archive.payments`, `archive.ledger_outbox`) — same database, off the hot query path | Record is `ARCHIVE_THRESHOLD_DAYS` old (default **180**) **and** has no open dispute **and** isn't flagged as an unresolved reconciliation mismatch | Yes — the record still exists, just not in the live tables |
-| **Delete** | Exported to a backup file, then removed from the database entirely | Record is `DELETION_THRESHOLD_YEARS` old (default **8**, counted from the record's *original* creation date, not when it was archived) | No, from the database — the backup file is the only remaining copy |
+| **Delete** | Exported to a backup file, then removed from the database entirely | Record is `DELETION_THRESHOLD_YEARS` old (default **8**, counted from the record's *original* creation date rather than when it was archived) | No, from the database — the backup file is the only remaining copy |
 
 Two independent scheduled jobs enforce this — see "How it runs" below.
 Neither tier ever touches a record with an open dispute, regardless of
@@ -37,7 +37,7 @@ config mechanism for wherever this is actually deployed) and redeploy.
 |---|---|---|
 | `ARCHIVE_THRESHOLD_DAYS` | `180` | Age (days) before an eligible record moves from live tables to the `archive` schema |
 | `DELETION_THRESHOLD_YEARS` | `8` | Age (years, from original `created_at`) before an archived record is backed up and deleted |
-| `DELETION_BACKUP_REQUIRED` | `true` | Whether a successful backup write is a hard precondition for deletion. Should not be set to `false` without a very deliberate reason — this is the control that keeps deletion from being irreversible *everywhere*, not just from the live database |
+| `DELETION_BACKUP_REQUIRED` | `true` | Whether a successful backup write is a hard precondition for deletion. Should not be set to `false` without a very deliberate reason — this is the control that keeps deletion from being irreversible *everywhere*, beyond just the live database |
 | `DELETION_BACKUP_STORAGE` | `local` | Which `BackupStorage` adapter to write to — `local`, `s3`, `gcs`, or `azure`. See "Where the backup goes" below |
 | `DELETION_BACKUP_PATH` | `./backups` (local) / `/app/backups` (k8s, mounted PVC) | Only used when `DELETION_BACKUP_STORAGE=local` — where the pre-deletion export file is written |
 | `CUTOVER_OLD_TABLE_RETENTION_DAYS` | `60` | Age (days, since the partitioning cutover — not an AML setting) before `payments_old`/`ledger_outbox_old` are eligible to be dropped by `npm run job:drop-cutover-tables` |
@@ -61,20 +61,20 @@ destinations — `src/jobs/backup-storage/` — selected by
 | Local disk (default) | `local` | `DELETION_BACKUP_PATH` | none — just filesystem access |
 | AWS S3 | `s3` | `DELETION_BACKUP_S3_BUCKET`, `DELETION_BACKUP_S3_REGION` | AWS SDK's own default credential chain (IAM role, instance profile, or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) |
 | Google Cloud Storage | `gcs` | `DELETION_BACKUP_GCS_BUCKET` | Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, Workload Identity, or the GCE/GKE metadata service) |
-| Azure Blob Storage | `azure` | `DELETION_BACKUP_AZURE_CONNECTION_STRING`, `DELETION_BACKUP_AZURE_CONTAINER` | carried in the connection string itself — put this in `omniswitch-secrets`, not `configmap.yaml`, since it's a credential |
+| Azure Blob Storage | `azure` | `DELETION_BACKUP_AZURE_CONNECTION_STRING`, `DELETION_BACKUP_AZURE_CONTAINER` | carried in the connection string itself — put this in `omniswitch-secrets` rather than `configmap.yaml`, since it's a credential |
 
-**Why `local` is the default, not just the first option listed**: this
+**Why `local` is the default, rather than just the first option listed**: this
 project's GitHub Actions CI never has real cloud credentials available
 — see `docs/technical/ci-cd.md`. If cloud storage were the default, CI
 would either need real cloud secrets provisioned for a reference/demo
 project (a real security and cost liability for something anyone can
 clone and run), or a self-hosted stand-in service added to the CI
-pipeline (e.g. MinIO) — a new architectural commitment, not a small
-config change. `local` needs nothing but the filesystem, matching this
+pipeline (e.g. MinIO) — a new architectural commitment rather than a
+small config change. `local` needs nothing but the filesystem, matching this
 project's existing pattern for every other external dependency in
 dev/test (`mock-psp` instead of real PSP sandboxes, dev-mode Vault
-instead of a real cluster) — a real, working stand-in, not a mock of
-the interface. **A real deployment choosing to enable a cloud provider
+instead of a real cluster) — a real, working stand-in rather than a
+mock of the interface. **A real deployment choosing to enable a cloud provider
 is a deliberate, opt-in decision made at deploy time** — this doc
 doesn't take a position on which cloud a specific deployment should
 use, only that the mechanism exists for whichever one is chosen.
@@ -97,7 +97,7 @@ before relying on it in production.
 
 ## How it runs
 
-Two `k8s/CronJob`s, not `@Cron()` methods on the running API — see
+Two `k8s/CronJob`s, rather than `@Cron()` methods on the running API — see
 [`../technical/distributed-state.md`](../technical/distributed-state.md)
 for why: `@Cron()` runs once *per pod*, and at `k8s/hpa.yaml`'s
 `maxReplicas: 20` that would mean up to 20 concurrent runs racing each
@@ -137,7 +137,7 @@ npm run job:delete
 
 ## Observability
 
-Both jobs are short-lived CLI processes, not long-running HTTP servers —
+Both jobs are short-lived CLI processes rather than long-running HTTP servers —
 `prom-client` can't scrape them the normal way mid-run. Each run instead
 emits one structured, single-line JSON summary to stdout/stderr on
 completion:
@@ -181,8 +181,7 @@ outbox dead-letter admin recovery flow
 **Deletion** — any record in `archive.payments`/`archive.ledger_outbox`
 (i.e., already archived) whose `created_at` is older than
 `DELETION_THRESHOLD_YEARS` **and** has no still-open dispute (same
-`NEEDS_RESPONSE`/`UNDER_REVIEW` check as archiving, added 2026-08-22
-after review). The dispute check matters here independently of
+`NEEDS_RESPONSE`/`UNDER_REVIEW` check as archiving). The dispute check matters here independently of
 archiving's own check: a payment can be archived with no open dispute
 and then get disputed years later (a long investigation, litigation) —
 age alone crossing `DELETION_THRESHOLD_YEARS` must not override an
@@ -191,7 +190,7 @@ never looks at the live tables directly.
 
 ## Legal hold
 
-A payment's `legal_hold` boolean (added 2026-08-22) overrides both the
+A payment's `legal_hold` boolean overrides both the
 archiving and deletion eligibility checks above
 — a held payment is excluded regardless of age, status, or dispute
 state, same as the dispute check but not tied to a PSP dispute
@@ -200,7 +199,7 @@ cover: litigation, a regulator's investigation, or any other reason a
 specific record needs to be preserved that has nothing to do with a
 card-network chargeback.
 
-**Deliberately a single boolean, not an audit-trail table.** Recording
+**Deliberately a single boolean rather than an audit-trail table.** Recording
 who placed a hold, when, and why is a real compliance/legal-process
 concern, but tracking that isn't something this codebase does for any
 other operator action either (a dispute's `autoDecision`, a merchant's
@@ -215,8 +214,8 @@ addition on top of this flag — see "What this doesn't cover" below.
   to the live `payments` table** as part of placing the hold, rather
   than flagging it in place in `archive.payments` — a record under
   active legal/regulatory scrutiny needs to be reachable through the
-  normal payment query path (`GET /payments/:id`, admin lookups),
-  not left sitting in cold storage. Response includes `location: "live"
+  normal payment query path (`GET /payments/:id`, admin lookups)
+  instead of sitting in cold storage. Response includes `location: "live"
   | "restored-from-archive"` so the caller knows which happened.
 - **`DELETE /api/v1/admin/payments/:id/legal-hold`** — releases a
   hold. Only ever operates on the live table (a held payment is always
@@ -226,13 +225,13 @@ addition on top of this flag — see "What this doesn't cover" below.
   otherwise met.
 - `src/modules/payment/application/services/legal-hold.service.ts` /
   `legal-hold-admin.controller.ts` — operates on `payments`/
-  `archive.payments` via raw SQL, not through `PaymentRepositoryPort`/
+  `archive.payments` via raw SQL rather than through `PaymentRepositoryPort`/
   `PaymentAggregate` — same reasoning as the archiving/deletion jobs:
-  this is a retention/ops concern layered on the schema, not a
+  this is a retention/ops concern layered on the schema rather than a
   payment-lifecycle business rule the domain aggregate needs to model.
 - Both `run-archiving-job.ts` and `run-deletion-job.ts` exclude
   `legal_hold = true` rows. The deletion job's check is
-  defense-in-depth, not the primary mechanism — under normal operation
+  a defense-in-depth backstop rather than the primary mechanism — under normal operation
   `archive.payments` should never actually contain a `legal_hold = true`
   row, since placing a hold on an archived payment pulls it out
   immediately.
@@ -240,7 +239,7 @@ addition on top of this flag — see "What this doesn't cover" below.
 ## Cutover safety-net tables (`payments_old`, `ledger_outbox_old`)
 
 Separate from the three-tier policy above — these are pre-partitioning
-snapshots, not a retention tier. When `payments`/`ledger_outbox` were
+snapshots rather than a retention tier. When `payments`/`ledger_outbox` were
 cut over to the partitioned tables
 (`1787333739819-BackfillAndSwapPartitionedPaymentsAndLedgerOutbox.ts`),
 the original flat tables were renamed to `payments_old`/
@@ -253,23 +252,24 @@ already copied into the live partitioned tables — so keeping them
 data is already tracked, and governed by the policy above, through
 `payments`/`archive.payments`). It would actually work against the
 policy's own integrity: an ungoverned duplicate that never ages out via
-the archiving/deletion jobs is a backdoor around the deletion tier, not
-an extra safety measure — a record correctly deleted from
+the archiving/deletion jobs is a backdoor around the deletion tier
+rather than an extra safety measure — a record correctly deleted from
 `archive.payments` after 8 years would still sit, untouched, in
 `payments_old` forever.
 
 - `CUTOVER_OLD_TABLE_RETENTION_DAYS` (default **60**) — a short,
   separate window from the archive/deletion thresholds above. It answers
-  "has enough time passed to trust the cutover was correct," not an AML
-  question, so it isn't tied to `ARCHIVE_THRESHOLD_DAYS`/
+  an operational question — "has enough time passed to trust the
+  cutover was correct" — rather than an AML one, so it isn't tied to
+  `ARCHIVE_THRESHOLD_DAYS`/
   `DELETION_THRESHOLD_YEARS`.
 - The cutover migration itself doesn't record *when* it ran (TypeORM's
-  migrations table only stores a version number, not a real
+  migrations table only stores a version number, with no real
   timestamp) — `1787339024677-CreateSchemaCutoverLog.ts` adds a small
   `schema_cutover_log` table for this specifically.
-- `src/jobs/drop-cutover-tables.ts` — a **one-time operator action, not
+- `src/jobs/drop-cutover-tables.ts` — a **one-time operator action rather than
   a CronJob**. Dropping these tables is a single event in this
-  project's history, not a recurring policy action. Reports days
+  project's history rather than a recurring policy action. Reports days
   remaining if the window hasn't elapsed yet (exits 0 either way —
   "not eligible yet" isn't a failure); drops the table and clears its
   `schema_cutover_log` row once it has. Safe to re-run.
@@ -300,32 +300,34 @@ one once "now" gets close enough to the edge of that original range.
 - `src/jobs/create-partitions-job.ts` — idempotent (`CREATE TABLE IF
   NOT EXISTS ... PARTITION OF`), safe to re-run. Runs as
   `k8s/partition-maintenance-cronjob.yaml`, weekly — same "why a
-  CronJob, not `@Cron()`" reasoning as archiving/deletion.
+  CronJob instead of `@Cron()`" reasoning as archiving/deletion.
 - **Naming gotcha worth knowing if you're reading the schema
   directly**: child partitions are named `payments_partitioned_YYYY_MM`
   / `ledger_outbox_partitioned_YYYY_MM` — *not* `payments_YYYY_MM` —
-  even though the parent table is `payments`, not `payments_partitioned`.
+  even though the parent table itself is just `payments`, with no
+  `_partitioned` suffix.
   The cutover migration (`1787333739819-...`) renames only the parent
   (`ALTER TABLE payments_partitioned RENAME TO payments`); PostgreSQL
   does not cascade that rename to child partitions. This job matches
   that existing naming rather than introducing a second, inconsistent
-  one — verified live: an earlier version of this job used
-  `payments_YYYY_MM` and failed immediately with "partition would
-  overlap partition \"payments_partitioned_2026_08\"."
+  one: using `payments_YYYY_MM` instead fails immediately with
+  "partition would overlap partition \"payments_partitioned_2026_08\"."
 
 ## Jurisdictional compliance review checklist
 
 The 180-day archive / 8-year deletion defaults are reasonable, commonly-seen
-numbers — not a legal conclusion. Before deploying this into a specific
+numbers, meant as a starting illustration rather than a legal conclusion. Before deploying this into a specific
 country, or before the deletion tier is ever turned on in production,
 someone with actual compliance/legal authority for that jurisdiction
 needs to work through the items below and sign off. This is a checklist
-of *what to ask*, not an answer key — the answers are jurisdiction- and
+of *what to ask* rather than an answer key — the answers are
+jurisdiction- and
 business-model-specific, and this project makes no claim about what
 they are.
 
-1. **Confirm the actual AML minimum retention period**, not the
-   commonly-cited "5–10 years" range this doc uses as a placeholder.
+1. **Confirm the actual AML minimum retention period** instead of
+   relying on the commonly-cited "5–10 years" range this doc uses as a
+   placeholder.
    The regulator, the specific instrument (payment records vs. KYC
    records vs. suspicious-activity reports), and the business's license
    type can all change the number. Set `DELETION_THRESHOLD_YEARS`
@@ -335,8 +337,9 @@ they are.
 2. **Check whether tax/audit retention requirements exceed the AML
    minimum.** Financial records are often also subject to a separate
    tax-authority retention rule, which in some jurisdictions runs
-   longer than the AML minimum. The binding number is the *longer* of
-   the two, not whichever one this doc happened to cite. This is a
+   longer than the AML minimum. The binding number is whichever of
+   the two is *longer*, regardless of which one this doc happened to
+   cite. This is a
    second, independent number to confirm — don't assume AML retention
    alone covers it.
 
@@ -346,9 +349,10 @@ they are.
    (data-minimization rules), others are silent on it (records may be
    kept indefinitely, deletion is optional), and some may restrict *how*
    deletion can happen (e.g., requiring a specific certified erasure
-   method or an audit trail of the deletion event itself, not just of
+   method or an audit trail of the deletion event itself, beyond just
    what was deleted). This determines whether the deletion tier should
-   be enabled at all, not just what `DELETION_THRESHOLD_YEARS` should be.
+   be enabled at all, beyond just what `DELETION_THRESHOLD_YEARS`
+   should be.
 
 4. **Reconcile against any data-subject erasure rights the business is
    also subject to** (e.g., GDPR's right to erasure, or an equivalent
@@ -384,7 +388,7 @@ they are.
 
 7. **Identify who signs off, and record it.** This doc, and this
    codebase, cannot make this call unilaterally — it was written by
-   engineering, not compliance/legal counsel for any specific
+   engineering rather than compliance/legal counsel for any specific
    jurisdiction. Whoever does the review above should be named, and the
    date/jurisdiction/values they confirmed should be recorded somewhere
    durable (this doc's own git history at minimum, ideally a real
@@ -397,7 +401,8 @@ Being direct about the gaps, so nobody mistakes this for a certified
 compliance system:
 
 - **These specific numbers (180 days, 8 years) are reasonable, commonly-seen
-  defaults — not a substitute for real legal/compliance review.** A
+  defaults — illustrative only, no substitute for real
+  legal/compliance review.** A
   deployment into a specific country needs its own review to confirm
   these values, and the deletion mechanism itself, actually satisfy that
   jurisdiction's AML/tax/audit requirements before the deletion tier is
@@ -414,7 +419,7 @@ compliance system:
   actually ships with, is only as durable/access-controlled as the
   underlying PVC's own storage class and normal k8s RBAC — a
   deployment that stays on `local` in production should treat that as
-  its own explicit choice, not an oversight.
+  its own explicit choice rather than an oversight.
 - **"Unreconciled settlement" is checked against
   `reconciliation_runs.mismatches`, a loosely-typed JSON array** (see
   `reconciliation.md` for how that gets populated) — this is a real,
@@ -427,13 +432,13 @@ compliance system:
   real deployment needs that record-keeping (a regulator's own
   evidentiary requirements, an internal audit process), it needs to be
   added on top of this flag, likely alongside whatever handles #4's
-  gap above (both would want somewhere durable to write records, not
+  gap above (both would want somewhere durable to write records, beyond
   just a database column).
-- **Row-level archiving, not partition-level.** Now that `payments`/
+- **Row-level archiving rather than partition-level.** Now that `payments`/
   `ledger_outbox` are partitioned (see
   [`../technical/databases/architecture.md`](../technical/databases/architecture.md)),
   `DETACH PARTITION` is a possible archiving mechanism in principle —
   this implementation does `INSERT` + `DELETE` per eligible row instead,
-  because eligibility (no open dispute) is per-record, not
+  because eligibility (no open dispute) is per-record rather than
   per-partition, and a partition can contain a mix of eligible and
   ineligible rows. Correct over fast, deliberately.

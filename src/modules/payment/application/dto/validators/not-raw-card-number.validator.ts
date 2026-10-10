@@ -8,7 +8,7 @@ import { registerDecorator, ValidationOptions } from 'class-validator';
  * client-side tokenization (Stripe.js, Adyen Web Components), never a raw
  * card number. Nothing upstream of this DTO enforces that — a naive
  * integration could accidentally submit the actual PAN. This is a
- * defense-in-depth check, not what makes the flow PCI-compliant (that's the
+ * defense-in-depth check rather than what makes the flow PCI-compliant (that's the
  * client-side tokenization itself); it just fails loudly instead of quietly
  * accepting and forwarding/logging/persisting cardholder data.
  *

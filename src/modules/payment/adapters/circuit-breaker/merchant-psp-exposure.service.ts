@@ -13,7 +13,7 @@ const ROUTING_HISTORY_WINDOW_SECONDS = 60;
 const ROUTING_HISTORY_MIN_SAMPLES = 3;
 // Matches RedisCircuitBreakerService's own SLOW_CALL_RATE_THRESHOLD: more
 // than half of recent charges landing on a currently degraded PSP is
-// treated as real exposure, not noise.
+// treated as real exposure rather than noise.
 const DEGRADED_CONCENTRATION_THRESHOLD = 0.5;
 
 /**
@@ -22,8 +22,8 @@ const DEGRADED_CONCENTRATION_THRESHOLD = 0.5;
  * merchant's *next* charge attempt should get a stricter rate limit because
  * their traffic has been concentrated on a currently-degraded PSP.
  *
- * Deliberately about protecting the merchant's own throughput, not the
- * platform's overall load: a merchant whose recent charges are landing on
+ * Deliberately about protecting the merchant's own throughput — not
+ * the platform's overall load: a merchant whose recent charges are landing on
  * a healthy PSP (including via automatic fallback) is never throttled by
  * this, even if some *other* PSP is degraded — only a merchant whose own
  * traffic is actually concentrated on the degraded one is.
@@ -42,10 +42,7 @@ export class MerchantPspExposureService {
   /** Call once a charge's actual PSP has been resolved, on success. */
   async recordRouting(merchantId: string, provider: string): Promise<void> {
     const key = this.key(merchantId, provider);
-    await Promise.all([
-      this.cache.incr(key),
-      this.cache.expire(key, ROUTING_HISTORY_WINDOW_SECONDS),
-    ]);
+    await Promise.all([this.cache.incr(key), this.cache.expire(key, ROUTING_HISTORY_WINDOW_SECONDS)]);
   }
 
   /**

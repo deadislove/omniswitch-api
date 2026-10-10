@@ -9,7 +9,7 @@ instead, one per provider.
 
 - **Guard**: `StripeWebhookGuard` — verifies the `Stripe-Signature`
   header against the raw request body.
-- **Errors**: `400` missing/invalid signature.
+- **Errors**: `401` missing/invalid signature.
 
 Handled event types:
 
@@ -46,6 +46,91 @@ Handled notification event codes (`notificationItems[].NotificationRequestItem`)
 | `NOTIFICATION_OF_CHARGEBACK` | Creates a `Dispute` — this notification's own `pspReference` becomes the dispute's `pspDisputeId`, so a later `CHARGEBACK`/`CHARGEBACK_REVERSED` can resolve the *same* dispute |
 | `CHARGEBACK` | Resolves the dispute `LOST` (the actual debit) |
 | `CHARGEBACK_REVERSED` | Resolves the dispute `WON` (the bank reversed it) |
+
+## `POST /webhooks/bank-transfer`
+
+- **Guard**: `BankTransferWebhookGuard` — verifies an
+  `X-Bank-Transfer-Signature: t=<unix seconds>,v1=<hex digest>` header
+  (`HMAC-SHA256(BANK_TRANSFER_WEBHOOK_SECRET, "${t}.${rawBody}")`) —
+  same scheme as the Stripe signature check, just a different header and
+  secret.
+- **Errors**: `401` missing/malformed/invalid signature, timestamp
+  outside a 5-minute tolerance window, or `BANK_TRANSFER_WEBHOOK_SECRET`
+  not configured.
+- **Body**: `{ "id": string, "topic": string, "resourceId": string }` —
+  a lightweight event envelope (no settlement detail inline), matching
+  the real bank-transfer rail's own callback shape (see
+  `AchBankTransferAdapter`/`WireBankTransferAdapter`).
+
+`topic: "customer_transfer_completed"` settles the transfer; any other
+topic is treated as a failure, and the handler makes an authenticated
+follow-up call back to the transfer rail to fetch the failure reason
+before recording it — the envelope itself doesn't carry one. Either
+outcome resolves whichever `Payout` (net-amount or reserve) this
+`resourceId` belongs to from `PENDING_CONFIRMATION` to `INITIATED` or
+`FAILED`.
+
+## `POST /webhooks/kyc`
+
+- **Guard**: `KycWebhookGuard` — verifies an `X-KYC-Signature` header,
+  same HMAC scheme as the bank-transfer guard, keyed by
+  `KYC_WEBHOOK_SECRET`.
+- **Errors**: `401` missing/invalid signature.
+- **Body**: a real KYC provider's event envelope —
+  `{ "data": { "attributes": { "name": string, "payload": { "data": { "id": string, "attributes": { "status": string } } } } } }`
+  — the review decision is nested under `data.attributes.payload.data`
+  rather than a flat `{applicationId, status}` shape.
+
+Only a decisive event (an `id` present and a status that isn't
+`PENDING`) actually updates anything — resolves the merchant's
+`kycApplicationId` to `kycStatus: 'VERIFIED'` or `'REJECTED'`. Any other
+event (still under review, or one this system doesn't recognize) is
+logged and ignored rather than treated as an error, matching every
+other webhook receiver's redelivery-tolerant posture.
+
+## `POST /webhooks/kyb`
+
+- **Guard**: `KybWebhookGuard` — verifies an
+  `X-KYB-Signature: t=<unix seconds>,v1=<hex digest>` header, same
+  scheme as the bank-transfer guard, keyed by its own distinct
+  `KYB_WEBHOOK_SECRET` — deliberately never shared with `KYC_WEBHOOK_SECRET`,
+  so a KYC decision can never resolve a KYB application or vice versa,
+  even under a misconfiguration.
+- **Errors**: `401` missing/invalid signature.
+- **Body**: same nested provider event envelope shape as `/webhooks/kyc`
+  — `{ "data": { "attributes": { "name": string, "payload": { "data": { "id": string, "attributes": { "status": string } } } } } }`.
+
+Only a decisive event (an `id` present and a status that isn't
+`PENDING`) actually updates anything — resolves the merchant's
+`kybApplicationId` to `kybStatus: 'VERIFIED'` or `'REJECTED'` via
+`MerchantService.confirmKyb()`. A confirmation for an application that
+isn't currently `PENDING_REVIEW` (e.g. PSP redelivery after it's already
+resolved) is logged and ignored instead of reapplied — same
+redelivery-tolerant posture as every other webhook receiver here.
+
+## Admin: inspecting and replaying outbound webhook deliveries
+
+Source: `webhook-delivery-admin.controller.ts`. These are **outbound**
+deliveries — every `Webhook*NotificationAdapter` (dispute, subscription,
+AML review, sanctions screening) records one row per delivery attempt,
+success or failure, via `WebhookDeliveryLogService`. This is a distinct
+concern from every endpoint above, which all receive **inbound** PSP/
+provider callbacks.
+
+- **Guard**: `JwtAuthGuard` + `RolesGuard`, `ADMIN`/`OPERATOR` only —
+  same visibility scope this codebase already uses for `GET
+  /admin/disputes`, rather than a new merchant-self-service pattern.
+
+| Endpoint | Effect |
+|---|---|
+| `GET /admin/webhook-deliveries?merchantId=...` | Lists delivery attempts for a merchant, newest first. Optional `eventType`/`success` filters, `afterId` keyset cursor, `limit` (default 50, max 200) |
+| `GET /admin/webhook-deliveries/:id` | One delivery's full record, including the exact JSON payload sent — `404` if the id doesn't exist |
+| `POST /admin/webhook-deliveries/:id/replay` | Re-sends the *exact* stored payload to its exact target URL, re-signed with the merchant's current HMAC secret. Records a **new** row (`replayOfDeliveryId` pointing at the true original, never a chain, even when replaying a replay) rather than mutating the original. `404` if the id doesn't exist; `422 HMAC_SECRET_MISSING` if the merchant has no HMAC secret on file |
+
+Each record includes `success`, `statusCode` (`null` for a network
+error/timeout — there was never a response to read a status from),
+`errorMessage`, and `latencyMs`, regardless of outcome — a failed
+delivery is logged the same as a successful one — never silently dropped.
 
 ## Testing webhooks locally
 

@@ -79,4 +79,4 @@ Postgres service or its own infrastructure-as-code owns this), and
 extension management (`pg_stat_statements` is enabled by
 `scripts/postgres/init-master.sql` for query-performance visibility,
 but nothing here automates reviewing it). These are real gaps for a
-production deployment to close, not implemented placeholders.
+production deployment to close rather than implemented placeholders.

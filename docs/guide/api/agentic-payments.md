@@ -30,6 +30,7 @@ Authorizes a new agent with its own spend policy.
 | `currency` | string | yes | Both limits and every charge this agent makes must be this currency |
 | `allowedCategories` | string[] | no | If set, `ChargePaymentDto.category` must match one of these; omitted entirely means any category is allowed |
 | `tokenTtlSeconds` | int | no | Default 86400 (24h). Independent of the delegation itself, which stays `ACTIVE` — and revocable — regardless of token expiry |
+| `requireApprovalAboveAmount` | number | no | Must not exceed `perTransactionLimit`. A charge above this amount doesn't auto-execute — see "Human-approval hold" below. Omitted entirely means no approval gate: every charge within the other limits auto-executes exactly as before |
 
 **Response `201`**:
 
@@ -44,20 +45,37 @@ Authorizes a new agent with its own spend policy.
     "monthlyLimit": 500,
     "currency": "USD",
     "allowedCategories": ["groceries"],
+    "requireApprovalAboveAmount": 200,
     "currentMonthSpent": 0,
     "createdAt": "2026-01-01T00:00:00.000Z",
     "revokedAt": null,
     "updatedAt": "2026-01-01T00:00:00.000Z"
   },
   "agentToken": "eyJhbGciOiJIUzI1NiIs...",
+  "agentSigningKey": "dlg_sign_9f2a1c...",
   "tokenType": "Bearer",
   "expiresIn": 86400
 }
 ```
 
-**`agentToken` is shown exactly once** — same posture as an API key
-secret. There's no "retrieve it again later" endpoint; if it's lost,
-revoke the delegation and create a new one.
+**`agentToken` and `agentSigningKey` are each shown exactly once** —
+same posture as an API key secret. There's no "retrieve it again later"
+endpoint; if either is lost, revoke the delegation and create a new one.
+
+**`agentSigningKey` is required for every charge this agent makes.**
+`POST /payments/charge` is HMAC-signed for every role, `AGENT` included
+— an `AGENT` caller signs with this delegation's own
+`agentSigningKey` instead of the merchant's HMAC secret (same signature
+scheme, just keyed by delegation instead of merchant; see
+[`payments.md`](./payments.md)). A charge signed with the wrong key, or
+not signed at all, is rejected by the same HMAC guard every other
+caller goes through.
+
+- **Errors**: `422` `SANCTIONS_SCREENING_HIT` — the calling merchant has
+  a confirmed sanctions/watchlist match
+  (`sanctionsScreeningStatus: 'HIT'`). No delegation is created; existing
+  delegations for this merchant are unaffected. See
+  [`../../business-domain/merchants.md#sanctions-hit-and-agent-delegations`](../../business-domain/merchants.md#sanctions-hit-and-agent-delegations).
 
 ## `GET /delegations/:id`
 
@@ -74,8 +92,8 @@ and `status` (`ACTIVE`/`REVOKED`).
 ## `POST /delegations/:id/revoke`
 
 Revokes a delegation. **Takes effect immediately** — the agent's JWT is
-rejected on its very next request (`401 TOKEN_REVOKED`), not just once
-it naturally expires. Reuses the exact same JWT jti-revocation mechanism
+rejected on its very next request (`401 TOKEN_REVOKED`), well before
+it would naturally expire. Reuses the exact same JWT jti-revocation mechanism
 `POST /auth/revoke` (logout) uses; see
 [`system-design.md`](../system-design.md#5-cross-cutting-infrastructure-concerns).
 
@@ -96,9 +114,74 @@ against, and atomically reserved from, the delegation's spend policy
 | `category` not in `allowedCategories` | 422 | `DELEGATION_CATEGORY_NOT_ALLOWED` |
 | Charge currency ≠ delegation's currency | 422 | `DELEGATION_CURRENCY_MISMATCH` |
 | Delegation has been revoked | 403 | `DELEGATION_REVOKED` |
+| Lost a race with a concurrent charge against the same delegation (the checks above passed against a now-stale read) | 422 | `DELEGATION_SPEND_LIMIT_EXCEEDED` |
 
 None of these create a `Payment` row — the reservation happens before
 Step 1 of the saga. A charge that goes on to actually decline at the PSP
 releases its reservation, so a declined attempt doesn't permanently eat
 into the agent's monthly budget; a successful (or still-pending, e.g.
 `REQUIRES_ACTION`) charge keeps it reserved.
+
+## Human-approval hold for above-threshold purchases
+
+If the delegation has `requireApprovalAboveAmount` set and the charge
+amount exceeds it (but still fits `perTransactionLimit`), `POST /payments/charge`
+does **not** call a PSP. It reserves the spend (same reservation as
+above — protects the monthly budget even while the charge sits
+pending) and returns immediately:
+
+```json
+{
+  "paymentId": "a1b2c3d4-...",
+  "status": "PENDING_APPROVAL",
+  "approvalId": "e5f6g7h8-...",
+  "requiresAction": false,
+  "usedFallback": false,
+  "createdAt": "2026-01-01T00:00:00.000Z"
+}
+```
+
+No `Payment` row exists yet — `paymentId` is the id that *will* be used
+once approved. `pspTransactionId`/`pspProvider` are absent; the PSP was
+never called.
+
+### `POST /charge-approvals/:id/approve`
+
+Approves and **immediately executes** the deferred charge in the same
+request — there's no further async step. Returns the real charge result,
+same shape `POST /payments/charge` itself returns
+(`status: 'SUCCEEDED'`/`'FAILED'`/`'REQUIRES_ACTION'`/etc., with
+`pspTransactionId` if applicable).
+
+- **Roles**: `MERCHANT` (own delegations only), `ADMIN`
+- **Errors**: `403` belongs to a different merchant; `404` not found;
+  `409` already approved or denied.
+
+### `POST /charge-approvals/:id/deny`
+
+Denies the charge and releases the reserved spend back to the
+delegation — the PSP is never called.
+
+- **Body**: `{ reason?: string }`
+- **Roles**: `MERCHANT` (own delegations only), `ADMIN`
+- **Errors**: `403` belongs to a different merchant; `404` not found;
+  `409` already approved or denied.
+
+### `GET /charge-approvals` / `GET /charge-approvals/:id`
+
+List (optionally filtered by `delegationId`/`status`) or get a single
+charge approval — same `MERCHANT`-self-scoped /
+`ADMIN`/`OPERATOR`/`READONLY`-cross-merchant access model as
+`GET /delegations`.
+
+## Agent attribution on disputes (Phase 1)
+
+Every charge made through a `Delegation` is tagged with that
+delegation's id and `initiatedBy: 'agent'` on the underlying payment —
+real, indexed columns (not a free-form metadata bag). If that charge is
+later disputed, `GET /admin/disputes`/`GET /admin/disputes/:id` surface
+the same `delegationId`/`initiatedBy`, snapshotted at the moment the
+dispute was recorded. See
+[`disputes.md`](../../business-domain/disputes.md#agentdispute-attribution-phase-1)
+— this is audit-trail data capture only, no liability determination
+made or implied.

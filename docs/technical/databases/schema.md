@@ -13,7 +13,7 @@ drift the first time someone adds a column and forgets this doc.
 |---|---|---|
 | `merchants` | `src/modules/merchant/merchant.entity.ts` | Tenant identity: credentials, MFA, fee/reserve policy, marketplace account type, KYC status |
 | `payments` | `src/modules/payment/adapters/persistence/entities/payment.entity.ts` | The core payment record — one row per charge attempt, its refunds/captures, PSP response, FX/settlement/split data. **Range-partitioned by `created_at`** — see [`architecture.md`](./architecture.md#partitioning) |
-| `ledger_outbox` | `.../entities/ledger-outbox.entity.ts` | Transactional Outbox pattern — double-entry ledger events written atomically with the payment state change that confirms them, relayed asynchronously. **Also partitioned** by `created_at`. See [`../../business-domain/ledger-and-settlement.md`](../../business-domain/ledger-and-settlement.md) |
+| `ledger_outbox` | `.../entities/ledger-outbox.entity.ts` | Transactional Outbox pattern — double-entry ledger events written atomically with the payment state change that confirms them, relayed asynchronously. **Also partitioned** by `created_at`. See [`../../business-domain/ledger-accounting.md`](../../business-domain/ledger-accounting.md) |
 | `disputes` | `.../entities/dispute.entity.ts` | Chargeback/dispute lifecycle (`NEEDS_RESPONSE` → `UNDER_REVIEW` → `WON`/`LOST`), one row per PSP dispute |
 | `reserve_holds` | `.../entities/reserve-hold.entity.ts` | Per-charge risk reserve withholding — released by a sweep or an operator override |
 | `subscriptions` | `.../entities/subscription.entity.ts` | Recurring billing state machine: current period, dunning/retry schedule, optional `plan_id` |
@@ -21,7 +21,9 @@ drift the first time someone adds a column and forgets this doc.
 | `payouts` | `.../entities/payout.entity.ts` | Scheduled marketplace payout to a `CONNECTED` merchant — KYC gating, reserve, transfer status |
 | `payout_sweep_runs` | `.../entities/payout-sweep-run.entity.ts` | One row per daily payout-batching sweep — audit record of when a sweep ran and how many merchants it paid |
 | `delegations` | `.../entities/delegation.entity.ts` | Agentic-payment credentials: an agent's spend policy, current-month spend counter, token expiry/revocation |
+| `charge_approvals` | `.../entities/charge-approval.entity.ts` | Hold-for-human-approval record for an above-threshold agentic charge — the original charge request stored verbatim, pending an ADMIN/OPERATOR approve/deny |
 | `reconciliation_runs` | `.../entities/reconciliation-run.entity.ts` | One row per ledger-vs-PSP-settlement diff run, with any mismatches found in a `jsonb` array — see [`../reconciliation.md`](../reconciliation.md) |
+| `webhook_deliveries` | `src/shared/webhook-delivery-log/webhook-delivery-log.entity.ts` | One row per attempted outbound WEBHOOK-channel notification (dispute/subscription/AML-review/sanctions events) — success or failure, both recorded, so a merchant can inspect and replay deliveries to their own endpoint. Scoped to the WEBHOOK channel only, not EMAIL/SLACK |
 | `schema_cutover_log` | `src/database/migrations/1787339024677-CreateSchemaCutoverLog.ts` (no entity — read only by `drop-cutover-tables.ts`) | Tracks when the partitioning cutover ran, per legacy table, so `drop-cutover-tables.ts` can compute the retention window without guessing from a file timestamp |
 
 **Not currently in a tracked entity list above, but present in the
@@ -64,9 +66,10 @@ any future code moving a row from `archive.payments` back into
 
 Every other "status"-shaped column in this schema (`disputes.status`,
 `ledger_outbox.status`, `subscriptions.status`, `delegations.status`,
-`payouts.transfer_status`, `reserve_holds.status`) is a plain `varchar`
+`charge_approvals.status`, `payouts.transfer_status`,
+`reserve_holds.status`) is a plain `varchar`
 with the valid set enforced in application code (the aggregate's own
-state-machine methods), not a Postgres `enum` type or `CHECK`
+state-machine methods) rather than a Postgres `enum` type or `CHECK`
 constraint — `payments.status` is the one exception, inherited from
 this project's original schema before the wider pattern was
 established, kept as-is rather than migrated for consistency's own

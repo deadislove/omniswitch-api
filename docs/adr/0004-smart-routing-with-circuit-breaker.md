@@ -1,4 +1,4 @@
-# ADR-0004: Smart PSP routing with a shared circuit breaker, not a static primary/fallback
+# ADR-0004: Smart PSP routing with a shared circuit breaker instead of a static primary/fallback
 
 ## Status
 
@@ -12,7 +12,7 @@ ignores information that's actually available at charge time and that
 real acquirers care about: BIN country (a European card is better
 served by Adyen for PSD2/SCA reasons), currency support, each PSP's
 recent success rate and latency, and — critically — whether a PSP is
-currently in a bad state at all, not just whether *this specific call*
+currently in a bad state at all, beyond whether *this specific call*
 happens to fail.
 
 The system also runs as multiple Kubernetes replicas (`k8s/hpa.yaml`
@@ -30,7 +30,7 @@ being served by the other nineteen.
 logic, no I/O): filter to PSPs that are available, whose circuit
 breaker isn't `OPEN`, that support the transaction's currency and BIN
 country if known. If the caller supplied a `preferredProvider` and it
-survived that filter, it's selected directly — a true override, not
+survived that filter, it's selected directly — a true override rather than
 one more input competing on score, matching the charge DTO's own
 Swagger contract ("overrides smart routing"). Only when there's no
 preference, or the preferred provider didn't survive the filter, does
@@ -50,9 +50,9 @@ PSPs this specific merchant is entitled to use (defaults to every PSP
 this system has an adapter for, so no existing merchant's routing
 changed on migration day). Unlike the filter above, a `preferredProvider`
 that fails *this* check is rejected outright (`422
-PREFERRED_PROVIDER_NOT_ENTITLED`), not silently scored against the
+PREFERRED_PROVIDER_NOT_ENTITLED`) rather than silently scored against the
 remaining candidates — entitlement is a permission boundary an
-operator configured on purpose, not a technical constraint like
+operator configured on purpose rather than a technical constraint like
 currency support, so silently rerouting around it would hide a real
 integration bug rather than surface it. See
 [`../business-domain/ledger-and-settlement.md#smart-psp-routing`](../business-domain/ledger-and-settlement.md#smart-psp-routing)
@@ -66,27 +66,28 @@ caller this happened.
 
 **Circuit breaker state lives in Redis**
 (`RedisCircuitBreakerService`, via the same `CachePort` idempotency
-already uses — no new connection), not on adapter instance fields —
+already uses — no new connection), rather than on adapter instance fields —
 5 failures within a 60-second sliding window (a Redis counter with its
-TTL refreshed on every failure — not a run of *consecutive* failures;
+TTL refreshed on every failure — a rolling count rather than a run of
+*consecutive* failures;
 a success while the circuit is still `CLOSED` doesn't reset it) opens
 the circuit for 30 seconds, then it moves to `HALF_OPEN`, which admits
 exactly one trial call (a shared Redis counter, atomically incremented,
 gates it — see the addendum below); a success on that trial closes the
 circuit, a failure re-opens it immediately. Because
-this state is shared, not per-process, a circuit tripped by traffic
+this state is shared rather than per-process, a circuit tripped by traffic
 hitting one replica is visible to every other replica's next routing
-decision immediately — verified live: forcing 5 failures against one
-replica trips the breaker as seen by a second replica that never made
-any of those calls itself. Success-rate/latency metrics feeding the
+decision immediately: forcing 5 failures against one replica trips the
+breaker as seen by a second replica that never made any of those calls
+itself. Success-rate/latency metrics feeding the
 scoring above are similarly Redis-backed, bucketed into a 15-minute
 sliding window (per-minute keys, summed at read time) rather than
 accumulating unboundedly — see
 [`../technical/distributed-state.md`](../technical/distributed-state.md)
 for the bucketing design.
 
-**A second, independent trigger opens the circuit on a slow-call rate**,
-not just on thrown exceptions: a PSP call that never errors but takes
+**A second, independent trigger opens the circuit on a slow-call
+rate, beyond just thrown exceptions**: a PSP call that never errors but takes
 longer than 5 seconds (well under the adapters' 30-second hard abort)
 counts as "slow," and once at least 5 of the most recent calls are in
 that sliding window and half or more of them were slow, the circuit
@@ -96,33 +97,33 @@ erroring would be invisible to the breaker until it actually started
 throwing, which — at 5 required failures with no help from this signal
 — could take up to 5 × 30s = 2.5 minutes to detect. This closes that
 gap: a hung PSP now trips the breaker within a handful of slow calls,
-not minutes.
+instead of minutes.
 
-**Verified live against real elapsed time, not just simulated timers**
-(`test/latency-based-circuit-breaker.e2e-spec.ts`, 2026-08-23):
-`mock-psp` was given a `forceslow` marker that delays 6 real seconds
-before responding successfully (`scripts/mock-psp/server.js`), so this
-test exercises the adapter's actual `fetch()` and the actual elapsed-time
-measurement feeding `recordSuccess()` — not `jest.useFakeTimers()` (used
-for the unit tests in `redis-circuit-breaker.service.spec.ts`) and not a
+**Tested against real elapsed time, beyond just simulated timers**
+(`test/latency-based-circuit-breaker.e2e-spec.ts`): `mock-psp` is given
+a `forceslow` marker that delays 6 real seconds before responding
+successfully (`scripts/mock-psp/server.js`), so this test exercises the
+adapter's actual `fetch()` and the actual elapsed-time measurement
+feeding `recordSuccess()`, unlike `jest.useFakeTimers()` (used for the
+unit tests in `redis-circuit-breaker.service.spec.ts`) or the
 socket-destroy trick (used for the ambiguous-outcome timeout tests,
 where no response at all is the point). 5 sequential slow-but-successful
-STRIPE charges (~6s each, real wall-clock time) opened the circuit —
-confirmed both via `GET /payments/routing/health` reporting
+STRIPE charges (~6s each, real wall-clock time) open the circuit — shown
+both via `GET /payments/routing/health` reporting
 `STRIPE.circuitBreaker: "OPEN"`, and observably: a 6th charge that still
-requested `preferredProvider: "STRIPE"` routed to `ADYEN` instead,
-proving `filterAvailableProviders()` actually excluded STRIPE rather
-than just recording a flag nothing reads. Full test run: 35.4s.
+requests `preferredProvider: "STRIPE"` routes to `ADYEN` instead,
+proving `filterAvailableProviders()` actually excludes STRIPE rather
+than just recording a flag nothing reads.
 
 **Addendum, 2026-08-30 — `HALF_OPEN` single-trial-call budget**:
 `assertAvailable()` originally admitted *every* call once state was
 anything other than `OPEN` — the instant state flipped to `HALF_OPEN`,
-every replica's concurrent traffic resumed simultaneously, not just a
-single probe, which is the opposite of what `HALF_OPEN` is for (send a
-struggling PSP a trickle, not a resumed full burst, right as it may be
-starting to recover). Confirmed live via a unit test: a second
+every replica's concurrent traffic resumed simultaneously, instead of
+just a single probe, which is the opposite of what `HALF_OPEN` is for (send a
+struggling PSP a trickle rather than a resumed full burst, right as it may be
+starting to recover): without a trial budget, a second
 `assertAvailable()` call issued immediately after the first one admitted
-the `HALF_OPEN` trial also resolved successfully instead of being
+the `HALF_OPEN` trial would also resolve successfully instead of being
 rejected. Fixed with a second Redis counter (`halfOpenTrialCount`,
 atomic `INCR`, TTL set only by whichever call claims slot 1) that admits
 exactly one trial call per recovery episode and rejects the rest the
@@ -131,36 +132,48 @@ than waiting for `FAILURE_THRESHOLD` failures to accumulate again. Full
 detail in
 [`../technical/distributed-state.md`](../technical/distributed-state.md#circuit-breaker).
 
+**Addendum — per-merchant exposure as a separate, narrower signal**:
+`MerchantPspExposureService` tracks, per merchant, which PSP their
+recent successful charges actually resolved to, and
+`DegradedPspAwareThrottlerGuard` uses it to tighten rate limits only
+for a merchant whose own recent traffic is concentrated on a
+currently-degraded PSP — a separate mechanism from the breaker above,
+not a restatement of it: the breaker decides routing eligibility, this
+decides rate-limit strictness for whoever's exposed to a PSP it just
+excluded. Full design in
+[`../technical/merchant-psp-exposure-throttling.md`](../technical/merchant-psp-exposure-throttling.md).
+
 ## Consequences
 
 **What this buys**: a PSP outage degrades gracefully and consistently
 across every replica at once, instead of each pod independently
 rediscovering the same outage against production traffic. Routing
 decisions use information a static rule can't (live success
-rate/latency, not just "did this one call fail"), and the scoring
+rate/latency, beyond just "did this one call fail"), and the scoring
 weights are legible and independently adjustable — the table in
 [`../business-domain/ledger-and-settlement.md`](../business-domain/ledger-and-settlement.md#smart-psp-routing)
-*is* effectively the routing policy, not buried in conditional logic.
+*is* effectively the routing policy instead of being buried in
+conditional logic.
 
 **What this costs**: an extra Redis round-trip on the routing hot path
 for every charge (reading circuit-breaker state and the 15-minute
 metrics window), and a new class of failure mode — if Redis is
 unavailable, routing has no shared state to read at all. This system's
 posture, consistent with idempotency locking's own Redis dependency, is
-that Redis is a required piece of infrastructure for the payment path,
-not an optional cache; a deployment that can't guarantee Redis
-availability would need to re-evaluate this, not just the routing
-piece of it.
+that Redis is a required piece of infrastructure for the payment path
+rather than an optional cache; a deployment that can't guarantee Redis
+availability would need to re-evaluate this decision as a whole, beyond
+just the routing piece of it.
 
-**The EU-card/Adyen and non-EU-card/Stripe scoring nudges are
-reference-setup-specific, not a general routing law.** They're a
+**The EU-card/Adyen and non-EU-card/Stripe scoring nudges are specific
+to this reference setup rather than a general routing law.** They're a
 plausible illustration of PSD2/regional-fee dynamics for this
-project's two PSPs, not a calibrated result of real fee/approval-rate
-data. A real deployment adding a third PSP or operating in different
-regions would need to revisit these constants, not assume they
-generalize.
+project's two PSPs, rather than a calibrated result of real
+fee/approval-rate data. A real deployment adding a third PSP or operating in different
+regions would need to revisit these constants instead of assuming
+they generalize.
 
-**Fallback changes who's liable for a slower response, not just who
+**Fallback changes who's liable for a slower response, beyond just who
 processes the charge.** A caller that gets `usedFallback: true` waited
 through one full failed attempt against the first PSP before the
 second one ever ran — there's no parallel/hedged-request version of

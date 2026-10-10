@@ -1,6 +1,10 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { PaymentProcessorFactory } from '../../adapters/psp/payment-processor.factory';
-import { RoutingContext, RoutingDecision, PreferredProviderNotEntitledError } from '../../domain/services/smart-routing.strategy';
+import {
+  RoutingContext,
+  RoutingDecision,
+  PreferredProviderNotEntitledError,
+} from '../../domain/services/smart-routing.strategy';
 import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
 import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
@@ -67,9 +71,9 @@ export class AcquirerRoutingService {
 
     this.logger.log(
       `[AcquirerRouting] Selected ${result.decision.selectedProvider} ` +
-      `for merchant=${params.merchantId}, ` +
-      `amount=${params.amount.toString()}, ` +
-      `score=${result.decision.score}`,
+        `for merchant=${params.merchantId}, ` +
+        `amount=${params.amount.toString()}, ` +
+        `score=${result.decision.score}`,
     );
 
     return result;
@@ -98,10 +102,10 @@ export class AcquirerRoutingService {
 
     const result = await this.processorFactory.executeWithFallback(context, operation).catch(translateRoutingError);
 
-    // Recorded on the actual outcome (post-fallback), not the initial pick
+    // Recorded on the actual outcome (post-fallback) rather than the initial pick
     // — this is what MerchantPspExposureService uses to decide whether the
     // merchant's *next* charge should get a stricter throttle limit, so it
-    // should reflect where their traffic really landed, not where it was
+    // should reflect where their traffic really landed instead of where it was
     // first aimed.
     await this.merchantPspExposure.recordRouting(params.merchantId, result.provider);
 

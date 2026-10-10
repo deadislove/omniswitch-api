@@ -30,12 +30,20 @@ export class PlanService {
     return plan;
   }
 
+  /** Reads via findManyOnMaster() — see getOrThrow()'s docblock for why. */
   async findMany(filter?: FindPlansFilter): Promise<Plan[]> {
-    return this.planPort.findMany(filter);
+    return this.planPort.findManyOnMaster(filter);
   }
 
+  /**
+   * Reads via findByIdOnMaster() instead of the ambient replica-routed
+   * findById() — a merchant creating a plan and immediately viewing,
+   * subscribing to, or deactivating it is an ordinary sequence, and this
+   * catalog's read volume is low enough that every lookup here can
+   * afford to skip the replica.
+   */
   async getOrThrow(id: string): Promise<Plan> {
-    const plan = await this.planPort.findById(id);
+    const plan = await this.planPort.findByIdOnMaster(id);
     if (!plan) {
       throw new NotFoundException({ statusCode: 404, error: `Plan ${id} not found`, code: 'PLAN_NOT_FOUND' });
     }

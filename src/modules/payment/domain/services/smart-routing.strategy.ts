@@ -7,9 +7,9 @@ export type CircuitBreakerState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 export interface PSPHealthStatus {
   provider: PSPProvider;
   circuitBreakerState: CircuitBreakerState;
-  successRate: number;       // 0-100 percentage
+  successRate: number; // 0-100 percentage
   avgLatencyMs: number;
-  feePercentage: number;     // e.g., 2.9 for 2.9%
+  feePercentage: number; // e.g., 2.9 for 2.9%
   fixedFeeMinorUnits: number; // e.g., 30 for $0.30
   supportedCurrencies: string[];
   supportedCountries: string[];
@@ -40,10 +40,10 @@ export interface RoutingContext {
  * distinct, named error rather than folding this into the generic "no
  * available PSP providers" Error filterAvailableProviders() throws — an
  * entitlement violation is a permission boundary an operator configured on
- * purpose, not "this PSP happens to be down" or "doesn't support this
- * currency," and callers (PaymentCheckoutSaga) need to tell them apart to
+ * purpose — distinct from "this PSP happens to be down" or "doesn't support
+ * this currency" — and callers (PaymentCheckoutSaga) need to tell them apart to
  * respond 422 instead of silently falling back to a different PSP the
- * caller never asked for. A plain class, not a NestJS HttpException — this
+ * caller never asked for. A plain class rather than a NestJS HttpException — this
  * file is pure domain logic with zero framework dependencies (see the
  * class docblock below); the application layer maps this to an HTTP status.
  */
@@ -66,8 +66,8 @@ export interface RoutingDecision {
  * Smart Routing Strategy (Domain Service)
  * Selects the optimal PSP adapter based on:
  * 1. Merchant preference (`preferredProvider`) — a true override once the
- *    preferred PSP passes the availability/currency/country filter below,
- *    not one more input competing on score. See `selectProvider()`.
+ *    preferred PSP passes the availability/currency/country filter below —
+ *    never one more input competing on score. See `selectProvider()`.
  * 2. BIN country (geographic routing)
  * 3. Transaction amount (fee optimization)
  * 4. Real-time PSP health (circuit breaker state)
@@ -79,18 +79,15 @@ export class SmartRoutingStrategy {
   /**
    * Select the optimal PSP for a given payment context.
    */
-  selectProvider(
-    context: RoutingContext,
-    pspHealthMap: Map<PSPProvider, PSPHealthStatus>,
-  ): RoutingDecision {
+  selectProvider(context: RoutingContext, pspHealthMap: Map<PSPProvider, PSPHealthStatus>): RoutingDecision {
     // Checked before the general availability filter, and raised as a
     // distinct error rather than left to fall through to scoring —
     // entitlement is an explicit permission boundary, so a caller asking
-    // for a PSP outside it should be told clearly, not silently rerouted.
+    // for a PSP outside it should be told clearly instead of silently rerouted.
     // (Unlike this, a preferred PSP that merely fails the availability/
     // currency/country filter below *does* fall through to scoring the
-    // rest — that's an infrastructure/technical constraint, not a
-    // permission one.)
+    // rest — that's an infrastructure/technical constraint, a different
+    // thing from a permission one.)
     if (
       context.preferredProvider &&
       context.entitledProviders &&
@@ -104,11 +101,11 @@ export class SmartRoutingStrategy {
     if (availableProviders.length === 0) {
       throw new Error(
         `No available PSP providers for currency ${context.amount.currency.code} ` +
-        `from country ${context.binInfo?.country ?? 'UNKNOWN'}`,
+          `from country ${context.binInfo?.country ?? 'UNKNOWN'}`,
       );
     }
 
-    // preferredProvider is a true override, not a scoring nudge — the
+    // preferredProvider is a true override rather than a scoring nudge — the
     // charge DTO's own Swagger docs promise "overrides smart routing",
     // and the prior scoring-based behavior (a +20 bonus competing
     // against circuit-breaker state/success-rate/latency/fee) could
@@ -204,17 +201,17 @@ export class SmartRoutingStrategy {
     score += (health.successRate / 100) * 30;
 
     // 3. Latency score (0-15 points) - lower is better
-    const latencyScore = Math.max(0, 15 - (health.avgLatencyMs / 100));
+    const latencyScore = Math.max(0, 15 - health.avgLatencyMs / 100);
     score += latencyScore;
 
     // 4. Fee optimization (0-15 points) - lower fee = higher score
     const feeAmount = this.calculateFee(context.amount, health);
     const feeRatio = feeAmount.amount / context.amount.amount;
-    const feeScore = Math.max(0, 15 - (feeRatio * 100));
+    const feeScore = Math.max(0, 15 - feeRatio * 100);
     score += feeScore;
 
     // Note: no preferredProvider bonus here — it's now a true override
-    // handled in selectProvider() before scoring ever runs, not a
+    // handled in selectProvider() before scoring ever runs, instead of a
     // competing input. This scoring pass is only reached when there's no
     // preference, or the preferred provider already failed the
     // availability filter (so it's never among the candidates being
@@ -235,11 +232,7 @@ export class SmartRoutingStrategy {
     return percentageFee.add(fixedFee);
   }
 
-  private buildRoutingReason(
-    context: RoutingContext,
-    health: PSPHealthStatus,
-    score: number,
-  ): string {
+  private buildRoutingReason(context: RoutingContext, health: PSPHealthStatus, score: number): string {
     const parts: string[] = [
       `Selected ${health.provider} (score: ${score})`,
       `CB: ${health.circuitBreakerState}`,

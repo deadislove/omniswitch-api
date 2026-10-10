@@ -12,8 +12,8 @@ import { MerchantService } from '../../../merchant/merchant.service';
 
 const SWEEP_LOCK_KEY = 'payout-sweep-lock';
 // Generous relative to how long a sweep actually takes (one DB write per
-// eligible merchant) — this only needs to survive a legitimately slow run,
-// not be tight. Same SETNX-lock primitive IdempotencyInterceptor already
+// eligible merchant) — this only needs to survive a legitimately slow run;
+// it doesn't need to be tight. Same SETNX-lock primitive IdempotencyInterceptor already
 // uses, just a longer TTL for a batch job instead of a single HTTP request.
 const SWEEP_LOCK_TTL_SECONDS = 300;
 
@@ -53,7 +53,8 @@ export class PayoutService {
    * same `now` (two pods' `@Cron` handlers firing at the same instant)
    * can both read `findLatestSweepRun()` before either writes its own
    * `PayoutSweepRun`, and both create a `Payout` for the same underlying
-   * ledger credit — a real double payout, not a hypothetical one.
+   * ledger credit — a real double payout, the actual risk this lock
+   * guards against.
    */
   @Cron(CronExpression.EVERY_DAY_AT_NOON, { name: 'marketplace-payout-sweep' })
   async runSweep(now: Date = new Date()): Promise<PayoutSweepRun | null> {
@@ -79,7 +80,7 @@ export class PayoutService {
 
     // Net MERCHANT-entry balance per (accountId, currency) in this window —
     // credits positive, debits (refund/dispute-loss reversals) negative.
-    // Keyed by currency too, not just accountId: a CONNECTED merchant's
+    // Keyed by currency too, beyond just accountId: a CONNECTED merchant's
     // platform could charge different customers in different currencies
     // (splits don't require a single currency per platform, only per
     // charge), so one merchant can accumulate balances in more than one
@@ -99,7 +100,11 @@ export class PayoutService {
         if (existing) {
           existing.minorUnits += sign * entry.amount.amountMinorUnits;
         } else {
-          netByAccount.set(key, { merchantId: entry.accountId, currencyCode, minorUnits: sign * entry.amount.amountMinorUnits });
+          netByAccount.set(key, {
+            merchantId: entry.accountId,
+            currencyCode,
+            minorUnits: sign * entry.amount.amountMinorUnits,
+          });
         }
       }
     }
@@ -111,7 +116,12 @@ export class PayoutService {
       if (balance.minorUnits <= 0n) continue;
 
       const merchantId = balance.merchantId;
-      const merchant = await this.merchantService.findByMerchantId(merchantId);
+      // Forced onto master — see MerchantService.findByMerchantIdOnMaster()'s
+      // docblock. A connected merchant charged with a split moments
+      // before this sweep runs (the common shape in tests, and a
+      // plausible real onboarding flow too) can otherwise race the
+      // replica and silently skip this payee's payout entirely.
+      const merchant = await this.merchantService.findByMerchantIdOnMaster(merchantId);
       if (!merchant || merchant.accountType !== 'CONNECTED') continue;
 
       const grossAmount = Money.fromMinorUnits(balance.minorUnits, balance.currencyCode);
@@ -129,7 +139,9 @@ export class PayoutService {
       connectedMerchantsPaid++;
       this.logger.log(
         `Payout ${payout.id}: ${merchantId} gross=${grossAmount.toString()} net=${payout.netAmount.toString()}` +
-          (payout.reserveAmount.isZero() ? '' : ` reserve=${payout.reserveAmount.toString()} (eligible ${payout.releaseEligibleAt!.toISOString()})`) +
+          (payout.reserveAmount.isZero()
+            ? ''
+            : ` reserve=${payout.reserveAmount.toString()} (eligible ${payout.releaseEligibleAt!.toISOString()})`) +
           (kycVerified ? '' : ' [KYC_BLOCKED]'),
       );
     }
@@ -138,7 +150,9 @@ export class PayoutService {
     await this.payoutPort.saveSweepRun(run);
 
     if (connectedMerchantsPaid > 0) {
-      this.logger.log(`Payout sweep ${run.id}: ${connectedMerchantsPaid} connected merchant(s) paid, window [${windowStart.toISOString()} - ${windowEnd.toISOString()}]`);
+      this.logger.log(
+        `Payout sweep ${run.id}: ${connectedMerchantsPaid} connected merchant(s) paid, window [${windowStart.toISOString()} - ${windowEnd.toISOString()}]`,
+      );
     }
     return run;
   }
@@ -147,21 +161,51 @@ export class PayoutService {
     return this.payoutPort.findMany(filter);
   }
 
+  /** See PayoutPort.findManyOnMaster()'s docblock — for a caller that just wrote (a sweep, a transfer confirmation) and needs to read its own write back immediately. */
+  async findManyOnMaster(filter?: FindPayoutsFilter): Promise<Payout[]> {
+    return this.payoutPort.findManyOnMaster(filter);
+  }
+
   async findById(id: string): Promise<Payout | null> {
     return this.payoutPort.findById(id);
   }
 
-  /** `force: true` is the manual-override path (bypasses releaseEligibleAt) — the scheduled sweep below never passes it. */
+  /** See PayoutPort.findByIdOnMaster()'s docblock — for a caller that just wrote this exact Payout and needs to read its own write back immediately. */
+  async findByIdOnMaster(id: string): Promise<Payout | null> {
+    return this.payoutPort.findByIdOnMaster(id);
+  }
+
+  /**
+   * `force: true` is the manual-override path (bypasses
+   * releaseEligibleAt) — the scheduled sweep below never passes it.
+   * Reads via `findByIdOnMaster()` instead of the ambient
+   * replica-routed
+   * `findById()` — this validates-then-transitions current state, and a
+   * caller invoking this right after another write to the same Payout
+   * (an admin action moments earlier, or this same sweep's own prior
+   * iteration) shouldn't risk reading a pre-write replica snapshot. Same
+   * bug class as `PayoutService.confirmTransfer()`'s own fix; this
+   * specific instance had no confirmed reproduction, unlike that one,
+   * but the fix is identical and equally safe to apply pre-emptively.
+   */
   async releaseReserve(id: string, options: { force?: boolean } = {}): Promise<Payout> {
-    const payout = await this.payoutPort.findById(id);
+    const payout = await this.payoutPort.findByIdOnMaster(id);
     if (!payout) {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${id} not found`, code: 'PAYOUT_NOT_FOUND' });
     }
     if (payout.reserveAmount.isZero()) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${id} has no reserve to release`, code: 'PAYOUT_HAS_NO_RESERVE' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${id} has no reserve to release`,
+        code: 'PAYOUT_HAS_NO_RESERVE',
+      });
     }
     if (payout.reserveReleased) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${id}'s reserve is already released`, code: 'PAYOUT_RESERVE_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${id}'s reserve is already released`,
+        code: 'PAYOUT_RESERVE_ALREADY_RELEASED',
+      });
     }
     const now = new Date();
     if (!options.force && payout.releaseEligibleAt && now < payout.releaseEligibleAt) {
@@ -174,7 +218,11 @@ export class PayoutService {
 
     const released = await this.payoutPort.markReserveReleased(id, now);
     if (!released) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${id}'s reserve lost a race with another release attempt`, code: 'PAYOUT_RESERVE_ALREADY_RELEASED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${id}'s reserve lost a race with another release attempt`,
+        code: 'PAYOUT_RESERVE_ALREADY_RELEASED',
+      });
     }
 
     // Return the in-memory aggregate, mutated to match what was just
@@ -182,7 +230,9 @@ export class PayoutService {
     // write" posture ReserveService.release() already uses, for the same
     // replica-lag reason.
     payout.releaseReserve(now, options.force ?? false);
-    this.logger.log(`Payout ${id}'s reserve released (${payout.reserveAmount.toString()}) for merchant ${payout.merchantId}${options.force ? ' [forced]' : ''}`);
+    this.logger.log(
+      `Payout ${id}'s reserve released (${payout.reserveAmount.toString()}) for merchant ${payout.merchantId}${options.force ? ' [forced]' : ''}`,
+    );
     return payout;
   }
 
@@ -208,7 +258,9 @@ export class PayoutService {
     }
 
     if (payouts.length > 0) {
-      this.logger.log(`Payout reserve release sweep: ${released} released, ${failed} failed, ${payouts.length} eligible`);
+      this.logger.log(
+        `Payout reserve release sweep: ${released} released, ${failed} failed, ${payouts.length} eligible`,
+      );
     }
     return { released, failed };
   }
@@ -250,27 +302,48 @@ export class PayoutService {
   }
 
   /**
-   * Initiates a real (mocked) bank transfer for a Payout's `netAmount` —
-   * see BankTransferPort and Payout.recordTransferInitiated()'s docblock
-   * for why this only ever covers `netAmount`, never a later-released
-   * reserve. Throws on a PSP-level decline (same posture as a normal
+   * Submits a bank transfer for a Payout's `netAmount` — see
+   * BankTransferPort and Payout.recordTransferInitiated()'s docblock for
+   * why this only ever covers `netAmount`, never a later-released
+   * reserve. Throws on an outright decline (same posture as a normal
    * charge/capture/refund) since this is the single on-demand endpoint a
    * caller is waiting on; the sweep version below catches per-item
    * instead so one merchant's declined transfer doesn't block the rest.
+   *
+   * A real rail (`AchBankTransferAdapter`/`WireBankTransferAdapter`)
+   * returns `PENDING` here — this method returns with the Payout in
+   * `PENDING_CONFIRMATION` rather than `INITIATED`; final settlement arrives
+   * later via `confirmTransfer()`, called from the
+   * `POST /webhooks/bank-transfer` receiver. Only `MockBankTransferAdapter`
+   * (`SENT`) reaches `INITIATED` synchronously, inside this same call.
+   * Reads via `findByIdOnMaster()` — see `releaseReserve()`'s own
+   * docblock for why.
    */
   async initiateTransfer(payoutId: string): Promise<Payout> {
-    const payout = await this.payoutPort.findById(payoutId);
+    const payout = await this.payoutPort.findByIdOnMaster(payoutId);
     if (!payout) {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${payoutId} not found`, code: 'PAYOUT_NOT_FOUND' });
     }
     if (payout.kycBlocked) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId} is KYC-blocked, cannot initiate a transfer`, code: 'PAYOUT_KYC_BLOCKED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId} is KYC-blocked, cannot initiate a transfer`,
+        code: 'PAYOUT_KYC_BLOCKED',
+      });
     }
     if (payout.netAmount.isZero()) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId} has no net amount to transfer`, code: 'PAYOUT_NO_TRANSFERABLE_AMOUNT' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId} has no net amount to transfer`,
+        code: 'PAYOUT_NO_TRANSFERABLE_AMOUNT',
+      });
     }
-    if (payout.transferStatus === 'INITIATED') {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId}'s transfer is already initiated`, code: 'PAYOUT_TRANSFER_ALREADY_INITIATED' });
+    if (payout.transferStatus === 'INITIATED' || payout.transferStatus === 'PENDING_CONFIRMATION') {
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId}'s transfer is already ${payout.transferStatus === 'INITIATED' ? 'initiated' : 'pending confirmation'}`,
+        code: 'PAYOUT_TRANSFER_ALREADY_INITIATED',
+      });
     }
 
     const idempotencyKey = uuidv4();
@@ -280,7 +353,7 @@ export class PayoutService {
       idempotencyKey,
     });
 
-    if (!result.success) {
+    if (result.status === 'FAILED') {
       await this.payoutPort.markTransferFailed(payoutId, result.errorMessage ?? 'Bank transfer declined');
       throw new UnprocessableEntityException({
         statusCode: 422,
@@ -290,23 +363,150 @@ export class PayoutService {
     }
 
     const now = new Date();
+    if (result.status === 'PENDING') {
+      const pending = await this.payoutPort.markTransferPending(payoutId, result.transferId!, now);
+      if (!pending) {
+        throw new ConflictException({
+          statusCode: 409,
+          error: `Payout ${payoutId}'s transfer lost a race with another initiation attempt`,
+          code: 'PAYOUT_TRANSFER_ALREADY_INITIATED',
+        });
+      }
+      payout.recordTransferPending(result.transferId!, now);
+      this.logger.log(
+        `Payout ${payoutId} transfer submitted (${payout.netAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId} — awaiting async settlement confirmation`,
+      );
+      return payout;
+    }
+
     const initiated = await this.payoutPort.markTransferInitiated(payoutId, result.transferId!, now);
     if (!initiated) {
-      throw new ConflictException({ statusCode: 409, error: `Payout ${payoutId}'s transfer lost a race with another initiation attempt`, code: 'PAYOUT_TRANSFER_ALREADY_INITIATED' });
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId}'s transfer lost a race with another initiation attempt`,
+        code: 'PAYOUT_TRANSFER_ALREADY_INITIATED',
+      });
     }
 
     // Return the in-memory aggregate, mutated to match what was just
     // committed — same "don't re-fetch after your own write" posture as
     // releaseReserve() above.
     payout.recordTransferInitiated(result.transferId!, now);
-    this.logger.log(`Payout ${payoutId} transfer initiated (${payout.netAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId}`);
+    this.logger.log(
+      `Payout ${payoutId} transfer initiated (${payout.netAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId}`,
+    );
     return payout;
   }
 
   /**
+   * Called from `POST /webhooks/bank-transfer` (see
+   * `BankTransferWebhookGuard`) once a real rail's async clearing cycle
+   * resolves a `PENDING_CONFIRMATION` transfer — either the netAmount
+   * leg or the reserve follow-up leg; a real rail's webhook just reports
+   * on a `transferId`, with no idea which of a payout's two transfers it
+   * belongs to, so this checks the netAmount transferId first, then the
+   * reserve one. Idempotent — a duplicate webhook delivery for an
+   * already-settled transfer, or one for a transferId neither leg
+   * recognizes, is logged and ignored rather than throwing, since
+   * webhook retries are a normal, expected occurrence (same posture the
+   * Stripe/Adyen webhook handlers take toward events they've already
+   * processed).
+   *
+   * Both lookups below are forced onto master (`findByTransferIdOnMaster`/
+   * `findByReserveTransferIdOnMaster`), instead of the ambient
+   * replica-routed
+   * ones — the `transferId`/`reserveTransferId` this webhook refers to
+   * was itself written moments earlier by `initiateTransfer()`/
+   * `initiateReserveTransfer()` in the very same real-world flow (an
+   * admin action, then the rail's own async callback). A stale replica
+   * read here doesn't just risk a *slow* confirmation — it falls through
+   * to "no Payout found... ignoring" below and silently drops a real
+   * confirmation forever, since nothing ever retries a webhook this
+   * handler itself already returned 200 for.
+   */
+  async confirmTransfer(transferId: string, outcome: 'SETTLED' | 'FAILED', reason?: string): Promise<void> {
+    const payout = await this.payoutPort.findByTransferIdOnMaster(transferId);
+    if (payout) {
+      await this.confirmNetAmountTransfer(payout, transferId, outcome, reason);
+      return;
+    }
+
+    const reservePayout = await this.payoutPort.findByReserveTransferIdOnMaster(transferId);
+    if (reservePayout) {
+      await this.confirmReserveTransfer(reservePayout, transferId, outcome, reason);
+      return;
+    }
+
+    this.logger.warn(
+      `Bank transfer webhook: no Payout found for transferId=${transferId} (net or reserve leg), ignoring`,
+    );
+  }
+
+  private async confirmNetAmountTransfer(
+    payout: Payout,
+    transferId: string,
+    outcome: 'SETTLED' | 'FAILED',
+    reason?: string,
+  ): Promise<void> {
+    if (payout.transferStatus !== 'PENDING_CONFIRMATION') {
+      this.logger.log(
+        `Bank transfer webhook: payout ${payout.id} (transferId=${transferId}) is already ${payout.transferStatus}, ignoring duplicate confirmation`,
+      );
+      return;
+    }
+
+    if (outcome === 'FAILED') {
+      await this.payoutPort.markTransferFailed(payout.id, reason ?? 'Bank transfer failed during settlement');
+      this.logger.log(`Payout ${payout.id} transfer ${transferId} settlement FAILED: ${reason ?? 'no reason given'}`);
+      return;
+    }
+
+    const now = new Date();
+    const confirmed = await this.payoutPort.markTransferInitiated(payout.id, transferId, now);
+    if (!confirmed) {
+      this.logger.warn(`Bank transfer webhook: payout ${payout.id} lost a race confirming transferId=${transferId}`);
+      return;
+    }
+    this.logger.log(`Payout ${payout.id} transfer ${transferId} settled — marked INITIATED`);
+  }
+
+  private async confirmReserveTransfer(
+    payout: Payout,
+    transferId: string,
+    outcome: 'SETTLED' | 'FAILED',
+    reason?: string,
+  ): Promise<void> {
+    if (payout.reserveTransferStatus !== 'PENDING_CONFIRMATION') {
+      this.logger.log(
+        `Bank transfer webhook: payout ${payout.id}'s reserve transfer (transferId=${transferId}) is already ${payout.reserveTransferStatus}, ignoring duplicate confirmation`,
+      );
+      return;
+    }
+
+    if (outcome === 'FAILED') {
+      await this.payoutPort.markReserveTransferFailed(payout.id, reason ?? 'Bank transfer failed during settlement');
+      this.logger.log(
+        `Payout ${payout.id} reserve transfer ${transferId} settlement FAILED: ${reason ?? 'no reason given'}`,
+      );
+      return;
+    }
+
+    const now = new Date();
+    const confirmed = await this.payoutPort.markReserveTransferInitiated(payout.id, transferId, now);
+    if (!confirmed) {
+      this.logger.warn(
+        `Bank transfer webhook: payout ${payout.id} lost a race confirming reserve transferId=${transferId}`,
+      );
+      return;
+    }
+    this.logger.log(`Payout ${payout.id} reserve transfer ${transferId} settled — marked INITIATED`);
+  }
+
+  /**
    * Daily sweep — initiates a transfer for every Payout that's eligible
-   * (not KYC-blocked, has a net amount, not already initiated). Also
-   * exposed on demand via POST /admin/marketplace/initiate-eligible-transfers.
+   * (not KYC-blocked, has a net amount, and isn't already initiated or pending
+   * confirmation). Also exposed on demand via
+   * POST /admin/marketplace/initiate-eligible-transfers.
    */
   @Cron(CronExpression.EVERY_DAY_AT_2AM, { name: 'marketplace-payout-transfer-sweep' })
   async initiateEligibleTransfers(): Promise<{ initiated: number; failed: number }> {
@@ -327,6 +527,132 @@ export class PayoutService {
 
     if (payouts.length > 0) {
       this.logger.log(`Payout transfer sweep: ${initiated} initiated, ${failed} failed, ${payouts.length} eligible`);
+    }
+    return { initiated, failed };
+  }
+
+  /**
+   * The follow-up transfer this codebase used to have no mechanism for
+   * at all: once a reserve is released, its amount needs its own
+   * transfer, independent of whatever already happened to `netAmount` —
+   * eligibility here is just `reserveReleased && reserveAmount > 0 &&
+   * !kycBlocked`, with no dependency on the netAmount transfer's own
+   * status (see `PayoutPort.findReserveTransferEligible()`). Same
+   * real-vs-mock-rail behavior as `initiateTransfer()`: `PENDING` on a
+   * real rail lands this in `PENDING_CONFIRMATION`, confirmed later via
+   * `confirmTransfer()`. Reads via `findByIdOnMaster()` — see
+   * `releaseReserve()`'s own docblock for why.
+   */
+  async initiateReserveTransfer(payoutId: string): Promise<Payout> {
+    const payout = await this.payoutPort.findByIdOnMaster(payoutId);
+    if (!payout) {
+      throw new NotFoundException({ statusCode: 404, error: `Payout ${payoutId} not found`, code: 'PAYOUT_NOT_FOUND' });
+    }
+    if (payout.kycBlocked) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId} is KYC-blocked, cannot initiate a reserve transfer`,
+        code: 'PAYOUT_KYC_BLOCKED',
+      });
+    }
+    if (payout.reserveAmount.isZero()) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId} has no reserve to transfer`,
+        code: 'PAYOUT_NO_RESERVE_TO_TRANSFER',
+      });
+    }
+    if (!payout.reserveReleased) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId}'s reserve has not been released yet`,
+        code: 'PAYOUT_RESERVE_NOT_RELEASED',
+      });
+    }
+    if (payout.reserveTransferStatus === 'INITIATED' || payout.reserveTransferStatus === 'PENDING_CONFIRMATION') {
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId}'s reserve transfer is already ${payout.reserveTransferStatus === 'INITIATED' ? 'initiated' : 'pending confirmation'}`,
+        code: 'PAYOUT_RESERVE_TRANSFER_ALREADY_INITIATED',
+      });
+    }
+
+    const idempotencyKey = uuidv4();
+    const result = await this.bankTransfer.initiateTransfer({
+      merchantId: payout.merchantId,
+      amount: payout.reserveAmount,
+      idempotencyKey,
+    });
+
+    if (result.status === 'FAILED') {
+      await this.payoutPort.markReserveTransferFailed(payoutId, result.errorMessage ?? 'Bank transfer declined');
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: result.errorMessage ?? 'Bank transfer declined',
+        code: 'PAYOUT_RESERVE_TRANSFER_FAILED',
+      });
+    }
+
+    const now = new Date();
+    if (result.status === 'PENDING') {
+      const pending = await this.payoutPort.markReserveTransferPending(payoutId, result.transferId!, now);
+      if (!pending) {
+        throw new ConflictException({
+          statusCode: 409,
+          error: `Payout ${payoutId}'s reserve transfer lost a race with another initiation attempt`,
+          code: 'PAYOUT_RESERVE_TRANSFER_ALREADY_INITIATED',
+        });
+      }
+      payout.recordReserveTransferPending(result.transferId!, now);
+      this.logger.log(
+        `Payout ${payoutId} reserve transfer submitted (${payout.reserveAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId} — awaiting async settlement confirmation`,
+      );
+      return payout;
+    }
+
+    const initiated = await this.payoutPort.markReserveTransferInitiated(payoutId, result.transferId!, now);
+    if (!initiated) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: `Payout ${payoutId}'s reserve transfer lost a race with another initiation attempt`,
+        code: 'PAYOUT_RESERVE_TRANSFER_ALREADY_INITIATED',
+      });
+    }
+
+    payout.recordReserveTransferInitiated(result.transferId!, now);
+    this.logger.log(
+      `Payout ${payoutId} reserve transfer initiated (${payout.reserveAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId}`,
+    );
+    return payout;
+  }
+
+  /**
+   * Daily sweep — initiates a reserve transfer for every Payout that's
+   * eligible (reserve released, has a reserve amount, isn't KYC-blocked,
+   * and isn't already initiated or pending confirmation). Also exposed on
+   * demand via POST /admin/marketplace/initiate-eligible-reserve-transfers.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'marketplace-payout-reserve-transfer-sweep' })
+  async initiateEligibleReserveTransfers(): Promise<{ initiated: number; failed: number }> {
+    const payouts = await this.payoutPort.findReserveTransferEligible();
+    let initiated = 0;
+    let failed = 0;
+
+    for (const payout of payouts) {
+      try {
+        await this.initiateReserveTransfer(payout.id);
+        initiated++;
+      } catch (err: unknown) {
+        failed++;
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Payout reserve transfer sweep: failed to initiate transfer for payout ${payout.id}: ${msg}`);
+      }
+    }
+
+    if (payouts.length > 0) {
+      this.logger.log(
+        `Payout reserve transfer sweep: ${initiated} initiated, ${failed} failed, ${payouts.length} eligible`,
+      );
     }
     return { initiated, failed };
   }

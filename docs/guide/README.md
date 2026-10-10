@@ -26,6 +26,18 @@ reference you'll come back to once you're working on a specific area.
    needed. The API is also live and interactive at `/api/docs` (Swagger
    UI) once the app is running.
 
+## Client SDKs
+
+[`sdk/`](./sdk/) covers `sdk/node` (`@deadislove/omniswitch-node`), a real Node/
+TypeScript client wrapping charge/refund/capture/cancel, HMAC request
+signing, idempotency-key handling, and outbound webhook signature
+verification — the three things an integrator most reliably gets wrong
+hand-rolling requests against the raw REST API above. Five more
+languages (Java, .NET, Python, Rust, Go) implement the same contract
+under `sdk/`; this page covers Node specifically, or see the package's
+own [`README.md`](../../sdk/node/README.md) for the same content
+alongside the actual source.
+
 ## Operating the background jobs
 
 Not part of the onboarding reading order above, but worth knowing this

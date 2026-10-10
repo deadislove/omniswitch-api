@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  UnauthorizedException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 
@@ -91,10 +85,7 @@ export class StripeWebhookGuard implements CanActivate {
     try {
       const expectedBuffer = Buffer.from(expectedSignature, 'hex');
       const providedBuffer = Buffer.from(providedSignature, 'hex');
-      if (
-        expectedBuffer.length !== providedBuffer.length ||
-        !timingSafeEqual(expectedBuffer, providedBuffer)
-      ) {
+      if (expectedBuffer.length !== providedBuffer.length || !timingSafeEqual(expectedBuffer, providedBuffer)) {
         throw new Error('mismatch');
       }
     } catch {

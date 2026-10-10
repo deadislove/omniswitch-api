@@ -1,0 +1,26 @@
+# Copy to terraform.tfvars (gitignored) and fill in real values. Never
+# commit the real file.
+
+github_org  = "your-github-org"
+github_repo = "omniswitch-api"
+
+# Uncomment to override defaults:
+# location          = "eastus"
+# vnet_cidr         = "10.40.0.0/16"
+# subnet_cidr       = "10.40.1.0/24"
+# github_deploy_ref = "refs/heads/main"
+# kubernetes_version = null
+# node_vm_size       = "Standard_D4s_v5"
+# node_min_count     = 3
+# node_max_count     = 6
+# postgres_subnet_cidr             = "10.40.2.0/24"
+# db_name                          = "omniswitch_payments"
+# db_username                      = "omniswitch_admin"
+# db_sku_name                      = "B_Standard_B1ms"
+# db_storage_mb                    = 32768
+# db_ha_enabled                    = false
+# db_create_read_replica           = false
+# redis_sku_name                   = "Standard"
+# redis_capacity                   = 1
+# backup_storage_replication_type  = "LRS"
+# hsm_allowed_principal_object_ids = []

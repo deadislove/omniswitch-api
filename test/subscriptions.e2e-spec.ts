@@ -5,7 +5,7 @@ import { uuidv5 } from '../src/shared/utils/uuid';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { SubscriptionEntity } from '../src/modules/payment/adapters/persistence/entities/subscription.entity';
 import { PaymentEntity } from '../src/modules/payment/adapters/persistence/entities/payment.entity';
@@ -47,8 +47,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ admin, adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -104,7 +103,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
   // routing (app.module.ts's `replication` config sends plain repository
   // reads to the replica, which has ~1s streaming lag behind master; see
   // reserve.service.ts's release() and test/ledger-and-outbox.e2e-spec.ts
-  // for the same issue confirmed live elsewhere). These helpers force the
+  // for the same issue). These helpers force the
   // read onto master. .update()/.save() calls above don't need it —
   // TypeORM's replication mode always routes writes to master regardless
   // of which repository issues them.
@@ -281,7 +280,9 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       // recomputing it — the two are only guaranteed to match if this
       // test's own arithmetic exactly mirrors pushPeriodEndIntoPast()'s,
       // which is exactly the kind of assumption worth not making twice.
-      const pushedPeriodEnd = (await findOneOnMaster(SubscriptionEntity, { id: createRes.body.id }))!.currentPeriodEnd.getTime();
+      const pushedPeriodEnd = (await findOneOnMaster(SubscriptionEntity, {
+        id: createRes.body.id,
+      }))!.currentPeriodEnd.getTime();
 
       const sweep = await runBillingNow();
       expect(sweep.charged).toBeGreaterThanOrEqual(1);
@@ -321,7 +322,10 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       // for this subscription+period, already SUCCEEDED — simulating a
       // process crash between the saga committing the charge and this
       // service advancing the subscription.
-      const periodPaymentId = uuidv5(`${createRes.body.id}:${afterPush!.currentPeriodEnd.toISOString()}`, SUBSCRIPTION_PAYMENT_NAMESPACE);
+      const periodPaymentId = uuidv5(
+        `${createRes.body.id}:${afterPush!.currentPeriodEnd.toISOString()}`,
+        SUBSCRIPTION_PAYMENT_NAMESPACE,
+      );
       const SENTINEL = 'sentinel_already_charged_do_not_recharge';
       await dataSource.getRepository(PaymentEntity).save({
         id: periodPaymentId,
@@ -406,7 +410,12 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
       const createRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        amount: 10, currency: 'USD', customerId: uniqueId('cust'), interval: 'day', trialDays: 1, paymentMethodId: 'pm_card_visa',
+        amount: 10,
+        currency: 'USD',
+        customerId: uniqueId('cust'),
+        interval: 'day',
+        trialDays: 1,
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
       await forceCurrencyToKRW(createRes.body.id);
       await pushPeriodEndIntoPast(createRes.body.id, 60_000);
@@ -441,7 +450,12 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       const eventEmitter = app.get(EventEmitter2);
 
       const createRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        amount: 10, currency: 'USD', customerId: uniqueId('cust'), interval: 'day', trialDays: 1, paymentMethodId: 'pm_card_visa',
+        amount: 10,
+        currency: 'USD',
+        customerId: uniqueId('cust'),
+        interval: 'day',
+        trialDays: 1,
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
       await forceCurrencyToKRW(createRes.body.id);
       await pushPeriodEndIntoPast(createRes.body.id, 60_000);
@@ -464,12 +478,39 @@ describe('Recurring billing / subscriptions (e2e)', () => {
       }
 
       expect(pastDueEvents).toHaveLength(3); // attempts 1-3 go PAST_DUE; attempt 4 cancels instead
-      expect(pastDueEvents[0]).toMatchObject({ subscriptionId: createRes.body.id, merchantId: merchant.merchantId, failedAttempts: 1 });
+      expect(pastDueEvents[0]).toMatchObject({
+        subscriptionId: createRes.body.id,
+        merchantId: merchant.merchantId,
+        failedAttempts: 1,
+      });
       expect(canceledEvents).toHaveLength(1);
-      expect(canceledEvents[0]).toMatchObject({ subscriptionId: createRes.body.id, merchantId: merchant.merchantId, reason: 'dunning_exhausted' });
+      expect(canceledEvents[0]).toMatchObject({
+        subscriptionId: createRes.body.id,
+        merchantId: merchant.merchantId,
+        reason: 'dunning_exhausted',
+      });
     });
 
     describe('Decline-code-aware dunning', () => {
+      // Smart routing can pick either STRIPE or ADYEN for any given
+      // renewal (no preferredProvider on subscriptions — see
+      // subscription.service.ts) — the mock PSP therefore returns each
+      // PSP's own real decline-code shape for the same semantic marker
+      // (Phase 1's per-PSP HARD_DECLINE_CODES; see
+      // scripts/mock-psp/server.js's ADYEN_REFUSAL_REASON_CODES). These
+      // tests assert PSP-independent behavior (status transitions,
+      // backoff, hard-decline-skips-retry) as the primary proof, and use
+      // this to translate the expected raw decline-code string for
+      // whichever PSP actually processed the charge.
+      const ADYEN_REFUSAL_REASON_CODES: Record<string, string> = {
+        insufficient_funds: '12',
+        stolen_card: '5',
+        expired_card: '6',
+      };
+      function expectedDeclineCode(pspProvider: string | undefined, semanticCode: string): string {
+        return pspProvider === 'ADYEN' ? ADYEN_REFUSAL_REASON_CODES[semanticCode] : semanticCode;
+      }
+
       it('a retryable decline (insufficient_funds) records the code and still uses the day 1/3/7 backoff schedule', async () => {
         const merchant = await seedMerchant(app, { merchantId: uniqueId('subretryable') });
         const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
@@ -482,7 +523,11 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         // between "this payment method reference is valid" and "this
         // specific charge attempt succeeded".
         const createRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-          amount: 10, currency: 'USD', customerId: uniqueId('cust'), interval: 'day', trialDays: 1,
+          amount: 10,
+          currency: 'USD',
+          customerId: uniqueId('cust'),
+          interval: 'day',
+          trialDays: 1,
           paymentMethodId: 'pm_card_insufficientfunds',
         }).expect(201);
         await pushPeriodEndIntoPast(createRes.body.id, 60_000);
@@ -494,7 +539,9 @@ describe('Recurring billing / subscriptions (e2e)', () => {
           .expect(200);
         expect(afterFirst.body.status).toBe('PAST_DUE');
         expect(afterFirst.body.failedAttempts).toBe(1);
-        expect(afterFirst.body.lastDeclineCode).toBe('insufficient_funds');
+        expect(afterFirst.body.lastDeclineCode).toBe(
+          expectedDeclineCode(afterFirst.body.lastDeclinePspProvider, 'insufficient_funds'),
+        );
         // Still gets the real day 1/3/7 backoff — a retryable code doesn't
         // skip the schedule the way a hard decline does.
         const nextRetryAt = new Date(afterFirst.body.nextRetryAt).getTime();
@@ -506,7 +553,11 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
         const createRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-          amount: 10, currency: 'USD', customerId: uniqueId('cust'), interval: 'day', trialDays: 1,
+          amount: 10,
+          currency: 'USD',
+          customerId: uniqueId('cust'),
+          interval: 'day',
+          trialDays: 1,
           paymentMethodId: 'pm_card_stolencard',
         }).expect(201);
         await pushPeriodEndIntoPast(createRes.body.id, 60_000);
@@ -520,7 +571,9 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         expect(afterRes.body.failedAttempts).toBe(1);
         expect(afterRes.body.status).toBe('CANCELED');
         expect(afterRes.body.canceledAt).toBeTruthy();
-        expect(afterRes.body.lastDeclineCode).toBe('stolen_card');
+        expect(afterRes.body.lastDeclineCode).toBe(
+          expectedDeclineCode(afterRes.body.lastDeclinePspProvider, 'stolen_card'),
+        );
         expect(afterRes.body.nextRetryAt).toBeUndefined();
       });
 
@@ -530,7 +583,11 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         const eventEmitter = app.get(EventEmitter2);
 
         const createRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-          amount: 10, currency: 'USD', customerId: uniqueId('cust'), interval: 'day', trialDays: 1,
+          amount: 10,
+          currency: 'USD',
+          customerId: uniqueId('cust'),
+          interval: 'day',
+          trialDays: 1,
           paymentMethodId: 'pm_card_expiredcard',
         }).expect(201);
         await pushPeriodEndIntoPast(createRes.body.id, 60_000);
@@ -550,11 +607,15 @@ describe('Recurring billing / subscriptions (e2e)', () => {
 
         expect(pastDueEvents).toHaveLength(0); // never goes PAST_DUE at all
         expect(canceledEvents).toHaveLength(1);
+        const afterRes = await request(app.getHttpServer())
+          .get(`/api/v1/subscriptions/${createRes.body.id}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
         expect(canceledEvents[0]).toMatchObject({
           subscriptionId: createRes.body.id,
           merchantId: merchant.merchantId,
           reason: 'hard_decline',
-          declineCode: 'expired_card',
+          declineCode: expectedDeclineCode(afterRes.body.lastDeclinePspProvider, 'expired_card'),
         });
       });
 
@@ -563,7 +624,11 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
         const createRes = await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-          amount: 10, currency: 'USD', customerId: uniqueId('cust'), interval: 'day', trialDays: 1,
+          amount: 10,
+          currency: 'USD',
+          customerId: uniqueId('cust'),
+          interval: 'day',
+          trialDays: 1,
           paymentMethodId: 'pm_card_insufficientfunds',
         }).expect(201);
         await pushPeriodEndIntoPast(createRes.body.id, 60_000);
@@ -573,13 +638,17 @@ describe('Recurring billing / subscriptions (e2e)', () => {
           .get(`/api/v1/subscriptions/${createRes.body.id}`)
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200);
-        expect(afterFail.body.lastDeclineCode).toBe('insufficient_funds');
+        expect(afterFail.body.lastDeclineCode).toBe(
+          expectedDeclineCode(afterFail.body.lastDeclinePspProvider, 'insufficient_funds'),
+        );
 
         // Switch to a working payment method the same way the dunning
         // tests switch currency — directly in the DB, since there's no
         // "update payment method" API and this is just proving the field
         // resets on a real success, not testing payment-method rotation.
-        await dataSource.getRepository(SubscriptionEntity).update(createRes.body.id, { paymentMethodId: 'pm_card_visa' });
+        await dataSource
+          .getRepository(SubscriptionEntity)
+          .update(createRes.body.id, { paymentMethodId: 'pm_card_visa' });
         await pushNextRetryIntoPast(createRes.body.id);
         await runBillingNow();
 
@@ -604,9 +673,15 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         paymentMethodId: 'pm_card_visa',
       }).expect(201);
 
-      const cancelRes = await signedRequest(merchant, token, 'post', `/api/v1/subscriptions/${createRes.body.id}/cancel`, {
-        atPeriodEnd: true,
-      }).expect(200);
+      const cancelRes = await signedRequest(
+        merchant,
+        token,
+        'post',
+        `/api/v1/subscriptions/${createRes.body.id}/cancel`,
+        {
+          atPeriodEnd: true,
+        },
+      ).expect(200);
       expect(cancelRes.body.status).toBe('ACTIVE'); // still active — takes effect at period end
       expect(cancelRes.body.cancelAtPeriodEnd).toBe(true);
 
@@ -639,7 +714,13 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         paymentMethodId: 'pm_card_visa',
       }).expect(201);
 
-      const cancelRes = await signedRequest(merchant, token, 'post', `/api/v1/subscriptions/${createRes.body.id}/cancel`, {}).expect(200);
+      const cancelRes = await signedRequest(
+        merchant,
+        token,
+        'post',
+        `/api/v1/subscriptions/${createRes.body.id}/cancel`,
+        {},
+      ).expect(200);
       expect(cancelRes.body.status).toBe('CANCELED');
       expect(cancelRes.body.cancelAtPeriodEnd).toBe(false);
       expect(cancelRes.body.canceledAt).toBeTruthy();
@@ -647,7 +728,7 @@ describe('Recurring billing / subscriptions (e2e)', () => {
   });
 
   describe('Ownership and access control', () => {
-    it('a merchant cannot see or cancel another merchant\'s subscription', async () => {
+    it("a merchant cannot see or cancel another merchant's subscription", async () => {
       const owner = await seedMerchant(app, { merchantId: uniqueId('subowner') });
       const ownerToken = await login(app, owner.apiKeyId, owner.apiKeySecret);
       const intruder = await seedMerchant(app, { merchantId: uniqueId('subintruder') });
@@ -666,14 +747,24 @@ describe('Recurring billing / subscriptions (e2e)', () => {
         .set('Authorization', `Bearer ${intruderToken}`)
         .expect(403);
 
-      await signedRequest(intruder, intruderToken, 'post', `/api/v1/subscriptions/${createRes.body.id}/cancel`, {}).expect(403);
+      await signedRequest(
+        intruder,
+        intruderToken,
+        'post',
+        `/api/v1/subscriptions/${createRes.body.id}/cancel`,
+        {},
+      ).expect(403);
     });
 
     it('a MERCHANT listing subscriptions only ever sees their own, even if a merchantId filter for another merchant is supplied', async () => {
       const merchant = await seedMerchant(app, { merchantId: uniqueId('subscopelist') });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
       await signedRequest(merchant, token, 'post', '/api/v1/subscriptions', {
-        amount: 5, currency: 'USD', customerId: uniqueId('cust'), interval: 'month', paymentMethodId: 'pm_card_visa',
+        amount: 5,
+        currency: 'USD',
+        customerId: uniqueId('cust'),
+        interval: 'month',
+        paymentMethodId: 'pm_card_visa',
       }).expect(201);
 
       const res = await request(app.getHttpServer())

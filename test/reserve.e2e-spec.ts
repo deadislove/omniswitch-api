@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { LedgerOutboxEntity } from '../src/modules/payment/adapters/persistence/entities/ledger-outbox.entity';
 import { ReserveHoldEntity } from '../src/modules/payment/adapters/persistence/entities/reserve-hold.entity';
@@ -21,15 +21,13 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('Merchant risk tiering & reserves (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -55,7 +53,7 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
   // `replication` config sends plain repository reads to the replica,
   // which has ~1s streaming lag behind master; see reserve.service.ts's
   // own release() and test/ledger-and-outbox.e2e-spec.ts for the same
-  // issue confirmed live elsewhere). These helpers force the read onto
+  // issue). These helpers force the read onto
   // master.
   async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
     const queryRunner = dataSource.createQueryRunner('master');
@@ -100,7 +98,11 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
   });
 
   it('charging a merchant with a reserve policy withholds the configured percentage into a RESERVE entry and records a HELD ReserveHold', async () => {
-    const merchant = await seedMerchant(app, { merchantId: uniqueId('reserved10'), reserveBps: 1000, reserveHoldDays: 90 });
+    const merchant = await seedMerchant(app, {
+      merchantId: uniqueId('reserved10'),
+      reserveBps: 1000,
+      reserveHoldDays: 90,
+    });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
     const beforeCharge = Date.now();
@@ -185,7 +187,11 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
 
   describe('Admin: reserve hold management', () => {
     it('manually releasing a hold books the offsetting ledger entry and flips status to RELEASED (verified via a fresh DB read, not the API response)', async () => {
-      const merchant = await seedMerchant(app, { merchantId: uniqueId('manrelease'), reserveBps: 1000, reserveHoldDays: 90 });
+      const merchant = await seedMerchant(app, {
+        merchantId: uniqueId('manrelease'),
+        reserveBps: 1000,
+        reserveHoldDays: 90,
+      });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
       const chargeRes = await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
@@ -212,7 +218,10 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
       expect(afterRelease!.status).toBe('RELEASED');
       expect(afterRelease!.releasedAt).not.toBeNull();
 
-      const event = await findOneOnMaster(LedgerOutboxEntity, { paymentId: chargeRes.body.paymentId, eventType: 'RESERVE_RELEASED' });
+      const event = await findOneOnMaster(LedgerOutboxEntity, {
+        paymentId: chargeRes.body.paymentId,
+        eventType: 'RESERVE_RELEASED',
+      });
       expect(event).not.toBeNull();
       const releaseEntries = event!.entries as any[];
       const reserveDebit = releaseEntries.find((e) => e.accountType === 'RESERVE' && e.entryType === 'DEBIT');
@@ -222,7 +231,11 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
     });
 
     it('releasing an already-released hold is rejected with 409, not double-booked', async () => {
-      const merchant = await seedMerchant(app, { merchantId: uniqueId('doublerelease'), reserveBps: 1000, reserveHoldDays: 90 });
+      const merchant = await seedMerchant(app, {
+        merchantId: uniqueId('doublerelease'),
+        reserveBps: 1000,
+        reserveHoldDays: 90,
+      });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
       const chargeRes = await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
@@ -246,22 +259,47 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
         .expect(409);
 
       // Only one RESERVE_RELEASED event should exist for this payment.
-      const events = await findOnMaster(LedgerOutboxEntity, { paymentId: chargeRes.body.paymentId, eventType: 'RESERVE_RELEASED' });
+      const events = await findOnMaster(LedgerOutboxEntity, {
+        paymentId: chargeRes.body.paymentId,
+        eventType: 'RESERVE_RELEASED',
+      });
       expect(events.length).toBe(1);
     });
 
     it('the release-eligible sweep releases a hold whose hold period has already elapsed (holdDays: 0) and leaves an ineligible one alone', async () => {
-      const eligibleMerchant = await seedMerchant(app, { merchantId: uniqueId('sweepeligible'), reserveBps: 1000, reserveHoldDays: 0 });
+      const eligibleMerchant = await seedMerchant(app, {
+        merchantId: uniqueId('sweepeligible'),
+        reserveBps: 1000,
+        reserveHoldDays: 0,
+      });
       const eligibleToken = await login(app, eligibleMerchant.apiKeyId, eligibleMerchant.apiKeySecret);
-      const ineligibleMerchant = await seedMerchant(app, { merchantId: uniqueId('sweepineligible'), reserveBps: 1000, reserveHoldDays: 90 });
+      const ineligibleMerchant = await seedMerchant(app, {
+        merchantId: uniqueId('sweepineligible'),
+        reserveBps: 1000,
+        reserveHoldDays: 90,
+      });
       const ineligibleToken = await login(app, ineligibleMerchant.apiKeyId, ineligibleMerchant.apiKeySecret);
 
       const eligibleCharge = await signedRequest(eligibleMerchant, eligibleToken, 'post', '/api/v1/payments/charge', {
-        amount: 30, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+        amount: 30,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
       }).expect(201);
-      const ineligibleCharge = await signedRequest(ineligibleMerchant, ineligibleToken, 'post', '/api/v1/payments/charge', {
-        amount: 30, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
-      }).expect(201);
+      const ineligibleCharge = await signedRequest(
+        ineligibleMerchant,
+        ineligibleToken,
+        'post',
+        '/api/v1/payments/charge',
+        {
+          amount: 30,
+          currency: 'USD',
+          paymentMethodId: 'pm_card_visa',
+          orderId: uniqueId('order'),
+          binInfo: USD_BIN,
+        },
+      ).expect(201);
 
       const sweepRes = await request(app.getHttpServer())
         .post('/api/v1/admin/reserves/release-eligible')
@@ -277,10 +315,18 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
     });
 
     it('lists reserve holds filtered by merchant and status', async () => {
-      const merchant = await seedMerchant(app, { merchantId: uniqueId('listheld'), reserveBps: 500, reserveHoldDays: 60 });
+      const merchant = await seedMerchant(app, {
+        merchantId: uniqueId('listheld'),
+        reserveBps: 500,
+        reserveHoldDays: 60,
+      });
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
       await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-        amount: 10, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+        amount: 10,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
       }).expect(201);
 
       const listRes = await request(app.getHttpServer())
@@ -317,7 +363,11 @@ describe('Merchant risk tiering & reserves (e2e)', () => {
 
       const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
       const chargeRes = await signedRequest(merchant, token, 'post', '/api/v1/payments/charge', {
-        amount: 100, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN,
+        amount: 100,
+        currency: 'USD',
+        paymentMethodId: 'pm_card_visa',
+        orderId: uniqueId('order'),
+        binInfo: USD_BIN,
       }).expect(201);
 
       const entries = await ledgerEntries(chargeRes.body.paymentId);

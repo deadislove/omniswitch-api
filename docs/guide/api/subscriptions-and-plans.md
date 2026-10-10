@@ -72,6 +72,7 @@ only — a `MERCHANT` is always scoped to its own), `customerId`, `status`
   "failedAttempts": 0,
   "nextRetryAt": null,
   "lastDeclineCode": null,
+  "lastDeclinePspProvider": null,
   "pendingCredit": null,
   "orderId": "order_abc123",
   "description": null,
@@ -83,8 +84,11 @@ only — a `MERCHANT` is always scoped to its own), `customerId`, `status`
 
 `lastDeclineCode` is set from the most recent failed billing attempt
 (cleared on the next success) — a hard-decline value there means the
-subscription skipped the retry schedule and canceled immediately. See
-the business guide's dunning section.
+subscription skipped the retry schedule and canceled immediately.
+`lastDeclinePspProvider` records which PSP produced that code, since
+Stripe's and Adyen's decline-code vocabularies overlap in value but not
+in meaning — re-classifying a stored code later requires knowing which
+PSP it came from. See the business guide's dunning section.
 
 ### `POST /subscriptions/:id/cancel`
 

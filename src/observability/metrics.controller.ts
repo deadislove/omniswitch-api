@@ -5,6 +5,7 @@ import { Public } from '../shared/decorators/public.decorator';
 import { PaymentProcessorFactory } from '../modules/payment/adapters/psp/payment-processor.factory';
 import { LedgerOutboxPort } from '../modules/payment/ports/outbound/ledger-outbox.port';
 import { PaymentRepositoryPort } from '../modules/payment/ports/outbound/payment-repository.port';
+import { ReconciliationPort } from '../modules/payment/ports/outbound/reconciliation.port';
 
 const CIRCUIT_STATE_VALUE: Record<string, number> = {
   CLOSED: 0,
@@ -30,15 +31,22 @@ const CIRCUIT_STATE_VALUE: Record<string, number> = {
  * could.
  *
  * Payment volume (charges by status/provider) follows the exact same
- * pull-computed approach, not an in-process counter incremented from
+ * pull-computed approach, instead of an in-process counter incremented from
  * `PaymentCheckoutSaga`'s terminal-outcome branches — see
  * `PaymentRepositoryPort.countByStatusAndProvider()`'s docblock for why
  * that would reintroduce the per-pod-state problem this file's other
  * gauges specifically avoid.
  *
+ * `omniswitch_reconciliation_mismatches` reflects only the *most recent*
+ * run per provider (`ReconciliationPort.findByProvider(provider, 1)`), rather than
+ * a cumulative count — `ReconciliationService` runs hourly, so this is
+ * "did the last hourly comparison find a problem," which is what an
+ * alert should page on; summing every historical mismatch ever found
+ * would never go back down even after the underlying issue is fixed.
+ *
  * Deliberately version-neutral and excluded from the global 'api' prefix
  * (see main.ts) — the Prometheus scrape annotation's path (/metrics) is a
- * fixed external contract, not part of this API's versioned surface.
+ * fixed external contract, outside this API's versioned surface.
  */
 @ApiExcludeController()
 @Controller({ version: VERSION_NEUTRAL })
@@ -49,6 +57,7 @@ export class MetricsController {
     private readonly processorFactory: PaymentProcessorFactory,
     private readonly ledgerOutbox: LedgerOutboxPort,
     private readonly paymentRepository: PaymentRepositoryPort,
+    private readonly reconciliation: ReconciliationPort,
   ) {
     collectDefaultMetrics({ register: this.registry });
 
@@ -111,13 +120,27 @@ export class MetricsController {
 
     const paymentVolume = new Gauge({
       name: 'omniswitch_payments_total',
-      help: 'Payment volume by terminal-ish status and PSP provider, across every merchant — cumulative since this row first appeared in the payments table, not since process start (see this gauge\'s collect() / PaymentRepositoryPort.countByStatusAndProvider() for why), so rate() over it behaves like a real counter would',
+      help: "Payment volume by terminal-ish status and PSP provider, across every merchant — cumulative since this row first appeared in the payments table, rather than since process start (see this gauge's collect() / PaymentRepositoryPort.countByStatusAndProvider() for why), so rate() over it behaves like a real counter would",
       labelNames: ['status', 'provider'],
       registers: [this.registry],
       collect: async () => {
         const rows = await paymentRepository.countByStatusAndProvider();
         for (const row of rows) {
           paymentVolume.set({ status: row.status, provider: row.pspProvider ?? 'none' }, row.count);
+        }
+      },
+    });
+
+    const reconciliationMismatches = new Gauge({
+      name: 'omniswitch_reconciliation_mismatches',
+      help: 'Mismatch count from the most recent reconciliation run per PSP provider (0 once a run comes back clean, or if no run has completed yet)',
+      labelNames: ['provider'],
+      registers: [this.registry],
+      collect: async () => {
+        const statuses = await this.processorFactory.getAllHealthStatuses();
+        for (const [provider] of statuses) {
+          const [lastRun] = await reconciliation.findByProvider(provider, 1);
+          reconciliationMismatches.set({ provider }, lastRun?.mismatches.length ?? 0);
         }
       },
     });

@@ -4,7 +4,12 @@ import { randomUUID as uuidv4 } from 'crypto';
 import { PaymentRepositoryPort } from '../../ports/outbound/payment-repository.port';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { AcquirerRoutingService } from '../services/acquirer-routing.service';
-import { PaymentAggregate, PSPProvider } from '../../domain/aggregates/payment.aggregate';
+import {
+  PaymentAggregate,
+  PSPProvider,
+  PaymentInitiator,
+  PspRiskSignal,
+} from '../../domain/aggregates/payment.aggregate';
 import { LedgerOutboxEvent } from '../../domain/aggregates/ledger-outbox.aggregate';
 import { Money } from '../../domain/value-objects/money.vo';
 import { BinInfo } from '../../domain/value-objects/bin-info.vo';
@@ -12,10 +17,17 @@ import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
 import { PaymentEntity } from '../../adapters/persistence/entities/payment.entity';
-import { ChargeLedgerParamsResolverService, ChargeLedgerParams } from '../services/charge-ledger-params-resolver.service';
+import {
+  ChargeLedgerParamsResolverService,
+  ChargeLedgerParams,
+  toPaymentSplits,
+} from '../services/charge-ledger-params-resolver.service';
 import { ReserveService } from '../services/reserve.service';
+import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
+import { AmlReviewMonitoringService } from '../services/aml-review-monitoring.service';
 import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
+import { traced } from '../../../../shared/utils/traced';
 
 export interface CheckoutSagaInput {
   paymentId: string;
@@ -25,6 +37,17 @@ export interface CheckoutSagaInput {
   customerId?: string;
   orderId?: string;
   description?: string;
+  statementDescriptor?: string;
+  /**
+   * Arbitrary merchant-supplied key-value pairs — `ChargePaymentDto.metadata`
+   * was documented and validated but never actually threaded past the
+   * controller until now, despite `PaymentMetadata.metadata` and
+   * `PSPChargeRequest.metadata` both already existing to receive it.
+   * Stored on `PaymentAggregate.metadata` and forwarded to the PSP request
+   * (Stripe/Adyen both have a real `metadata` concept on their own charge
+   * objects — see each adapter's `charge()`), beyond just persisted locally.
+   */
+  metadata?: Record<string, string>;
   binInfo?: BinInfo;
   paymentMethodId?: string;
   cardToken?: string;
@@ -32,8 +55,32 @@ export interface CheckoutSagaInput {
   captureMethod?: 'automatic' | 'manual';
   /** Marketplace split targets — see ChargeLedgerParamsResolverService.resolve()'s docblock. */
   splits?: { merchantId: string; amount: Money }[];
-  /** Free-form attribution bag stored verbatim on PaymentAggregate.metadata.metadata — currently only populated by PaymentController.charge() for an agent-initiated charge (delegationId, initiatedBy), so a payment's audit trail can answer "who/what actually initiated this" without a schema change. See DelegationService/delegation.aggregate.ts. */
-  initiatorMetadata?: Record<string, string>;
+  /** Real, indexed PaymentEntity columns — see PaymentEntity.delegationId's docblock. Currently only populated by PaymentController.charge()/ChargeApprovalService.approve() for an agent-initiated charge. See DelegationService/delegation.aggregate.ts. */
+  delegationId?: string;
+  initiatedBy?: PaymentInitiator;
+  /**
+   * This charge's amount as a percentage (0-100) of the delegation's
+   * remaining monthly budget *before* this charge — see
+   * PaymentAggregate.calculateRiskScore()'s docblock. Computed two ways
+   * depending on which path a charge takes: `PaymentController.charge()`'s
+   * immediate-execution AGENT branch derives it from the freshly-loaded,
+   * pre-reservation `Delegation` already in memory;
+   * `ChargeApprovalService.approve()` re-derives it from the delegation's
+   * *current* state at approval time (see
+   * `ChargeApprovalService.deriveAgentPercentOfRemainingMonthlyBudget()`'s
+   * own docblock for the full reasoning, including why "current state" is
+   * actually more relevant here than a frozen creation-time snapshot
+   * would be) — until this was fixed, `approve()` left this permanently
+   * `undefined`, which mattered more than a typical missing signal would:
+   * `ChargeApproval` only ever exists for a charge above
+   * `requireApprovalAboveAmount`, so by construction every charge on this
+   * path is one of the delegation's *largest*. Can still legitimately be
+   * `undefined` on the `approve()` path in a couple of edge cases (the
+   * calendar month rolled over between creation and approval, or the
+   * numbers don't leave room for a meaningful percentage) — see that
+   * method's own docblock.
+   */
+  agentPercentOfRemainingMonthlyBudget?: number;
 }
 
 export interface CheckoutSagaResult {
@@ -72,7 +119,7 @@ export interface CheckoutSagaResult {
  * webhook; it was stuck permanently. The PSP is now always called, and its
  * own response decides REQUIRES_ACTION vs. SUCCEEDED — matching how Stripe
  * and Adyen actually work (the PSP's real-time SCA/3DS2 engine makes this
- * call, not the merchant, pre-emptively, before ever attempting the charge).
+ * call rather than the merchant, pre-emptively, before ever attempting the charge).
  * `binCountry` is still forwarded as a hint (PSD2 requires a challenge for
  * European cards), but it informs the PSP's decision, it doesn't replace it.
  *
@@ -81,10 +128,9 @@ export interface CheckoutSagaResult {
  * settlement funds that were never actually charged (a routing/PSP failure
  * still left a PAYMENT_CHARGED entry on the books), and — once manual
  * capture was added — produced two PAYMENT_CHARGED entries for a single
- * payment (one at authorization, one at capture). Confirmed live: capturing
- * a REQUIRES_CAPTURE payment produced duplicate ledger rows for the same
- * paymentId. Entries are now written only at the moment funds are actually
- * confirmed captured: the SUCCEEDED branch here (immediate capture), or
+ * payment: capturing a REQUIRES_CAPTURE payment produced duplicate ledger
+ * rows for the same paymentId. Entries are now written only at the moment
+ * funds are actually confirmed captured: the SUCCEEDED branch here (immediate capture), or
  * PaymentLifecycleService.capture() (manual capture), or
  * WebhookProcessingService (PSP-confirmed via webhook).
  *
@@ -118,10 +164,25 @@ export class PaymentCheckoutSaga {
     private readonly chargeLedgerParams: ChargeLedgerParamsResolverService,
     private readonly reserveService: ReserveService,
     private readonly ambiguousRiskMonitoring: AmbiguousRiskMonitoringService,
+    private readonly amlReviewMonitoring: AmlReviewMonitoringService,
   ) {}
 
   async execute(input: CheckoutSagaInput): Promise<CheckoutSagaResult> {
     this.logger.log(`[Saga] Starting checkout for payment ${input.paymentId}`);
+
+    // Computed *before* this payment is ever saved (Step 1 below) —
+    // querying after would always find this exact payment's own
+    // just-written row and wrongly report "not first" on every single
+    // charge, including the genuinely first one. See
+    // PaymentAggregate.calculateRiskScore()'s docblock.
+    let isFirstChargeToMerchant: boolean | undefined;
+    if (input.delegationId) {
+      const hasChargedBefore = await this.paymentRepository.existsForDelegationAndMerchant(
+        input.delegationId,
+        input.merchantId,
+      );
+      isFirstChargeToMerchant = !hasChargedBefore;
+    }
 
     // ─── Step 1: Create Payment Intent ───────────────────────────────────────
     // No ledger entry yet — see class docblock. Funds haven't moved.
@@ -134,9 +195,12 @@ export class PaymentCheckoutSaga {
         customerId: input.customerId,
         orderId: input.orderId,
         description: input.description,
-        metadata: input.initiatorMetadata,
+        statementDescriptor: input.statementDescriptor,
+        metadata: input.metadata,
       },
       binInfo: input.binInfo,
+      delegationId: input.delegationId,
+      initiatedBy: input.initiatedBy,
     });
 
     await this.paymentRepository.save(payment);
@@ -180,7 +244,17 @@ export class PaymentCheckoutSaga {
     // controller, and REQUIRES_CAPTURE is only ever returned for
     // "manual".)
     if (chargeLedgerParams.splits && chargeLedgerParams.splits.length > 0) {
-      payment.recordSplits(chargeLedgerParams.splits);
+      // Recorded here (before the PSP is ever called) so a split survives
+      // a 3DS detour (see this block's own comment above). Each split's
+      // settlementConversion at this point is provisional — a 3DS-deferred
+      // confirmation re-resolves fresh FX rates for actual booking (see
+      // WebhookProcessingService.markSucceeded()), and
+      // PaymentAggregate.finalizeSplitConversions() (called from whichever
+      // path actually books this charge, below and in that service)
+      // overwrites it with whatever rate was actually used — so a later
+      // refund always replays the rate the money actually moved at,
+      // rather than this request-time guess.
+      payment.recordSplits(toPaymentSplits(chargeLedgerParams.splits));
     }
 
     // ─── Step 2: Risk Assessment ─────────────────────────────────────────────
@@ -188,20 +262,36 @@ export class PaymentCheckoutSaga {
     // decide anything here — see the class docblock's 3DS note below. The
     // PSP's own charge response (Step 4) is the only thing that can put a
     // payment into REQUIRES_ACTION.
-    const riskScore = payment.calculateRiskScore();
+    // agentContext is only computed for an agent-initiated charge — see
+    // PaymentAggregate.calculateRiskScore()'s docblock for why a human
+    // charge's scoring is entirely unaffected by these two signals.
+    // (isFirstChargeToMerchant was computed above, before Step 1's save.)
+    const riskScore = payment.calculateRiskScore(
+      input.delegationId
+        ? {
+            isFirstChargeToMerchant,
+            percentOfRemainingMonthlyBudget: input.agentPercentOfRemainingMonthlyBudget,
+          }
+        : undefined,
+    );
 
     this.logger.log(`[Saga] Step 2: Risk score=${riskScore}`);
 
     // ─── Step 3: Smart PSP Routing ───────────────────────────────────────────
     let routingDecision: any;
     try {
-      const routing = await this.acquirerRouting.selectOptimalAdapter({
-        amount: input.amount,
-        binInfo: input.binInfo,
-        merchantId: input.merchantId,
-        preferredProvider: input.preferredProvider,
-        entitledProviders: chargeLedgerParams.enabledPspProviders,
-      });
+      const routing = await traced(
+        'saga.route',
+        () =>
+          this.acquirerRouting.selectOptimalAdapter({
+            amount: input.amount,
+            binInfo: input.binInfo,
+            merchantId: input.merchantId,
+            preferredProvider: input.preferredProvider,
+            entitledProviders: chargeLedgerParams.enabledPspProviders,
+          }),
+        { 'payment.id': input.paymentId },
+      );
       routingDecision = routing.decision;
     } catch (routingError: unknown) {
       const msg = routingError instanceof Error ? routingError.message : String(routingError);
@@ -220,27 +310,39 @@ export class PaymentCheckoutSaga {
     let finalProvider = routingDecision.selectedProvider;
 
     try {
-      const { result, provider, usedFallback: fb } = await this.acquirerRouting.executeWithSmartRouting(
-        {
-          amount: input.amount,
-          binInfo: input.binInfo,
-          merchantId: input.merchantId,
-          preferredProvider: input.preferredProvider,
-          entitledProviders: chargeLedgerParams.enabledPspProviders,
-        },
-        (adapter) => adapter.charge({
-          paymentId: input.paymentId,
-          idempotencyKey: input.idempotencyKey,
-          amount: input.amount,
-          currency: input.amount.currency.code,
-          merchantId: input.merchantId,
-          customerId: input.customerId,
-          description: input.description,
-          paymentMethodId: input.paymentMethodId,
-          cardToken: input.cardToken,
-          captureMethod: input.captureMethod,
-          binCountry: input.binInfo?.country,
-        }),
+      const {
+        result,
+        provider,
+        usedFallback: fb,
+      } = await traced(
+        'saga.charge',
+        () =>
+          this.acquirerRouting.executeWithSmartRouting(
+            {
+              amount: input.amount,
+              binInfo: input.binInfo,
+              merchantId: input.merchantId,
+              preferredProvider: input.preferredProvider,
+              entitledProviders: chargeLedgerParams.enabledPspProviders,
+            },
+            (adapter) =>
+              adapter.charge({
+                paymentId: input.paymentId,
+                idempotencyKey: input.idempotencyKey,
+                amount: input.amount,
+                currency: input.amount.currency.code,
+                merchantId: input.merchantId,
+                customerId: input.customerId,
+                description: input.description,
+                statementDescriptor: input.statementDescriptor,
+                metadata: input.metadata,
+                paymentMethodId: input.paymentMethodId,
+                cardToken: input.cardToken,
+                captureMethod: input.captureMethod,
+                binCountry: input.binInfo?.country,
+              }),
+          ),
+        { 'payment.id': input.paymentId, 'payment.amount': input.amount.toString() },
       );
 
       chargeResult = result;
@@ -268,7 +370,7 @@ export class PaymentCheckoutSaga {
 
     // ─── Step 5: Update Payment Status ──────────────────────────────────────
     if (chargeResult.status === 'SUCCEEDED') {
-      payment.markSucceeded(chargeResult.transactionId, chargeResult.rawResponse);
+      payment.markSucceeded(chargeResult.transactionId, chargeResult.rawResponse, chargeResult.riskSignal);
 
       // Funds are confirmed captured *now* — this is the only place in the
       // immediate-capture path where a ledger entry should be written.
@@ -284,10 +386,22 @@ export class PaymentCheckoutSaga {
           rate: settlementConversion.rate,
           provider: settlementConversion.provider,
         });
+        const taxRecord = buildCrossBorderTaxRecord(input.amount, input.binInfo);
+        if (taxRecord) payment.recordTaxRecord(taxRecord);
       }
       // (splits were already recorded on `payment` right after
       // chargeLedgerParams resolved, above — recordSplits() is a no-op on
-      // a second call, so nothing to do here.)
+      // a second call. This immediate-capture path reuses that same
+      // resolve() result for booking, so finalizeSplitConversions() below
+      // is a same-data overwrite here — the call site that actually
+      // matters is WebhookProcessingService.markSucceeded()'s re-resolved
+      // splits, see PaymentAggregate.finalizeSplitConversions()'s
+      // docblock. Called unconditionally anyway so `payment.splits`'s FX
+      // portion always reflects whatever resolve() call actually fed
+      // createChargeEntries() — never an assumption about which path ran.)
+      if (splits && splits.length > 0) {
+        payment.finalizeSplitConversions(toPaymentSplits(splits));
+      }
       const outboxEvent = LedgerOutboxEvent.createChargeEntries({
         id: uuidv4(),
         paymentId: input.paymentId,
@@ -304,7 +418,13 @@ export class PaymentCheckoutSaga {
         await this.ledgerOutbox.saveWithPayment(input.paymentId, outboxEvent, manager);
         if (reserveHold) {
           await this.reserveService.recordHold(
-            { paymentId: input.paymentId, merchantId: input.merchantId, amount: reserveHold.amount, holdDays: reserveHold.holdDays },
+            {
+              paymentId: input.paymentId,
+              merchantId: input.merchantId,
+              amount: reserveHold.amount,
+              netAmount: reserveHold.netAmount,
+              holdDays: reserveHold.holdDays,
+            },
             manager,
           );
         }
@@ -327,7 +447,7 @@ export class PaymentCheckoutSaga {
     }
 
     if (chargeResult.status === 'REQUIRES_CAPTURE') {
-      payment.requiresCapture(chargeResult.transactionId, chargeResult.rawResponse);
+      payment.requiresCapture(chargeResult.transactionId, chargeResult.rawResponse, chargeResult.riskSignal);
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
 
@@ -363,11 +483,16 @@ export class PaymentCheckoutSaga {
       };
     }
 
-    // PSP returned FAILED
+    // PSP returned FAILED. finalProvider instead of payment.pspProvider — the
+    // latter is only ever set by startProcessing() at the *first*
+    // attempt, and would be stale here if a fallback attempt (a
+    // different provider) is what actually produced this decline.
     await this.compensate_markFailed(
       payment,
       chargeResult.errorMessage || 'PSP declined',
       chargeResult.errorCode,
+      finalProvider,
+      chargeResult.riskSignal,
     );
 
     return {
@@ -391,12 +516,27 @@ export class PaymentCheckoutSaga {
     payment: PaymentAggregate,
     reason: string,
     errorCode?: string,
+    pspProvider?: PSPProvider,
+    pspRiskSignal?: PspRiskSignal,
   ): Promise<void> {
     try {
-      payment.markFailed(reason, errorCode);
+      payment.markFailed(reason, errorCode, pspProvider, pspRiskSignal);
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
       this.logger.warn(`[Saga] Compensating transaction: Payment ${payment.id} marked FAILED: ${reason}`);
+      // Best-effort, deliberately outside the try above's own scope of
+      // concern — same reasoning as compensate_markAmbiguous()'s own
+      // separate catch around ambiguousRiskMonitoring.evaluate() below: an
+      // AML-review evaluation failure must never mask the real
+      // compensation outcome above.
+      try {
+        await this.amlReviewMonitoring.evaluate(payment.metadata.merchantId, errorCode, pspProvider);
+      } catch (monitoringError: unknown) {
+        const msg = monitoringError instanceof Error ? monitoringError.message : String(monitoringError);
+        this.logger.error(
+          `[Saga] AML-review evaluation failed for merchant ${payment.metadata.merchantId} (payment ${payment.id} still correctly marked FAILED): ${msg}`,
+        );
+      }
     } catch (compensationError: unknown) {
       const msg = compensationError instanceof Error ? compensationError.message : String(compensationError);
       this.logger.error(`[Saga] CRITICAL: Compensation failed for payment ${payment.id}: ${msg}`);
@@ -404,10 +544,7 @@ export class PaymentCheckoutSaga {
     }
   }
 
-  private async compensate_markAmbiguous(
-    payment: PaymentAggregate,
-    reason: string,
-  ): Promise<void> {
+  private async compensate_markAmbiguous(payment: PaymentAggregate, reason: string): Promise<void> {
     try {
       payment.markAmbiguous(reason, 'PSP_TIMEOUT_AMBIGUOUS');
       await this.paymentRepository.update(payment);
@@ -422,7 +559,9 @@ export class PaymentCheckoutSaga {
         await this.ambiguousRiskMonitoring.evaluate(payment.metadata.merchantId);
       } catch (monitoringError: unknown) {
         const msg = monitoringError instanceof Error ? monitoringError.message : String(monitoringError);
-        this.logger.error(`[Saga] Ambiguous-risk evaluation failed for merchant ${payment.metadata.merchantId} (payment ${payment.id} still correctly marked AMBIGUOUS): ${msg}`);
+        this.logger.error(
+          `[Saga] Ambiguous-risk evaluation failed for merchant ${payment.metadata.merchantId} (payment ${payment.id} still correctly marked AMBIGUOUS): ${msg}`,
+        );
       }
     } catch (compensationError: unknown) {
       const msg = compensationError instanceof Error ? compensationError.message : String(compensationError);

@@ -31,7 +31,7 @@ something a PSP exposes.
 `PaymentCheckoutSaga.execute()` is a single orchestrator that runs the
 steps in a fixed order and explicitly compensates on failure — an
 **orchestrated** saga (one coordinator owns the sequence and decides
-what happens on failure), not a **choreographed** one (each step
+what happens on failure) — as opposed to a **choreographed** one (each step
 reacting to the previous step's event with no central coordinator).
 Steps:
 
@@ -44,7 +44,7 @@ Steps:
    already succeeded would leave money moved with no ledger entry and
    no compensating action to reverse it.
 3. Risk scoring — stored for audit, doesn't gate anything itself; the
-   PSP's own response is what decides `REQUIRES_ACTION` (3DS), not a
+   PSP's own response is what decides `REQUIRES_ACTION` (3DS) — never a
    pre-emptive score threshold (see the saga's own docblock for the
    bug this fixed: a threshold-triggered `REQUIRES_ACTION` used to
    fabricate a 3DS URL without ever calling the PSP, producing a
@@ -73,7 +73,7 @@ surface somewhere rather than crash the request path a second time.
 PSP call gets no response at all (not a decline) and a same-provider
 retry also gets no response, `compensate_markAmbiguous()` marks the
 payment `AMBIGUOUS` and the saga **returns normally** (`200`) instead
-of throwing. This is deliberate, not an oversight — throwing here
+of throwing. This is deliberate — throwing here
 would make `IdempotencyInterceptor` delete its Redis lock/cache (it
 does that on any thrown error), so a client's legitimate retry with
 the same `Idempotency-Key` would generate a brand-new `paymentId` and
@@ -110,7 +110,7 @@ run before money moves, or does it need its own compensating action
 design (which this codebase doesn't have a pattern for yet — see
 `future-directions.md` for what's still open)?
 
-**Crash recovery relies on idempotency, not saga state persistence.**
+**Crash recovery relies on idempotency rather than saga state persistence.**
 The saga doesn't checkpoint its own progress to Postgres step-by-step
 — if the process crashes mid-execution, there's no "resume from step
 4" story. What actually protects against a double charge on retry is

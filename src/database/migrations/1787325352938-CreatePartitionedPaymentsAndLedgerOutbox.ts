@@ -1,11 +1,11 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Stage 1 of the payments/ledger_outbox partitioning migration.
  *
  * Creates NEW, empty, range-partitioned tables (`payments_partitioned`,
- * `ledger_outbox_partitioned`) — deliberately staging-named, not yet the
- * live `payments`/`ledger_outbox` tables. The actual backfill of
+ * `ledger_outbox_partitioned`) — deliberately staging-named rather than
+ * the live `payments`/`ledger_outbox` tables. The actual backfill of
  * existing rows and the atomic rename-swap into the live table names is
  * a separate, later migration (task #9): a straight `INSERT ... SELECT`
  * backfill at real data volume is a long-running, closely-supervised
@@ -22,10 +22,10 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * Option 2's query audit).
  *
  * Initial partitions are computed relative to *whenever this migration
- * actually runs*, not a hardcoded calendar range — a fresh clone of this
- * repo, run months or years from now, must still get partitions that
- * cover the current month, not stale ones frozen at whenever this file
- * was written. 6 months back (backdated headroom for the eventual
+ * actually runs*, instead of a hardcoded calendar range — a fresh clone
+ * of this repo, run months or years from now, must still get
+ * partitions covering the current month, rather than stale ones frozen
+ * at whenever this file was written. 6 months back (backdated headroom for the eventual
  * backfill in task #9, and matching the archive-driven ~6-7 month live
  * window) through 2 months forward (buffer) = 9 partitions. A `DEFAULT`
  * partition catches anything outside that range so an INSERT never
@@ -41,14 +41,15 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * Option 2's constraint-change table). `idempotency_key` moves from a
  * standalone UNIQUE to `(idempotency_key, created_at)` — safe, since an
  * idempotency key is only ever checked relative to when it was issued,
- * not globally-ever.
+ * never globally.
  *
  * Task 8c — query-audit sign-off (Option 2's "not partition-pruning-safe"
  * list: PaymentEntity's findById()/findByIdOnMaster()/
  * findByIdempotencyKey()/findByPspTransactionId()/countByStatusAndProvider(),
  * LedgerOutboxEntity's findPending()/markPublished()/markFailed()/findById()/
- * findFailed()/resetToPending()/countByStatus()). These are confirmed safe
- * to leave as-is post-partitioning, not a follow-up to fix: benchmarked
+ * findFailed()/resetToPending()/countByStatus()). These are already confirmed safe
+ * to leave as-is post-partitioning, rather than a follow-up still to fix:
+ * benchmarked
  * 2026-08-21 against 700k rows flat vs. the same rows across 7 monthly
  * partitions — id-keyed UPDATE delta ~0.005ms/op, status-keyed SELECT delta
  * ~0.0016ms/op, both negligible at this design's bounded partition count
@@ -56,13 +57,13 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * payment-typeorm.repository.ts for these methods.
  */
 export class CreatePartitionedPaymentsAndLedgerOutbox1787325352938 implements MigrationInterface {
-    name = 'CreatePartitionedPaymentsAndLedgerOutbox1787325352938'
+  name = 'CreatePartitionedPaymentsAndLedgerOutbox1787325352938';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        // ─── payments_partitioned ──────────────────────────────────────
-        // Same columns/types/defaults as "payments" (reuses the existing
-        // "payments_status_enum" type — no need for a second copy of it).
-        await queryRunner.query(`
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    // ─── payments_partitioned ──────────────────────────────────────
+    // Same columns/types/defaults as "payments" (reuses the existing
+    // "payments_status_enum" type — no need for a second copy of it).
+    await queryRunner.query(`
             CREATE TABLE "payments_partitioned" (
                 "id" uuid NOT NULL,
                 "merchant_id" character varying NOT NULL,
@@ -96,15 +97,21 @@ export class CreatePartitionedPaymentsAndLedgerOutbox1787325352938 implements Mi
             ) PARTITION BY RANGE ("created_at")
         `);
 
-        // Indexes on the parent automatically propagate to every
-        // partition (PG 11+) and to any partition created later.
-        await queryRunner.query(`CREATE INDEX "IDX_payments_partitioned_merchant_id" ON "payments_partitioned" ("merchant_id")`);
-        await queryRunner.query(`CREATE INDEX "IDX_payments_partitioned_merchant_created" ON "payments_partitioned" ("merchant_id", "created_at")`);
-        await queryRunner.query(`CREATE INDEX "IDX_payments_partitioned_status" ON "payments_partitioned" ("status")`);
-        await queryRunner.query(`CREATE INDEX "IDX_payments_partitioned_psp_transaction_id" ON "payments_partitioned" ("psp_transaction_id")`);
+    // Indexes on the parent automatically propagate to every
+    // partition (PG 11+) and to any partition created later.
+    await queryRunner.query(
+      `CREATE INDEX "IDX_payments_partitioned_merchant_id" ON "payments_partitioned" ("merchant_id")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "IDX_payments_partitioned_merchant_created" ON "payments_partitioned" ("merchant_id", "created_at")`,
+    );
+    await queryRunner.query(`CREATE INDEX "IDX_payments_partitioned_status" ON "payments_partitioned" ("status")`);
+    await queryRunner.query(
+      `CREATE INDEX "IDX_payments_partitioned_psp_transaction_id" ON "payments_partitioned" ("psp_transaction_id")`,
+    );
 
-        // ─── ledger_outbox_partitioned ─────────────────────────────────
-        await queryRunner.query(`
+    // ─── ledger_outbox_partitioned ─────────────────────────────────
+    await queryRunner.query(`
             CREATE TABLE "ledger_outbox_partitioned" (
                 "id" uuid NOT NULL,
                 "payment_id" character varying NOT NULL,
@@ -119,41 +126,46 @@ export class CreatePartitionedPaymentsAndLedgerOutbox1787325352938 implements Mi
             ) PARTITION BY RANGE ("created_at")
         `);
 
-        await queryRunner.query(`CREATE INDEX "IDX_ledger_outbox_partitioned_payment_id" ON "ledger_outbox_partitioned" ("payment_id")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ledger_outbox_partitioned_status_created" ON "ledger_outbox_partitioned" ("status", "created_at")`);
+    await queryRunner.query(
+      `CREATE INDEX "IDX_ledger_outbox_partitioned_payment_id" ON "ledger_outbox_partitioned" ("payment_id")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "IDX_ledger_outbox_partitioned_status_created" ON "ledger_outbox_partitioned" ("status", "created_at")`,
+    );
 
-        // ─── Partitions: 6 months back through 2 months forward of
-        // *whenever this migration actually runs*, plus a DEFAULT
-        // catch-all. `Date.UTC` normalizes month over/underflow on its
-        // own (e.g. month index -1 correctly rolls back into December of
-        // the prior year), so this handles year boundaries for free.
-        const monthStart = (offset: number, ref: Date = new Date()) =>
-            new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() + offset, 1));
-        const toDateStr = (d: Date) => d.toISOString().slice(0, 10);
-        const toSuffix = (d: Date) => `${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    // ─── Partitions: 6 months back through 2 months forward of
+    // *whenever this migration actually runs*, plus a DEFAULT
+    // catch-all. `Date.UTC` normalizes month over/underflow on its
+    // own (e.g. month index -1 correctly rolls back into December of
+    // the prior year), so this handles year boundaries for free.
+    const monthStart = (offset: number, ref: Date = new Date()) =>
+      new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() + offset, 1));
+    const toDateStr = (d: Date) => d.toISOString().slice(0, 10);
+    const toSuffix = (d: Date) => `${d.getUTCFullYear()}_${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 
-        const now = new Date();
-        for (let offset = -6; offset <= 2; offset++) {
-            const from = monthStart(offset, now);
-            const to = monthStart(offset + 1, now);
-            const suffix = toSuffix(from);
-            await queryRunner.query(
-                `CREATE TABLE "payments_partitioned_${suffix}" PARTITION OF "payments_partitioned" FOR VALUES FROM ('${toDateStr(from)}') TO ('${toDateStr(to)}')`,
-            );
-            await queryRunner.query(
-                `CREATE TABLE "ledger_outbox_partitioned_${suffix}" PARTITION OF "ledger_outbox_partitioned" FOR VALUES FROM ('${toDateStr(from)}') TO ('${toDateStr(to)}')`,
-            );
-        }
-        await queryRunner.query(`CREATE TABLE "payments_partitioned_default" PARTITION OF "payments_partitioned" DEFAULT`);
-        await queryRunner.query(`CREATE TABLE "ledger_outbox_partitioned_default" PARTITION OF "ledger_outbox_partitioned" DEFAULT`);
+    const now = new Date();
+    for (let offset = -6; offset <= 2; offset++) {
+      const from = monthStart(offset, now);
+      const to = monthStart(offset + 1, now);
+      const suffix = toSuffix(from);
+      await queryRunner.query(
+        `CREATE TABLE "payments_partitioned_${suffix}" PARTITION OF "payments_partitioned" FOR VALUES FROM ('${toDateStr(from)}') TO ('${toDateStr(to)}')`,
+      );
+      await queryRunner.query(
+        `CREATE TABLE "ledger_outbox_partitioned_${suffix}" PARTITION OF "ledger_outbox_partitioned" FOR VALUES FROM ('${toDateStr(from)}') TO ('${toDateStr(to)}')`,
+      );
     }
+    await queryRunner.query(`CREATE TABLE "payments_partitioned_default" PARTITION OF "payments_partitioned" DEFAULT`);
+    await queryRunner.query(
+      `CREATE TABLE "ledger_outbox_partitioned_default" PARTITION OF "ledger_outbox_partitioned" DEFAULT`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        // Dropping a partitioned parent table in Postgres automatically
-        // drops every partition attached to it — no need to drop each
-        // "_2026_XX" / "_default" child individually.
-        await queryRunner.query(`DROP TABLE "ledger_outbox_partitioned"`);
-        await queryRunner.query(`DROP TABLE "payments_partitioned"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    // Dropping a partitioned parent table in Postgres automatically
+    // drops every partition attached to it — no need to drop each
+    // "_2026_XX" / "_default" child individually.
+    await queryRunner.query(`DROP TABLE "ledger_outbox_partitioned"`);
+    await queryRunner.query(`DROP TABLE "payments_partitioned"`);
+  }
 }

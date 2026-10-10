@@ -11,7 +11,7 @@ import { Public } from '../shared/decorators/public.decorator';
  *
  * Deliberately version-neutral and excluded from the global 'api' prefix
  * (see main.ts) — k8s/deployment.yaml's probe paths (/health/live,
- * /health/ready) are a fixed external contract, not part of this API's
+ * /health/ready) are a fixed external contract, outside this API's
  * versioned surface.
  */
 @ApiTags('Health')
@@ -43,7 +43,7 @@ export class HealthController {
     // compiled `node dist/main.js` production process never has resident.
     // test/setup-env.ts raises both thresholds for exactly that reason —
     // see docs/technical/ci-cd.md's heap-flake incident for the full story
-    // and why this was the actual fix, not sharding or forcing GC.
+    // and why this was the actual fix, rather than sharding or forcing GC.
     // ConfigService.get<number>() doesn't actually cast — an env-var
     // override comes back as a string despite the generic, so this is
     // wrapped in Number() explicitly rather than relying on checkHeap()'s
@@ -85,8 +85,6 @@ export class HealthController {
   @ApiResponse({ status: 200, description: 'Terminus HealthCheckResult — database reachable' })
   @ApiResponse({ status: 503, description: 'Terminus HealthCheckResult — database unreachable' })
   async ready() {
-    return this.health.check([
-      () => this.db.pingCheck('database', { timeout: 3000 }),
-    ]);
+    return this.health.check([() => this.db.pingCheck('database', { timeout: 3000 })]);
   }
 }

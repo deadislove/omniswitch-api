@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 
 const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CREDIT' };
@@ -19,13 +19,11 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('Per-merchant PSP entitlement (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
 
   beforeAll(async () => {
     app = await createTestApp();
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -99,7 +97,7 @@ describe('Per-merchant PSP entitlement (e2e)', () => {
       .expect(422);
   });
 
-  it('a charge with no preferredProvider routes only to the merchant\'s entitled PSP, even when the other PSP would otherwise be viable', async () => {
+  it("a charge with no preferredProvider routes only to the merchant's entitled PSP, even when the other PSP would otherwise be viable", async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('merchant'), enabledPspProviders: ['ADYEN'] });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
@@ -115,7 +113,10 @@ describe('Per-merchant PSP entitlement (e2e)', () => {
   });
 
   it('a charge whose preferredProvider IS within the entitlement succeeds normally', async () => {
-    const merchant = await seedMerchant(app, { merchantId: uniqueId('merchant'), enabledPspProviders: ['STRIPE', 'ADYEN'] });
+    const merchant = await seedMerchant(app, {
+      merchantId: uniqueId('merchant'),
+      enabledPspProviders: ['STRIPE', 'ADYEN'],
+    });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
 
     const res = await signedCharge(merchant, token, {

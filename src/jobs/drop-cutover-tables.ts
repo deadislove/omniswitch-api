@@ -6,7 +6,7 @@ import { AppDataSource } from '../database/data-source';
  * run-archiving-job.ts/run-deletion-job.ts. Dropping `payments_old`/
  * `ledger_outbox_old` (the pre-partitioning flat tables kept as a
  * cutover safety net — see docs/compliance/data-retention.md) is a
- * single event in this project's history, not a recurring policy
+ * single event in this project's history rather than a recurring policy
  * action, so it doesn't belong on a schedule the way archiving/deletion
  * do.
  *
@@ -18,12 +18,12 @@ import { AppDataSource } from '../database/data-source';
  * *indefinitely* would actually be worse for the retention policy's own
  * integrity than dropping them promptly: an ungoverned duplicate that
  * never ages out via the archiving/deletion jobs is a backdoor around
- * the deletion tier, not an extra safety measure.
+ * the deletion tier, rather than an extra safety measure.
  *
  * `CUTOVER_OLD_TABLE_RETENTION_DAYS` (default 60) is intentionally a
  * short, separate window from `ARCHIVE_THRESHOLD_DAYS`/
  * `DELETION_THRESHOLD_YEARS` — it answers "has enough time passed to
- * trust the cutover itself was correct," not an AML retention question.
+ * trust the cutover itself was correct" — a separate concern from any AML retention question.
  */
 
 const CUTOVER_OLD_TABLE_RETENTION_DAYS = Number(process.env.CUTOVER_OLD_TABLE_RETENTION_DAYS) || 60;
@@ -44,8 +44,8 @@ interface TableStatus {
  * is tracked — e.g. already dropped in a prior run). `eligible` reflects
  * whether the retention window had elapsed at the time of this call;
  * `dropped` reflects what this specific call actually did. Never
- * throws for "not eligible yet" — that's a normal, expected outcome,
- * not a failure (see `main()`, which logs it as informational).
+ * throws for "not eligible yet" — that's a normal, expected outcome
+ * rather than a failure (see `main()`, which logs it as informational).
  */
 export async function dropCutoverTables(): Promise<TableStatus[]> {
   const rows = await AppDataSource.query(
@@ -85,7 +85,9 @@ async function main(): Promise<void> {
     const results = await dropCutoverTables();
     for (const r of results) {
       if (r.dropped) {
-        console.log(`Dropped "${r.tableName}" (${r.daysSinceCutover} days since cutover, retention window ${CUTOVER_OLD_TABLE_RETENTION_DAYS} days).`);
+        console.log(
+          `Dropped "${r.tableName}" (${r.daysSinceCutover} days since cutover, retention window ${CUTOVER_OLD_TABLE_RETENTION_DAYS} days).`,
+        );
       } else {
         console.log(
           `"${r.tableName}" not eligible yet — ${r.daysSinceCutover}/${CUTOVER_OLD_TABLE_RETENTION_DAYS} days since cutover (${CUTOVER_OLD_TABLE_RETENTION_DAYS - r.daysSinceCutover} day(s) remaining).`,
@@ -93,7 +95,9 @@ async function main(): Promise<void> {
       }
     }
     if (results.length === 0) {
-      console.log('No cutover tables tracked (already dropped, or this project never went through a partitioning cutover).');
+      console.log(
+        'No cutover tables tracked (already dropped, or this project never went through a partitioning cutover).',
+      );
     }
   } finally {
     await AppDataSource.destroy();

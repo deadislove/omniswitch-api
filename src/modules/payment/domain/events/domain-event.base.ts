@@ -11,11 +11,7 @@ export abstract class DomainEvent {
   readonly aggregateType: string;
   readonly eventVersion: number;
 
-  constructor(params: {
-    aggregateId: string;
-    aggregateType: string;
-    eventVersion?: number;
-  }) {
+  constructor(params: { aggregateId: string; aggregateType: string; eventVersion?: number }) {
     this.eventId = uuidv4();
     this.occurredAt = new Date();
     this.aggregateId = params.aggregateId;

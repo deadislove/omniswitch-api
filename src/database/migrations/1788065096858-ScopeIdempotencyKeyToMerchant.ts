@@ -1,9 +1,9 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * `idempotency_key` was only ever unique globally (`(idempotency_key,
  * created_at)` — the `created_at` half is a Postgres requirement for a
- * unique constraint on a table partitioned by that column, not a
+ * unique constraint on a table partitioned by that column, rather than a
  * deliberate scoping choice, see CreatePartitionedPaymentsAndLedgerOutbox's
  * docblock). No merchant scoping at all: a caller who submits another
  * merchant's *known* idempotency key (leaked via a logging bug, a shared
@@ -19,16 +19,19 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * part of any unique constraint, now additionally scoped per merchant.
  */
 export class ScopeIdempotencyKeyToMerchant1788065096858 implements MigrationInterface {
-    name = 'ScopeIdempotencyKeyToMerchant1788065096858'
+  name = 'ScopeIdempotencyKeyToMerchant1788065096858';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_partitioned_idempotency_key"`);
-        await queryRunner.query(`ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_merchant_idempotency_key" UNIQUE ("merchant_id", "idempotency_key", "created_at")`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_partitioned_idempotency_key"`);
+    await queryRunner.query(
+      `ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_merchant_idempotency_key" UNIQUE ("merchant_id", "idempotency_key", "created_at")`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_merchant_idempotency_key"`);
-        await queryRunner.query(`ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_partitioned_idempotency_key" UNIQUE ("idempotency_key", "created_at")`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "payments" DROP CONSTRAINT "UQ_payments_merchant_idempotency_key"`);
+    await queryRunner.query(
+      `ALTER TABLE "payments" ADD CONSTRAINT "UQ_payments_partitioned_idempotency_key" UNIQUE ("idempotency_key", "created_at")`,
+    );
+  }
 }

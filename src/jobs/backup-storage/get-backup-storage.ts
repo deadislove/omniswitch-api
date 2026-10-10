@@ -8,7 +8,7 @@ import { AzureBlobBackupStorage } from './azure-blob-backup-storage';
  * Selects which `BackupStorage` adapter `run-deletion-job.ts` writes
  * to, based on `DELETION_BACKUP_STORAGE` (default `"local"`).
  *
- * A plain factory function, not a NestJS-injected provider the way
+ * A plain factory function rather than a NestJS-injected provider, the way
  * `PaymentProcessorFactory` selects between PSP adapters —
  * `run-deletion-job.ts` is a standalone script that deliberately runs
  * outside the Nest DI container (see that file's own docblock for why),
@@ -26,7 +26,7 @@ import { AzureBlobBackupStorage } from './azure-blob-backup-storage';
  * Throws synchronously (before any backup is attempted) if the
  * selected provider's required config is missing, or if the value
  * itself isn't a recognized provider — a typo here should fail loud at
- * job start, not surface later as an unexplained upload error.
+ * job start, instead of surfacing later as an unexplained upload error.
  */
 export function getBackupStorage(): BackupStorage {
   const provider = process.env.DELETION_BACKUP_STORAGE || 'local';
@@ -56,7 +56,9 @@ export function getBackupStorage(): BackupStorage {
       const connectionString = process.env.DELETION_BACKUP_AZURE_CONNECTION_STRING;
       const container = process.env.DELETION_BACKUP_AZURE_CONTAINER;
       if (!connectionString || !container) {
-        throw new Error('DELETION_BACKUP_STORAGE=azure requires DELETION_BACKUP_AZURE_CONNECTION_STRING and DELETION_BACKUP_AZURE_CONTAINER');
+        throw new Error(
+          'DELETION_BACKUP_STORAGE=azure requires DELETION_BACKUP_AZURE_CONNECTION_STRING and DELETION_BACKUP_AZURE_CONTAINER',
+        );
       }
       return new AzureBlobBackupStorage(connectionString, container);
     }

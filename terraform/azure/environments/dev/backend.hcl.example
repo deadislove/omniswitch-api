@@ -1,0 +1,9 @@
+# Copy to backend.hcl (gitignored) and fill in real values, then:
+#   terraform init -backend-config=backend.hcl
+#
+# All three values come from `terraform output` in ../../bootstrap, after
+# that root module has been applied once for this Azure subscription.
+
+resource_group_name = "omniswitch-api-terraform-state-rg"
+storage_account_name = "<from bootstrap output>"
+container_name        = "tfstate"

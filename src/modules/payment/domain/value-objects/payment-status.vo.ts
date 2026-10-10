@@ -5,7 +5,7 @@
 export enum PaymentStatus {
   PENDING = 'PENDING',
   PROCESSING = 'PROCESSING',
-  REQUIRES_ACTION = 'REQUIRES_ACTION',   // 3DS challenge required
+  REQUIRES_ACTION = 'REQUIRES_ACTION', // 3DS challenge required
   REQUIRES_CAPTURE = 'REQUIRES_CAPTURE', // Auth succeeded, awaiting capture
   PARTIALLY_CAPTURED = 'PARTIALLY_CAPTURED', // Some, but not all, of the authorized amount has been captured
   SUCCEEDED = 'SUCCEEDED',
@@ -36,11 +36,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
     PaymentStatus.FAILED,
     PaymentStatus.AMBIGUOUS,
   ],
-  [PaymentStatus.REQUIRES_ACTION]: [
-    PaymentStatus.PROCESSING,
-    PaymentStatus.FAILED,
-    PaymentStatus.CANCELLED,
-  ],
+  [PaymentStatus.REQUIRES_ACTION]: [PaymentStatus.PROCESSING, PaymentStatus.FAILED, PaymentStatus.CANCELLED],
   [PaymentStatus.REQUIRES_CAPTURE]: [
     PaymentStatus.SUCCEEDED,
     PaymentStatus.PARTIALLY_CAPTURED,
@@ -52,11 +48,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   // CANCELLED above) that isn't implemented. Attempting it fails loudly via
   // isValidTransition rather than silently doing nothing.
   [PaymentStatus.PARTIALLY_CAPTURED]: [PaymentStatus.SUCCEEDED],
-  [PaymentStatus.SUCCEEDED]: [
-    PaymentStatus.REFUNDED,
-    PaymentStatus.PARTIALLY_REFUNDED,
-    PaymentStatus.DISPUTED,
-  ],
+  [PaymentStatus.SUCCEEDED]: [PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.DISPUTED],
   [PaymentStatus.FAILED]: [],
   [PaymentStatus.AMBIGUOUS]: [PaymentStatus.SUCCEEDED, PaymentStatus.FAILED],
   [PaymentStatus.CANCELLED]: [],
@@ -64,7 +56,7 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   // DISPUTED is reachable from here too — a chargeback on a payment that's
   // already been partially refunded is a normal real-world sequence (a
   // partial refund for a shipping issue, the cardholder disputes the rest
-  // anyway), not an edge case to leave unmodeled. See
+  // anyway) — a real, modeled case rather than something left unhandled. See
   // PaymentAggregate.resolveDispute()'s own comment for how WON/LOST both
   // account for the refund history already present when the dispute
   // started, rather than assuming a dispute always starts from a clean
@@ -72,8 +64,8 @@ const VALID_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   [PaymentStatus.PARTIALLY_REFUNDED]: [PaymentStatus.REFUNDED, PaymentStatus.DISPUTED],
   // PARTIALLY_REFUNDED is a valid target here (not just SUCCEEDED) for the
   // same reason — winning a dispute that started from a partially-refunded
-  // payment should restore that same partially-refunded state, not
-  // silently erase the refund history by resetting to SUCCEEDED.
+  // payment should restore that same partially-refunded state instead of
+  // silently erasing the refund history by resetting to SUCCEEDED.
   [PaymentStatus.DISPUTED]: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED],
 };
 
@@ -85,7 +77,7 @@ export function assertValidTransition(from: PaymentStatus, to: PaymentStatus): v
   if (!isValidTransition(from, to)) {
     throw new Error(
       `Invalid payment status transition: ${from} -> ${to}. ` +
-      `Allowed transitions from ${from}: [${VALID_TRANSITIONS[from]?.join(', ') || 'none'}]`,
+        `Allowed transitions from ${from}: [${VALID_TRANSITIONS[from]?.join(', ') || 'none'}]`,
     );
   }
 }

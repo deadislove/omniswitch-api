@@ -10,8 +10,9 @@ import { PaymentStatus } from '../../domain/value-objects/payment-status.vo';
 import { AdyenNotificationRequestItem } from '../../adapters/psp/adyen/adyen-webhook.guard';
 import { PaymentMapper } from '../../adapters/persistence/mappers/payment.mapper';
 import { DisputeService } from './dispute.service';
-import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
+import { ChargeLedgerParamsResolverService, toPaymentSplits } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
+import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 
 /**
  * Webhook Processing Service
@@ -59,7 +60,7 @@ export class WebhookProcessingService {
       case 'charge.dispute.created':
         // obj.id is the Dispute's own id (dp_xxx) — kept separately from the
         // PaymentIntent id (obj.payment_intent) so a later charge.dispute.closed
-        // event (which only carries the dispute id, not the PaymentIntent id)
+        // event (which only carries the dispute id rather than the PaymentIntent id)
         // can still find this dispute record.
         await this.markDisputed('STRIPE', obj?.payment_intent ?? obj.id, obj.id, obj?.reason);
         break;
@@ -76,7 +77,9 @@ export class WebhookProcessingService {
     }
   }
 
-  async handleAdyenNotification(body: { notificationItems?: Array<{ NotificationRequestItem: AdyenNotificationRequestItem }> }): Promise<void> {
+  async handleAdyenNotification(body: {
+    notificationItems?: Array<{ NotificationRequestItem: AdyenNotificationRequestItem }>;
+  }): Promise<void> {
     const items = body?.notificationItems ?? [];
 
     for (const wrapper of items) {
@@ -162,13 +165,29 @@ export class WebhookProcessingService {
     // is threaded through to the ledger entries below — without this, a
     // split charge that needed a 3DS challenge would silently lose its
     // split the moment the challenge completed.
-    const { platformFee, settlementConversion, reserveHold, splits } = await this.chargeLedgerParams.resolve(payment.metadata.merchantId, payment.amount, payment.splits);
+    const { platformFee, settlementConversion, reserveHold, splits } = await this.chargeLedgerParams.resolve(
+      payment.metadata.merchantId,
+      payment.amount,
+      payment.splits,
+    );
     if (settlementConversion) {
       payment.recordSettlementConversion({
         currency: settlementConversion.convertedNetAmount.currency.code,
         rate: settlementConversion.rate,
         provider: settlementConversion.provider,
       });
+      const taxRecord = buildCrossBorderTaxRecord(payment.amount, payment.binInfo);
+      if (taxRecord) payment.recordTaxRecord(taxRecord);
+    }
+    // This `resolve()` call just re-derived FX rates fresh — possibly
+    // different from whatever `payment.splits` already held from request
+    // time (see PaymentAggregate.finalizeSplitConversions()'s docblock
+    // for why: a 3DS challenge can take real time, and FX rates aren't
+    // pinned across that gap). Overwrite with what's actually about to be
+    // booked below, so a later refund replays the rate the money actually
+    // moved at.
+    if (splits && splits.length > 0) {
+      payment.finalizeSplitConversions(toPaymentSplits(splits));
     }
     const outboxEvent = LedgerOutboxEvent.createChargeEntries({
       id: uuidv4(),
@@ -186,7 +205,13 @@ export class WebhookProcessingService {
       await this.ledgerOutbox.saveWithPayment(payment.id, outboxEvent, manager);
       if (reserveHold) {
         await this.reserveService.recordHold(
-          { paymentId: payment.id, merchantId: payment.metadata.merchantId, amount: reserveHold.amount, holdDays: reserveHold.holdDays },
+          {
+            paymentId: payment.id,
+            merchantId: payment.metadata.merchantId,
+            amount: reserveHold.amount,
+            netAmount: reserveHold.netAmount,
+            holdDays: reserveHold.holdDays,
+          },
           manager,
         );
       }
@@ -252,7 +277,7 @@ export class WebhookProcessingService {
       return;
     }
 
-    // remainingRefundable, not the full payment.amount — economically,
+    // remainingRefundable rather than the full payment.amount — economically,
     // what's actually still at risk in this dispute is whatever hasn't
     // already been refunded. This also matters for consistency: a LOST
     // resolution books a ledger refund entry for this exact amount

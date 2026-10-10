@@ -11,7 +11,9 @@ import { PlanEntity } from '../modules/payment/adapters/persistence/entities/pla
 import { PayoutEntity } from '../modules/payment/adapters/persistence/entities/payout.entity';
 import { PayoutSweepRunEntity } from '../modules/payment/adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from '../modules/payment/adapters/persistence/entities/delegation.entity';
+import { ChargeApprovalEntity } from '../modules/payment/adapters/persistence/entities/charge-approval.entity';
 import { MerchantEntity } from '../modules/merchant/merchant.entity';
+import { WebhookDeliveryLogEntity } from '../shared/webhook-delivery-log/webhook-delivery-log.entity';
 
 /**
  * TypeORM CLI data source. Deliberately separate from app.module.ts's
@@ -42,11 +44,22 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME || 'postgres',
   password: dbPassword,
   database: process.env.DB_NAME || 'omniswitch',
-  ssl:
-    process.env.DB_SSL === 'true'
-      ? { rejectUnauthorized: true, ca: process.env.DB_SSL_CA || undefined }
-      : false,
-  entities: [PaymentEntity, LedgerOutboxEntity, MerchantEntity, ReconciliationRunEntity, DisputeEntity, ReserveHoldEntity, SubscriptionEntity, PlanEntity, PayoutEntity, PayoutSweepRunEntity, DelegationEntity],
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: true, ca: process.env.DB_SSL_CA || undefined } : false,
+  entities: [
+    PaymentEntity,
+    LedgerOutboxEntity,
+    MerchantEntity,
+    ReconciliationRunEntity,
+    DisputeEntity,
+    ReserveHoldEntity,
+    SubscriptionEntity,
+    PlanEntity,
+    PayoutEntity,
+    PayoutSweepRunEntity,
+    DelegationEntity,
+    ChargeApprovalEntity,
+    WebhookDeliveryLogEntity,
+  ],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   migrationsTableName: 'typeorm_migrations',
 });

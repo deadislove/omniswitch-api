@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { LedgerOutboxEntity } from '../src/modules/payment/adapters/persistence/entities/ledger-outbox.entity';
 import { MerchantEntity } from '../src/modules/merchant/merchant.entity';
@@ -22,15 +22,13 @@ const USD_BIN = { bin: '424242', country: 'US', cardBrand: 'VISA', cardType: 'CR
  */
 describe('FX conversion: merchant settlement currency (e2e)', () => {
   let app: INestApplication;
-  let admin: SeededMerchant;
   let adminToken: string;
   let dataSource: DataSource;
 
   beforeAll(async () => {
     app = await createTestApp();
     dataSource = app.get(DataSource);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -55,8 +53,8 @@ describe('FX conversion: merchant settlement currency (e2e)', () => {
   // ambient DataSource's replica routing (app.module.ts's `replication`
   // config sends plain repository reads to the replica, which has ~1s
   // streaming lag behind master; see reserve.service.ts's release() and
-  // test/ledger-and-outbox.e2e-spec.ts for the same issue confirmed
-  // live elsewhere). This forces the read onto master instead.
+  // test/ledger-and-outbox.e2e-spec.ts for the same issue). This forces
+  // the read onto master instead.
   async function findOneOnMaster<T extends object>(entityClass: new () => T, where: object): Promise<T | null> {
     const queryRunner = dataSource.createQueryRunner('master');
     try {
@@ -157,7 +155,13 @@ describe('FX conversion: merchant settlement currency (e2e)', () => {
     }).expect(201);
     expect(chargeRes.body.status).toBe('REQUIRES_CAPTURE');
 
-    const captureRes = await signedRequest(merchant, token, 'post', `/api/v1/payments/${chargeRes.body.paymentId}/capture`, {}).expect(200);
+    const captureRes = await signedRequest(
+      merchant,
+      token,
+      'post',
+      `/api/v1/payments/${chargeRes.body.paymentId}/capture`,
+      {},
+    ).expect(200);
     expect(captureRes.body.status).toBe('SUCCEEDED');
 
     const entries = await ledgerEntries(chargeRes.body.paymentId);

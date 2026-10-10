@@ -12,7 +12,9 @@ import { createHash } from 'crypto';
 export function uuidv5(name: string, namespace: string): string {
   const namespaceBytes = Buffer.from(namespace.replace(/-/g, ''), 'hex');
   const nameBytes = Buffer.from(name, 'utf8');
-  const hash = createHash('sha1').update(Buffer.concat([namespaceBytes, nameBytes])).digest();
+  const hash = createHash('sha1')
+    .update(Buffer.concat([namespaceBytes, nameBytes]))
+    .digest();
 
   const bytes = hash.subarray(0, 16);
   bytes[6] = (bytes[6] & 0x0f) | 0x50; // version 5

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource, SelectQueryBuilder } from 'typeorm';
 import { PlanPort, FindPlansFilter } from '../../../ports/outbound/plan.port';
 import { Plan } from '../../../domain/aggregates/plan.aggregate';
 import { Money } from '../../../domain/value-objects/money.vo';
@@ -11,6 +11,7 @@ export class PlanTypeOrmRepository implements PlanPort {
   constructor(
     @InjectRepository(PlanEntity)
     private readonly repo: Repository<PlanEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async save(plan: Plan): Promise<void> {
@@ -31,8 +32,35 @@ export class PlanTypeOrmRepository implements PlanPort {
     return entity ? this.toDomain(entity) : null;
   }
 
+  // See PlanPort.findByIdOnMaster()'s docblock for why this is forced
+  // onto master rather than the ambient replica-routed connection.
+  async findByIdOnMaster(id: string): Promise<Plan | null> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    let entity: PlanEntity | null;
+    try {
+      entity = await queryRunner.manager.findOne(PlanEntity, { where: { id } });
+    } finally {
+      await queryRunner.release();
+    }
+    return entity ? this.toDomain(entity) : null;
+  }
+
   async findMany(filter?: FindPlansFilter): Promise<Plan[]> {
-    const qb = this.repo.createQueryBuilder('p');
+    return this.runFindMany(this.repo.createQueryBuilder('p'), filter);
+  }
+
+  // See PlanPort.findManyOnMaster()'s docblock — same reasoning as
+  // findByIdOnMaster().
+  async findManyOnMaster(filter?: FindPlansFilter): Promise<Plan[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await this.runFindMany(queryRunner.manager.createQueryBuilder(PlanEntity, 'p'), filter);
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  private async runFindMany(qb: SelectQueryBuilder<PlanEntity>, filter?: FindPlansFilter): Promise<Plan[]> {
     if (filter?.merchantId) {
       qb.andWhere('p.merchantId = :merchantId', { merchantId: filter.merchantId });
     }

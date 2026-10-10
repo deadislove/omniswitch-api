@@ -5,8 +5,13 @@ export type ReconciliationStatus = 'CLEAN' | 'MISMATCHES_FOUND';
 
 export type MismatchType =
   | 'MISSING_AT_PSP' // we booked a charge; the PSP has no matching settlement record
-  | 'AMOUNT_MISMATCH' // both sides have the transaction, but the amount differs
-  | 'UNKNOWN_AT_PSP'; // the PSP settled a transaction we have no record of
+  | 'AMOUNT_MISMATCH' // both sides have the transaction, in the same currency, but the amount differs
+  | 'CURRENCY_MISMATCH' // the settled currency differs from what we charged — could be a real bug, or
+  // legitimate PSP-side conversion (DCC, cross-border settlement) — needs human judgment either way,
+  // deliberately not folded into AMOUNT_MISMATCH since the two warrant different urgency
+  | 'UNKNOWN_AT_PSP' // the PSP settled a transaction we have no record of
+  | 'COMPARISON_ERROR'; // this one payment's comparison threw unexpectedly — the run continued for
+// everything else, but this payment's actual match status stays unconfirmed either way
 
 export interface ReconciliationMismatch {
   type: MismatchType;
@@ -22,12 +27,13 @@ export interface ReconciliationMismatch {
  * A record of one comparison between this system's ledger and a PSP's own
  * settlement report for a time window — the safety net for ledger/outbox
  * bugs that unit and e2e tests can't catch, since both would have to be
- * wrong the same way to miss one (see the double-booking bug found and
- * fixed earlier in this project's history: reconciliation is exactly the
- * mechanism that would have caught that in a real deployment, faster than
- * "someone eventually notices the books don't add up").
+ * wrong the same way to miss one (see payment-checkout.saga.ts's ledger
+ * timing note on the double-booking bug this class of check would catch:
+ * reconciliation is exactly the mechanism that catches that kind of drift
+ * in a real deployment, faster than "someone eventually notices the books
+ * don't add up").
  *
- * Deliberately a plain record, not a rich aggregate with invariants to
+ * Deliberately a plain record rather than a rich aggregate with invariants to
  * protect — like LedgerOutboxEvent, it's closer to a structured log entry
  * than a business entity with a lifecycle.
  */

@@ -1,17 +1,16 @@
 # Security headers (X-Frame-Options, CSP, HSTS, etc.) are NOT set via a
 # per-Ingress `nginx.ingress.kubernetes.io/configuration-snippet`
-# annotation here — verified live against a real ingress-nginx install
-# (chart default, no custom values) that this annotation is rejected
-# outright by the controller's own admission webhook on a fresh
-# `kubectl apply`, before this Ingress is created at all
-# (`allowSnippetAnnotations: false` has been the chart default since
-# ingress-nginx ~v1.9, a CVE-driven hardening default). Confirmed this
-# isn't a simple opt-back-in either: even with that flag temporarily set
-# to `true`, this exact snippet content (using the `more_set_headers`
-# directive) is separately rejected as a "risky annotation" by a second,
-# independent webhook check. There is no supported way to keep this
-# annotation and have this Ingress actually deploy against a
-# default-configured modern ingress-nginx.
+# annotation here — against a real ingress-nginx install (chart default,
+# no custom values), this annotation is rejected outright by the
+# controller's own admission webhook on a fresh `kubectl apply`, before
+# this Ingress is created at all (`allowSnippetAnnotations: false` has
+# been the chart default since ingress-nginx ~v1.9, a CVE-driven
+# hardening default). Not a simple opt-back-in either: even with that
+# flag temporarily set to `true`, this exact snippet content (using the
+# `more_set_headers` directive) is separately rejected as a "risky
+# annotation" by a second, independent webhook check. There is no
+# supported way to keep this annotation and have this Ingress actually
+# deploy against a default-configured modern ingress-nginx.
 #
 # These same 5 headers are instead set via ingress-nginx's
 # controller-level `add-headers` global config — see

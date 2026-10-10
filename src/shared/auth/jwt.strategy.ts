@@ -6,11 +6,11 @@ import { UserRole } from '../decorators/roles.decorator';
 import { TokenRevocationService } from './token-revocation.service';
 
 export interface JwtPayload {
-  sub: string;          // Subject (user/merchant ID)
+  sub: string; // Subject (user/merchant ID)
   merchantId: string;
   email?: string;
   roles: UserRole[];
-  jti?: string;          // Unique token id, used for single-token revocation
+  jti?: string; // Unique token id, used for single-token revocation
   iat?: number;
   exp?: number;
   /**

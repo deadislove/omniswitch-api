@@ -1,5 +1,6 @@
 import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 import { SubscriptionStatus, BillingInterval } from '../../../domain/aggregates/subscription.aggregate';
+import { PSPProvider } from '../../../domain/aggregates/payment.aggregate';
 
 @Entity('subscriptions')
 @Index(['merchantId', 'status'])
@@ -67,6 +68,10 @@ export class SubscriptionEntity {
   /** The PSP's own decline code from the most recent failed charge attempt, if it returned one — see Subscription.recordFailedCharge()'s docblock and classifyDeclineCode(). Cleared on a successful charge. */
   @Column({ name: 'last_decline_code', type: 'varchar', nullable: true })
   lastDeclineCode?: string | null;
+
+  /** Which PSP produced lastDeclineCode — needed to classify it against the right PSP's own decline-code vocabulary (Phase 1's per-PSP HARD_DECLINE_CODES; see classifyDeclineCode()'s docblock). Cleared alongside lastDeclineCode on a successful charge. */
+  @Column({ name: 'last_decline_psp_provider', type: 'varchar', nullable: true })
+  lastDeclinePspProvider?: PSPProvider | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

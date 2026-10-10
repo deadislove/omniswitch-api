@@ -7,7 +7,7 @@ import { FXRateProviderPort, FXRate } from '../../ports/outbound/fx-rate-provide
  * Calls an external rate source over HTTP — in this reference project,
  * scripts/mock-psp/server.js's `/fx/rates` endpoint (same "point at a
  * local mock in tests/dev" pattern as StripePSPAdapter/AdyenPSPAdapter's
- * configurable base URLs), not a real market-data provider.
+ * configurable base URLs) rather than a real market-data provider.
  */
 @Injectable()
 export class FXRateProviderAdapter extends FXRateProviderPort {

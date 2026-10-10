@@ -1,90 +1,71 @@
 # Documentation
 
-Six kinds of documentation live here, kept separate because they
+Five kinds of documentation live here, kept separate because they
 answer different questions for different readers.
 
 ## [`guide/`](./guide/)
 
 **New to this project? Start here.** A structured onboarding path — the
 business domain guide, the system design doc, and the full API
-reference — meant to be read start to finish, not dipped into. Everything
+reference — meant to be read start to finish rather than dipped into. Everything
 below (`technical/`, `business-domain/`) is the deeper reference this
 guide points into once you're working on a specific area.
 
 Also in this folder: [`guide/jobs/`](./guide/jobs/) — an operator
 runbook for the background jobs (archiving, deletion, partition
 maintenance, cutover cleanup), separate from the onboarding reading
-order above since it's day-2-operations reference, not something a new
-engineer needs before their first PR.
+order above since it's day-2-operations reference, something a new
+engineer won't need before their first PR.
 
 ## [`technical/`](./technical/)
 
-How the system is built — architecture, module boundaries, security design,
-compliance posture. Read this if you're changing code.
+How the system is built — architecture, data & jobs, compliance &
+security, operations & reliability, deployment, and testing
+methodology. Read this if you're changing code.
 
-- [`architecture.md`](./technical/architecture.md) — module map, design
-  patterns, why the module dependency graph is shaped the way it is, and
-  the end-to-end testing strategy
-- [`security-and-compliance.md`](./technical/security-and-compliance.md) —
-  JWT revocation design and trade-offs, PCI DSS scope/gaps, and the
-  recommended path if this project ever goes through formal PCI
-  certification
+- [`architecture.md`](./technical/architecture.md) — module map,
+  testing setup, and the design decisions behind the module layout
 - [`distributed-state.md`](./technical/distributed-state.md) — rate
-  limiting and circuit breaker design once this runs as multiple replicas
-  (including a real debugging story worth reading before touching
-  either), plus a documented, still-open gap: `@Cron` jobs run
-  per-replica, not once per cluster — read this before adding a new one
-- [`infra-verification-status.md`](./technical/infra-verification-status.md) —
-  what's actually been proven to work in `docker-compose.yml` (mock-psp,
-  Postgres replication, port conflicts) versus what's still an unverified
-  assumption — read this before trusting a green e2e run more than it's
-  earned
-- [`database-migrations.md`](./technical/database-migrations.md) — why
-  `synchronize` is now `false` everywhere, the migration workflow, and a
-  real bug (invalid MySQL-style SQL in the master's init script) that only
-  surfaced once this required a genuinely fresh database
-- [`secret-management.md`](./technical/secret-management.md) — why
-  `hmac_secret` is now envelope-encrypted via Vault Transit instead of
-  plaintext in Postgres, what dev-mode Vault does and doesn't prove, and a
-  real bug (no `.dockerignore`) it surfaced along the way
-- [`reconciliation.md`](./technical/reconciliation.md) — how this system's
-  ledger is diffed against each PSP's own settlement report, and a real
-  pre-existing timezone bug (raw `Date` objects silently shifted by the
-  host machine's local offset) it surfaced in the query layer
-- [`load-testing.md`](./technical/load-testing.md) — a real throughput/
-  latency baseline against the actual production Docker image, what it
-  means for `k8s/hpa.yaml`'s CPU/memory thresholds, and why a
-  single-machine load generator can't measure the charge endpoint's own
-  ceiling (a route-level rate limit gets there first)
-- [`ci-cd.md`](./technical/ci-cd.md) — what the GitHub Actions workflows
-  and Dependabot actually do, the known flaky-test classes, and two real
-  CI incidents: a master/replica read race a routine dependency-bump PR
-  surfaced, and a heap-flake fix that passed locally three times and then
-  broke 61 tests on the actual CI runner
-- [`jobs.md`](./technical/jobs.md) — architecture of the background-job
-  subsystem (archiving, deletion, partition maintenance, cutover
-  cleanup): why they're standalone scripts run as k8s `CronJob`/`Job`
-  resources instead of `@Cron()` methods, the `BackupStorage` factory
-  pattern, and pod labeling
-- [`databases/`](./technical/databases/) — the ERD and table-by-table
-  schema reference, the physical database architecture
-  (master/replica replication, PgBouncer pooling, table partitioning,
-  the `archive` schema), and an index of recurring/one-time database
-  maintenance tasks
-- [`clouds/`](./technical/clouds/) — the pluggable AWS S3/GCS/Azure
-  Blob `BackupStorage` adapters the deletion job can write to:
-  configuration, credentials, and what's been (and hasn't been)
-  verified against real cloud infrastructure
-- [`k8s/`](./technical/k8s/) — what every manifest in the repo's `k8s/`
-  folder actually does: the Postgres/Redis/Vault/PgBouncer data layer,
-  the application Deployment/Service/HPA/config, and the
-  `NetworkPolicy`/Ingress/TLS networking model — including real bugs
-  each one surfaced only once actually deployed to a live cluster
-- [`deployment/`](./technical/deployment/) — how to actually get `k8s/`
-  running: cluster prerequisites it assumes (ingress-nginx, cert-manager,
-  a `StorageClass`), the apply order, a table of silent-failure gotchas,
-  a full runbook, and how to stand up a temporary mock-PSP test
-  environment on top of a real deployment
+  limiting, circuit breaker, and scheduled-job state kept consistent
+  across replicas
+- [`service-boundaries.md`](./technical/service-boundaries.md) —
+  evaluation of where the modular monolith could split into services,
+  and why it isn't recommended yet
+- [`api-versioning-policy.md`](./technical/api-versioning-policy.md) —
+  current URI-versioning state and the deprecation policy for when a
+  v2 arrives
+- [`database-migrations.md`](./technical/database-migrations.md) —
+  the migration workflow, from entity file to running schema
+- [`databases/`](./technical/databases/) — schema reference, ERD,
+  physical deployment (replication, PgBouncer, partitioning)
+- [`jobs.md`](./technical/jobs.md) — the background-job subsystem:
+  archiving, deletion, partition maintenance, cutover cleanup
+- [`reconciliation.md`](./technical/reconciliation.md) — closing the
+  ledger against the PSP's own record of what actually settled
+- [`security-and-compliance.md`](./technical/security-and-compliance.md) —
+  JWT revocation design and an honest PCI DSS scope/gap assessment
+- [`compliance-certification-roadmap.md`](./technical/compliance-certification-roadmap.md) —
+  the SOC 2 / PCI DSS certification path — not a certification itself
+- [`secret-management.md`](./technical/secret-management.md) —
+  Vault-backed envelope encryption for the one secret this app mints
+  itself
+- [`ci-cd.md`](./technical/ci-cd.md) — the two GitHub Actions
+  workflows, Dependabot, and known flaky-test classes
+- [`incident-response.md`](./technical/incident-response.md) —
+  runbook for the alerts defined in `monitoring/alert.rules.yml`
+- [`disaster-recovery.md`](./technical/disaster-recovery.md) —
+  multi-region/cross-AZ strategy (documented, still unverified against
+  real infrastructure)
+- [`k8s/`](./technical/k8s/) — what's actually in `k8s/` and why it's
+  shaped the way it is
+- [`deployment/`](./technical/deployment/) — how to actually get
+  `k8s/` running
+- [`clouds/`](./technical/clouds/) — the one cloud-provider-specific
+  integration point (`BackupStorage`), one file per provider
+- [`tests/`](./technical/tests/) — load testing, chaos testing,
+  contract testing against real Stripe/Adyen sandboxes, and threshold
+  calibration, all verified against real infrastructure rather than
+  documented as a plan
 
 ## [`business-domain/`](./business-domain/)
 
@@ -96,8 +77,26 @@ to payments domain concepts generally.
 - [`payment-lifecycle.md`](./business-domain/payment-lifecycle.md) — the
   payment state machine, what triggers each transition, idempotency
 - [`ledger-and-settlement.md`](./business-domain/ledger-and-settlement.md) —
-  double-entry bookkeeping model, the Outbox pattern, smart PSP routing,
-  fee model, FX settlement conversion, merchant risk reserves
+  smart PSP routing, PSP-cost reconciliation, merchant risk tiering &
+  reserves — see also the four topics split into their own files below
+- [`ledger-accounting.md`](./business-domain/ledger-accounting.md) —
+  the double-entry bookkeeping model and the Outbox pattern that
+  publishes it reliably
+- [`fee-model.md`](./business-domain/fee-model.md) — platform fee-rate
+  calculation and PSP interchange-cost reconciliation
+- [`fx-conversion.md`](./business-domain/fx-conversion.md) — cross-currency
+  merchant settlement, refund/dispute FX replay, presentment currency
+- [`marketplace-and-payouts.md`](./business-domain/marketplace-and-payouts.md) —
+  marketplace splits, payout scheduling, connected-account KYC gating
+- [`disputes.md`](./business-domain/disputes.md) — the dispute state
+  machine, representment, and the auto-decision policy that decides
+  whether this platform contests one automatically
+- [`risk-and-fraud.md`](./business-domain/risk-and-fraud.md) — the two
+  independent risk signals this platform tracks per merchant: reserve-driving
+  risk tiering and ambiguous-payment (PSP-reliability) monitoring
+- [`compliance-and-security.md`](./business-domain/compliance-and-security.md) —
+  why PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
+  delegation scope are business decisions, beyond just engineering choices
 - [`subscriptions.md`](./business-domain/subscriptions.md) — the
   subscription state machine, how billing/dunning/crash-recovery/plan
   catalog & proration/trial-verification work, and what's still
@@ -123,15 +122,15 @@ the retention periods for a specific jurisdiction without touching code.
   policy (live → archive → delete), the two `k8s CronJob`s that enforce
   it, the full environment-variable configuration reference, and an
   honest list of what this doesn't cover (this is a reference
-  implementation with sensible defaults, not a substitute for
+  implementation with sensible defaults, rather than a substitute for
   jurisdiction-specific legal/compliance review)
 
 ## [`adr/`](./adr/)
 
 Architecture Decision Records — *why* a specific technical decision was
 made (alternatives considered, the trade-off accepted, the real bug it
-fixed if there was one), not a description of the current system
+fixed if there was one), rather than a description of the current system
 (that's `technical/architecture.md`). Written once, at the time of the
 decision; a reversed decision gets a new ADR marking the old one
-`Superseded`, not a rewrite. See [`adr/README.md`](./adr/README.md)
+`Superseded`, never a rewrite. See [`adr/README.md`](./adr/README.md)
 for the full index and format.

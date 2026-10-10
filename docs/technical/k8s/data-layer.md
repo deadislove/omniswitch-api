@@ -19,10 +19,10 @@ considered done, which is exactly what surfaced the bugs below. A
 manifest that parses and a pod that reaches `Running` are both necessary
 and both insufficient.
 
-## `postgres.yaml`: real streaming replication, not a stand-in
+## `postgres.yaml`: real streaming replication, no stand-in
 
 `postgres-master` and `postgres-replica` are separate Deployments/PVCs/
-Services (`postgres:16-alpine`), not a single Postgres pretending to be
+Services (`postgres:16-alpine`), rather than a single Postgres pretending to be
 two. The replica's container `command` runs the same bootstrap
 `docker-compose.yml`'s replica service does on first start: loop
 `pg_basebackup` against the master until it succeeds, write
@@ -45,10 +45,10 @@ from `configmap.yaml`'s `DB_REPLICATION_USER` and
 Secret in a real deployment actually takes effect instead of silently
 doing nothing.
 
-Verified live: a row written on `postgres-master` appeared on
-`postgres-replica` within seconds, and `postgres-master`'s
-`pg_stat_replication` showed the replica's `walreceiver` connection in
-`streaming` state — not just both pods reaching `Ready`.
+A row written on `postgres-master` appears on `postgres-replica` within
+seconds, and `postgres-master`'s `pg_stat_replication` shows the
+replica's `walreceiver` connection in `streaming` state — not just both
+pods reaching `Ready`.
 
 ## `redis.yaml`: two real bugs, both invisible to a healthy pod
 
@@ -58,8 +58,8 @@ is read from `REDIS_PASSWORD` (an env var sourced from
 `omniswitch-secrets`) rather than hardcoded on the command line the way
 `docker-compose.yml`'s `--requirepass redis_secret` is.
 
-Two bugs surfaced only by actually testing auth against a live pod, not
-by the pod reaching `Ready`:
+Two bugs surfaced only by actually testing auth against a live pod,
+rather than by the pod reaching `Ready`:
 
 1. **`--requirepass` silently never applied.** An early version of the
    container `command` put each `redis-server` flag on its own YAML
@@ -76,17 +76,15 @@ by the pod reaching `Ready`:
    whole block is one shell statement — see the `command:` block's own
    comment in the file.
 2. **A pre-existing typo in `k8s/secret.yaml`.** `REDIS_PASSWORD`'s
-   base64 value decoded to `CHANGE_ME_REDMS_PASSWORD`, not
-   `CHANGE_ME_REDIS_PASSWORD` as the file's own adjacent comment said —
-   found while debugging bug 1 above (checking the actual env var value
-   inside the container as part of ruling out "is the Secret wired
-   correctly"). Fixed to match the documented placeholder.
+   base64 value decoded to `CHANGE_ME_REDMS_PASSWORD` instead of
+   `CHANGE_ME_REDIS_PASSWORD` as the file's own adjacent comment said.
+   Fixed to match the documented placeholder.
 
-Verified live, after both fixes: unauthenticated `PING` correctly
-refused (`NOAUTH Authentication required`), the correct password works,
-and a key written before `kubectl delete pod` on the Redis pod was still
-present after the replacement pod (same PVC) came up — real AOF
-persistence, not just "the process didn't crash."
+With both fixes in place: unauthenticated `PING` is correctly refused
+(`NOAUTH Authentication required`), the correct password works, and a
+key written before `kubectl delete pod` on the Redis pod is still
+present after the replacement pod (same PVC) comes up — real AOF
+persistence, beyond just "the process didn't crash."
 
 ## `vault.yaml`: dev mode, and one capability-related crash loop
 
@@ -99,7 +97,7 @@ but any ciphertext encrypted under the previous key instance becomes
 permanently undecryptable), and its root token is a single long-lived
 credential rather than a real auth method. Acceptable here for the same
 reason `docker-compose.yml`'s local-dev setup is — a starting point for
-exercising the rest of the manifest set, not a hardened
+exercising the rest of the manifest set — not meant as a hardened
 secrets-management deployment. `VAULT_DEV_ROOT_TOKEN_ID` is sourced from
 `omniswitch-secrets`' `VAULT_TOKEN` (the same key `deployment.yaml`
 already wires into the app), so overriding that Secret changes Vault's
@@ -111,7 +109,7 @@ the pod crash-looped with `unable to set CAP_SETFCAP effective
 capability: Operation not permitted`. Root cause, found by reading the
 official image's own `docker-entrypoint.sh` directly: it starts as
 root, runs `setcap cap_ipc_lock=+ep <vault binary>` (which itself needs
-`CAP_SETFCAP`, not `IPC_LOCK`), then `su-exec vault` drops to the
+`CAP_SETFCAP` rather than `IPC_LOCK`), then `su-exec vault` drops to the
 non-root `vault` user (uid 100) before finally starting the server — the
 *file* capability just set is what lets the post-drop process still
 have `IPC_LOCK`. Granting only `IPC_LOCK` at the container level left
@@ -129,14 +127,13 @@ check skips the `su-exec` step and `SKIP_SETCAP` skips the `setcap` call
 entirely. The second, smaller-capability-set option was chosen — see the
 Deployment's own `securityContext` comment for the full reasoning. The
 container then only ever needs the one capability (`IPC_LOCK`) the
-process actually uses at runtime, not the broader `CAP_SETFCAP` a
+process actually uses at runtime, narrower than the broader `CAP_SETFCAP` a
 root-started container would transiently need to grant it to itself.
 
-Verified live: the mount-transit-engine → create-key →
-encrypt → decrypt sequence `VaultTransitService` runs in the real app
-was reproduced directly against this Deployment (not just a
-`/sys/health` check), and the decrypted plaintext matched the original
-exactly.
+The mount-transit-engine → create-key → encrypt → decrypt sequence
+`VaultTransitService` runs in the real app reproduces directly against
+this Deployment (not just a `/sys/health` check), and the decrypted
+plaintext matches the original exactly.
 
 ## `pgbouncer.yaml`: why a pooler exists at all
 
@@ -163,12 +160,11 @@ doesn't harden it further; it breaks that self-drop outright (`setuid`
 to a *different* user than the one already running always fails with
 `Operation not permitted`, root excepted) and crash-loops the pod on
 both the `userlist.txt` write (no writable volume at `/etc/pgbouncer`
-for a non-root user) and the `setuid` call itself. Verified live against
-a real cluster with Postgres/Vault/Redis and the actual application
-image all deployed — a real `psql` query round-tripped through the
-pooler successfully.
+for a non-root user) and the `setuid` call itself. A real `psql` query
+round-trips through the pooler successfully once the container is
+allowed to start as root and self-drop.
 
 `DB_HOST` for each pooler comes from `configmap.yaml`'s
 `PGBOUNCER_MASTER_BACKEND_HOST`/`PGBOUNCER_REPLICA_BACKEND_HOST` —
 deliberately separate from `DB_MASTER_HOST`/`DB_REPLICA_HOST`, which is
-what the app itself connects to (the pooler, not the real database).
+what the app itself connects to (the pooler, standing in for the real database).

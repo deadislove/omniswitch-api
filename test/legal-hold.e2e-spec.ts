@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import * as request from 'supertest';
 import { randomUUID } from 'crypto';
 import { createTestApp } from './utils/test-app';
-import { seedMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
+import { seedMerchant, seedAdminMerchant, login, uniqueId, SeededMerchant } from './utils/seed';
 import { signHmacRequest } from './utils/signing';
 import { archivePayments } from '../src/jobs/run-archiving-job';
 import { AppDataSource } from '../src/database/data-source';
@@ -24,7 +24,6 @@ describe('Legal hold (e2e)', () => {
   let dataSource: DataSource;
   let merchant: SeededMerchant;
   let token: string;
-  let admin: SeededMerchant;
   let adminToken: string;
   const archivedPaymentIds: string[] = [];
 
@@ -39,8 +38,7 @@ describe('Legal hold (e2e)', () => {
     await AppDataSource.initialize();
     merchant = await seedMerchant(app, { merchantId: uniqueId('merchant') });
     token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
-    admin = await seedMerchant(app, { merchantId: uniqueId('admin'), roles: ['ADMIN'] });
-    adminToken = await login(app, admin.apiKeyId, admin.apiKeySecret);
+    ({ adminToken } = await seedAdminMerchant(app, uniqueId('admin')));
   });
 
   afterAll(async () => {
@@ -52,7 +50,13 @@ describe('Legal hold (e2e)', () => {
   });
 
   async function chargeImmediate(): Promise<{ paymentId: string }> {
-    const bodyObj = { amount: 25, currency: 'USD', paymentMethodId: 'pm_card_visa', orderId: uniqueId('order'), binInfo: USD_BIN };
+    const bodyObj = {
+      amount: 25,
+      currency: 'USD',
+      paymentMethodId: 'pm_card_visa',
+      orderId: uniqueId('order'),
+      binInfo: USD_BIN,
+    };
     const bodyStr = JSON.stringify(bodyObj);
     const { signature, timestamp } = signHmacRequest(merchant.hmacSecret, 'post', '/api/v1/payments/charge', bodyStr);
     const res = await request(app.getHttpServer())
