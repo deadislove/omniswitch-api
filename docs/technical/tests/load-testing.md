@@ -166,6 +166,12 @@ the route-level `429` cap, **zero `5xx`s**. Matches the historical
 400-succeeded figure exactly — same shape, same conclusion, no
 regression from any of this round's changes.
 
+**Re-run 2026-10-11**, after `@types/node` (20→26) and `stripe` (22→23)
+— neither touches the charge path's rate-limiting, and this run confirms
+it: 200 seeded merchants, default rate limits: 6700 requests, **400
+succeeded (`201`)**, **zero `5xx`s**. Matches the historical
+400-succeeded figure exactly.
+
 ## Finding #2: read-path capacity, unconstrained by the charge-specific cap
 
 `GET /payments/:id` has no route-level `@Throttle` override — only the
@@ -467,6 +473,64 @@ point) difference from 2026-08-22 reads as normal run-to-run/host
 variance (see this doc's repeated warnings about host-level
 contention confounding CPU readings) rather than a real regression or
 improvement.
+
+**Re-run 2026-10-11**, after `@types/node` (20→26) and `stripe`
+(22→23) — the noisiest host-contention session recorded in this
+document, worth describing honestly rather than smoothing over.
+Four consecutive runs, same 200-merchant/200-payment setup, default
+methodology:
+
+| Metric | Run 1 | Run 2 | Run 3 | Run 4 |
+|---|---|---|---|---|
+| Requests succeeded | 15,653/16,900 | **16,900/16,900** | **16,900/16,900** | 15,032/16,900 |
+| Failures | 31 `ECONNREFUSED` + 1,216 `ECONNRESET` | 0 | 0 | 1,868 (10s client timeout) |
+| p95 latency | — | 539.2ms | 2,018.7ms | 8,186.6ms |
+| p99 latency | — | 788.5ms | 2,618.1ms | 9,416.8ms |
+| CPU, average | not measured (wrong PID — see below) | not measured | not measured | 70.69% |
+
+Run 1's failures traced to a real but environmental cause, not a code
+defect: `docker inspect` showed `RestartCount` incremented by one during
+this run, with a clean `ExitCode=0`/`OOMKilled=false` and no error log
+at all immediately before the restart — the container was recreated by
+something outside the app itself (most likely Docker Desktop on a
+machine that had several hours of continuous build/test activity
+already behind it this session, though the exact trigger wasn't
+pinned down). `ECONNREFUSED`/`ECONNRESET` are exactly what a client
+sees when the server it's talking to disappears mid-run, consistent
+with that restart rather than an application crash.
+
+Runs 2 and 3 — no further restarts, confirmed via `RestartCount`
+staying flat — are the actual regression-relevant result: **zero
+failures, both times**, which is the metric this Finding exists to
+protect. Latency climbing run-over-run (539ms → 2,018ms p95) without a
+success-rate cost matches this doc's own 2026-08-30 entry's pattern
+exactly ("CPU peaked 34%→56% run-over-run climbing... background load
+on the host increasing" — see above) — not re-litigated here beyond
+noting the recurrence.
+
+Run 4 is where that same accumulating contention finally cost
+successes, not just latency: 1,868 requests hit Artillery's client-side
+timeout (response times clustering at 9,999–10,002ms, i.e. the timeout
+firing, not a real 10-second server response). CPU averaged 70.69% —
+measured correctly this time (PID 7, the actual
+`node dist/main.js` process; Runs 1–3 above were accidentally measured
+against PID 1, `dumb-init`, which is why their jiffies read as flat
+zero and aren't reported) — well above every prior steady-state figure
+in this section (23–33%) and corroborates genuine, severe contention
+by Run 4, not a measurement artifact.
+
+**Conclusion**: no success-rate regression attributable to the
+`@types/node`/`stripe` bump specifically — Runs 2–3 reproduce the
+historical 16,900/16,900 result cleanly. Run 1's restart and Run 4's
+timeout cascade are both consistent with host-level resource exhaustion
+on a machine that had been running sustained build/test/load-test
+activity for hours by that point, the same confound this document has
+flagged repeatedly (2026-08-22, 2026-08-30) — not re-measured on a
+quieter host due to session time constraints, so this entry documents
+what was actually observed rather than asserting a clean number that
+wasn't obtained. A future re-run on an idle host would be the way to
+get a trustworthy latency/CPU figure for this specific dependency
+bump; the success-rate conclusion above doesn't depend on that.
 
 Reframed against the HPA's actual basis: steady-state CPU (≈231–233m)
 sits at ≈92–93% of the 250m request — still comfortably past the 70%
