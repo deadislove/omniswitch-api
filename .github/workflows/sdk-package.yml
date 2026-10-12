@@ -44,7 +44,7 @@ jobs:
       # `npm pack` builds the exact tarball `npm publish` would upload,
       # without publishing it anywhere.
       - run: npm pack
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-node
           path: sdk/node/*.tgz
@@ -63,7 +63,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - run: mvn -B package
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-java
           path: sdk/java/target/*.jar
@@ -81,7 +81,7 @@ jobs:
       # `dotnet pack` builds the .nupkg `dotnet nuget push` would upload,
       # without pushing it anywhere.
       - run: dotnet pack sdk/dotnet/src/OmniSwitch.Sdk.csproj -c Release
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-dotnet
           path: sdk/dotnet/src/bin/Release/*.nupkg
@@ -104,7 +104,7 @@ jobs:
       # `python -m build` produces the sdist/wheel `twine upload` would
       # push to PyPI, without pushing them anywhere.
       - run: python -m build
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-python
           path: sdk/python/dist/*
@@ -124,7 +124,7 @@ jobs:
       # upload, without publishing it — doubly guarded by this crate's
       # own `Cargo.toml` also setting `publish = false`.
       - run: cargo package
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-rust
           path: sdk/rust/target/package/*.crate
@@ -146,7 +146,7 @@ jobs:
       # proxy, not a binary package format — a source archive is the
       # closest equivalent artifact for a library with no `main` package.
       - run: tar czf sdk-go.tar.gz -C sdk go
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: sdk-go
           path: sdk-go.tar.gz
