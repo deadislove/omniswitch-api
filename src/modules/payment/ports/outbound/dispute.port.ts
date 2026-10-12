@@ -23,6 +23,17 @@ export abstract class DisputePort {
   abstract countByMerchantSince(merchantId: string, status: DisputeStatus, since: Date): Promise<number>;
 
   /**
+   * Same shape as countByMerchantSince() above, but unfiltered by
+   * status — `ChargebackMonitoringService` needs *every* dispute
+   * received in the window regardless of outcome, where
+   * countByMerchantSince()'s callers specifically want one status at a
+   * time (e.g. `LOST` only). A network chargeback-monitoring program
+   * counts a dispute against a merchant's ratio the moment it lands,
+   * whether or not the merchant goes on to win it.
+   */
+  abstract countAllByMerchantSince(merchantId: string, since: Date): Promise<number>;
+
+  /**
    * Just the `reason` column (not full Dispute objects — RiskTieringService
    * only needs to weight-and-sum these, same "true count rather than a
    * page of it" reasoning as countByMerchantSince()) for a merchant's disputes in

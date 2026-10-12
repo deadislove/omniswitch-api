@@ -151,36 +151,38 @@ This pass captures the data a real KYB flow needs; deciding how long to
 keep it is a compliance decision this document can't settle
 unilaterally as an engineering one.
 
-## Trust isn't decided once — four independent signals, evaluated continuously
+## Trust isn't decided once — five independent signals, evaluated continuously
 
-Once a merchant exists, this platform keeps evaluating it against four
+Once a merchant exists, this platform keeps evaluating it against five
 genuinely independent signals. They're deliberately not merged into one
-score — a fraud signal, a PSP-reliability signal, an AML signal, and a
-legal sanctions signal answer different questions, and conflating them
-would make each individually less legible to whoever has to act on it.
-See [`risk-and-fraud.md#why-two-separate-signals-not-one-risk-score`](./risk-and-fraud.md#why-two-separate-signals-not-one-risk-score)
-for the fuller argument, which extends to all four, beyond just the
+score — a fraud signal, a network-compliance signal, a PSP-reliability
+signal, an AML signal, and a legal sanctions signal answer different
+questions, and conflating them would make each individually less
+legible to whoever has to act on it. See
+[`risk-and-fraud.md#why-two-separate-signals-not-one-risk-score`](./risk-and-fraud.md#why-two-separate-signals-not-one-risk-score)
+for the fuller argument, which extends to all five, beyond the
 original two.
 
 | Signal | Question it answers | Automated action | Re-evaluated |
 |---|---|---|---|
 | **Risk tiering** ([`risk-and-fraud.md`](./risk-and-fraud.md#risk-tiering-chargeback-driven-reserves)) | How much of this merchant's money should sit in reserve, given its chargeback history? | Adjusts `reserveBps`/`reserveHoldDays` automatically, both up and down | Daily sweep |
+| **Chargeback-monitoring-program observation** ([`risk-and-fraud.md`](./risk-and-fraud.md#chargeback-monitoring-program-observation-network-compliance-signal)) | Is this merchant's dispute rate high enough to risk a real Visa VDMP/Mastercard ECP network penalty? | Flags `chargebackMonitoringTier` and notifies, both up and down; never touches the reserve | Daily sweep |
 | **Ambiguous-risk monitoring** ([`risk-and-fraud.md`](./risk-and-fraud.md#ambiguous-risk-monitoring-psp-reliability-signal)) | Is this merchant's traffic hitting an unusual rate of PSP-outcome ambiguity? | Visibility flag only, auto-clears after a quiet period | Inline, on each incident |
 | **AML review observation** ([`risk-and-fraud.md`](./risk-and-fraud.md#aml-review-observation-high-industry-hard-decline-signal)) | Is a `HIGH`-industry merchant racking up hard-declines fast enough to warrant a human look? | Visibility flag + real-time notification, no auto-clear | Inline, on each hard decline |
 | **Sanctions screening** ([`risk-and-fraud.md`](./risk-and-fraud.md#sanctionswatchlist-screening-onboarding--periodic-re-screening)) | Has this merchant (or its legal name) since appeared on a sanctions list it wasn't on at onboarding? | `HIT` is a hard block on *new* delegations (see below); does not retroactively freeze existing activity — that's a manual decision | Weekly sweep + on demand |
 
-Three of the four (risk tiering, ambiguous-risk, AML review) share an
-explicit **"manual input pauses automation"** posture: an operator's
-manual override (`PATCH .../reserve-policy`, `.../ambiguous-risk`,
-`.../aml-review`) flips that signal's own `*AutoManaged` flag to `false`
-and it sticks until the operator explicitly re-enables it. Sanctions
-screening doesn't have this override concept in the same shape — a
-`HIT` is a factual claim about a real external list, never a judgment
-call
-an operator's local override should silently paper over; instead it's
-resolved via `PATCH .../sanctions-review`, which records who reviewed it
-and why (false positive vs. confirmed) without touching whether the next
-scheduled re-screen still runs.
+Four of the five (risk tiering, chargeback monitoring, ambiguous-risk,
+AML review) share an explicit **"manual input pauses automation"**
+posture: an operator's manual override (`PATCH .../reserve-policy`,
+`.../chargeback-monitoring`, `.../ambiguous-risk`, `.../aml-review`)
+flips that signal's own `*AutoManaged` flag to `false` and it sticks
+until the operator explicitly re-enables it. Sanctions screening
+doesn't have this override concept in the same shape — a `HIT` is a
+factual claim about a real external list, a different kind of thing
+from a judgment call an operator's local override should silently
+paper over; instead it's resolved via `PATCH .../sanctions-review`,
+which records who reviewed it and why (false positive vs. confirmed)
+without touching whether the next scheduled re-screen still runs.
 
 ## Sanctions HIT and agent delegations
 
@@ -197,6 +199,54 @@ to the *capability a known-bad state shouldn't extend*, rather than
 to an identity that was never the actual subject of the check. See
 [`compliance-and-security.md#agentic-payments-delegation-scope-as-a-liability-limiting-decision`](./compliance-and-security.md#agentic-payments-delegation-scope-as-a-liability-limiting-decision)
 for the broader delegation liability framing.
+
+## Account termination for cause and the MATCH report
+
+Every other action in this document either creates trust (onboarding)
+or reduces it incrementally (the five signals above). Termination for
+cause is the one genuinely terminal action: an acquirer deciding this
+merchant can no longer process at all, and reporting that decision to
+the rest of the industry. Real card networks run exactly this
+mechanism — Mastercard's MATCH ("Member Alert To Control High-risk
+Merchants") file — and an acquirer that terminates a merchant for
+fraud, laundering, or excessive chargebacks is contractually obligated
+to file a report into it, beyond just deactivating the account quietly.
+
+**`POST /admin/merchants/:id/terminate-for-cause`** (`{ reasonCode,
+reason }`) is the one way to reach this state. `reasonCode` must be
+one of a real Mastercard MATCH reason code — Laundering, Excessive
+Chargebacks, Fraud Conviction, Bankrupt, Merchant Collusion, Illegal
+Transactions (`match-reason-code.ts` — an illustrative subset of
+Mastercard's published list, trimmed to the grounds this codebase's
+own existing signals can plausibly justify, rather than the full
+published taxonomy). `reason` is free text, required and audited, same
+posture as every other manual override in this document.
+
+**This is deliberately distinct from `PATCH .../status`'s ordinary
+deactivation.** Both end up setting `isActive: false`, but only
+termination-for-cause sets `matchTerminatedForCause`, records the
+reason code, and files the MATCH report — a merchant that simply
+closes its own account, or gets suspended for an unrelated operational
+reason, was never terminated *for cause* and has nothing to report.
+
+**The MATCH filing is a separate step from the termination decision,
+by design.** The termination itself — deactivation, session
+revocation, the reason-code record — is persisted first and
+unconditionally. Filing the report with the (necessarily mocked, like
+every other external network integration in this codebase)
+`MatchReportingPort` happens afterward, in a failure-tolerant path: if
+the filing call fails, the termination still stands, and
+`matchReportedAt` simply stays null until
+`POST /admin/merchants/:id/match/report` retries it. A reporting-API
+outage should never be able to undo an already-correct termination
+decision.
+
+**What this does not do automatically**: nothing connects chargeback
+monitoring reaching `EXCESSIVE` (or any other signal above) to this
+endpoint. A real acquirer's termination decision is usually triggered
+by a monitoring-program threshold being crossed, but deciding to pull
+that trigger is left to an operator's judgment — see
+[`risk-and-fraud.md#not-modeled`](./risk-and-fraud.md#not-modeled).
 
 ## Fee model, settlement, and PSP entitlement (briefly — see the dedicated docs)
 

@@ -4,12 +4,14 @@ import { MerchantService } from './merchant.service';
 import {
   CreateMerchantDto,
   UpdateMerchantStatusDto,
+  TerminateForCauseDto,
   UpdateFeeRateDto,
   UpdateFeeTiersDto,
   UpdateSettlementCurrencyDto,
   UpdateDisputeNotificationChannelDto,
   UpdateSubscriptionNotificationChannelDto,
   UpdateAmlReviewNotificationChannelDto,
+  UpdateChargebackMonitoringNotificationChannelDto,
   UpdateMccCodeDto,
   UpdateReservePolicyDto,
   UpdatePayoutReservePolicyDto,
@@ -82,6 +84,13 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     amlReviewAutoManaged: merchant.amlReviewAutoManaged,
     amlReviewNotificationChannel: merchant.amlReviewNotificationChannel,
     amlReviewNotificationTarget: merchant.amlReviewNotificationTarget ?? null,
+    chargebackMonitoringTier: merchant.chargebackMonitoringTier,
+    chargebackMonitoringFlaggedAt: merchant.chargebackMonitoringFlaggedAt?.toISOString() ?? null,
+    chargebackMonitoringReason: merchant.chargebackMonitoringReason ?? null,
+    chargebackMonitoringFlaggedBy: merchant.chargebackMonitoringFlaggedBy ?? null,
+    chargebackMonitoringAutoManaged: merchant.chargebackMonitoringAutoManaged,
+    chargebackMonitoringNotificationChannel: merchant.chargebackMonitoringNotificationChannel,
+    chargebackMonitoringNotificationTarget: merchant.chargebackMonitoringNotificationTarget ?? null,
     legalName: merchant.legalName ?? null,
     taxId: merchant.taxId ?? null,
     sanctionsScreeningStatus: merchant.sanctionsScreeningStatus,
@@ -91,6 +100,13 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     sanctionsReviewedAt: merchant.sanctionsReviewedAt?.toISOString() ?? null,
     sanctionsNotificationChannel: merchant.sanctionsNotificationChannel,
     sanctionsNotificationTarget: merchant.sanctionsNotificationTarget ?? null,
+    matchTerminatedForCause: merchant.matchTerminatedForCause,
+    matchReasonCode: merchant.matchReasonCode ?? null,
+    matchReason: merchant.matchReason ?? null,
+    matchTerminatedBy: merchant.matchTerminatedBy ?? null,
+    matchTerminatedAt: merchant.matchTerminatedAt?.toISOString() ?? null,
+    matchReportedAt: merchant.matchReportedAt?.toISOString() ?? null,
+    matchReportId: merchant.matchReportId ?? null,
     createdAt: merchant.createdAt.toISOString(),
     updatedAt: merchant.updatedAt.toISOString(),
   };
@@ -167,6 +183,43 @@ export class MerchantAdminController {
     @Body() dto: UpdateMerchantStatusDto,
   ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.setActive(merchantId, dto.isActive);
+    return toSummary(merchant);
+  }
+
+  @Post(':merchantId/terminate-for-cause')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Terminate a merchant for cause (fraud/laundering/excessive chargebacks/...) and file a Mastercard MATCH report — distinct from PATCH .../status, an ordinary activate/deactivate with no network-reporting obligation. Also revokes all active sessions.',
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  @ApiResponse({ status: 422, description: 'reasonCode is not a recognized MATCH code, or reason is missing/empty' })
+  async terminateForCause(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: TerminateForCauseDto,
+    @Req() req: any,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.terminateForCause(
+      merchantId,
+      dto.reasonCode,
+      dto.reason,
+      req.user.merchantId,
+    );
+    return toSummary(merchant);
+  }
+
+  @Post(':merchantId/match/report')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Retry filing this terminated-for-cause merchant to MATCH, for when the filing attempted at termination time failed — does not reverse or repeat the termination itself.',
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  @ApiResponse({ status: 422, description: 'Merchant was never terminated for cause' })
+  async retryMatchReport(@Param('merchantId') merchantId: string): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.retryMatchReport(merchantId);
     return toSummary(merchant);
   }
 
@@ -269,6 +322,25 @@ export class MerchantAdminController {
     @Body() dto: UpdateAmlReviewNotificationChannelDto,
   ): Promise<MerchantSummaryDto> {
     const merchant = await this.merchantService.updateAmlReviewNotificationChannel(
+      merchantId,
+      dto.channel,
+      dto.target ?? null,
+    );
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/chargeback-monitoring-notification-channel')
+  @ApiOperation({
+    summary:
+      "Change which channel this merchant's chargeback_monitoring.tier_changed notification goes out on (EMAIL/SLACK/WEBHOOK), and the channel-specific destination. Independent of every other notification-channel setting on this merchant. Omit/null target clears it.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updateChargebackMonitoringNotificationChannel(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateChargebackMonitoringNotificationChannelDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updateChargebackMonitoringNotificationChannel(
       merchantId,
       dto.channel,
       dto.target ?? null,

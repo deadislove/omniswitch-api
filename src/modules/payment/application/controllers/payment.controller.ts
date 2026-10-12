@@ -471,6 +471,7 @@ export class PaymentController {
       })),
       metadata: payment.metadata.metadata,
       statementDescriptor: payment.metadata.statementDescriptor,
+      interchangeQualification: payment.interchangeQualification,
       createdAt: payment.createdAt.toISOString(),
       updatedAt: payment.updatedAt.toISOString(),
     };

@@ -14,6 +14,7 @@ import { PaymentEntity } from '../../adapters/persistence/entities/payment.entit
 import { ChargeLedgerParamsResolverService } from './charge-ledger-params-resolver.service';
 import { ReserveService } from './reserve.service';
 import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
+import { evaluateInterchangeQualification } from '../../domain/services/interchange-qualification';
 
 /**
  * Payment Lifecycle Service
@@ -211,12 +212,33 @@ export class PaymentLifecycleService {
       });
     }
 
-    payment.recordCapture({
+    const isFullyCaptured = payment.recordCapture({
       captureId: uuidv4(),
       amount: captureAmount,
       pspTransactionId: payment.pspTransactionId,
       pspRawResponse: pspResult.rawResponse,
     });
+
+    // Only evaluated once the authorization is *fully* captured — a
+    // partial capture leaves the payment PARTIALLY_CAPTURED, awaiting
+    // more; the interchange outcome isn't final until the last dollar of
+    // the authorization actually settles. settlementDelayHours is the
+    // real elapsed time since authorization (payment.createdAt) — unlike
+    // PaymentCheckoutSaga's immediate-capture branch, this can genuinely
+    // exceed SETTLEMENT_WINDOW_HOURS when a merchant waits days to
+    // capture a manual-capture authorization.
+    if (isFullyCaptured && payment.binInfo) {
+      const settlementDelayHours = (Date.now() - payment.createdAt.getTime()) / (60 * 60 * 1000);
+      payment.recordInterchangeQualification(
+        evaluateInterchangeQualification({
+          cardBrand: payment.binInfo.cardBrand,
+          cardProduct: payment.binInfo.cardProduct,
+          avsResult: payment.avsResult,
+          cvvResult: payment.cvvResult,
+          settlementDelayHours,
+        }),
+      );
+    }
 
     // The charge is only *confirmed* now — book settlement entries at
     // capture time instead of at authorization time (see PaymentCheckoutSaga for

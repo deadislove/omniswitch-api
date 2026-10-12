@@ -109,6 +109,11 @@ services:
       # localhost:4000 here. Found running a real load test against a
       # freshly rebuilt stack — see docs/technical/tests/load-testing.md.
       SANCTIONS_PROVIDER_URL: http://mock-psp:4000/sanctions
+      # Same mock-psp-service-name reasoning as SANCTIONS_PROVIDER_URL
+      # above — MockMatchReportingAdapter's default
+      # (http://localhost:4000/match) would otherwise resolve to this
+      # container itself.
+      MATCH_REPORTING_URL: http://mock-psp:4000/match
       BANK_TRANSFER_PROVIDER_URL: http://mock-psp:4000/bank
       # BANK_TRANSFER_PROVIDER stays at its default (mock, synchronous
       # /bank/transfers) here — set to "ach" or "wire" to exercise the two

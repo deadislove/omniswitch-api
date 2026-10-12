@@ -34,6 +34,8 @@ import { EmailSanctionsNotificationAdapter } from './sanctions/email-sanctions-n
 import { SlackSanctionsNotificationAdapter } from './sanctions/slack-sanctions-notification.adapter';
 import { WebhookSanctionsNotificationAdapter } from './sanctions/webhook-sanctions-notification.adapter';
 import { WebhookDeliveryLogModule } from '../../shared/webhook-delivery-log/webhook-delivery-log.module';
+import { MatchReportingPort } from './match-reporting.port';
+import { MockMatchReportingAdapter } from './mock-match-reporting.adapter';
 
 @Module({
   imports: [TypeOrmModule.forFeature([MerchantEntity]), AuthModule, VaultModule, WebhookDeliveryLogModule],
@@ -120,6 +122,12 @@ import { WebhookDeliveryLogModule } from '../../shared/webhook-delivery-log/webh
     WebhookSanctionsNotificationAdapter,
     SanctionsNotificationDispatcherService,
     SanctionsNotificationListener,
+    // Unlike KYCProviderPort/SanctionsScreeningPort above, no useFactory
+    // provider-switch here — there is no real, freely-integrable
+    // counterpart to a mock MATCH filing (see MatchReportingPort's own
+    // docblock), so this binds directly.
+    MockMatchReportingAdapter,
+    { provide: MatchReportingPort, useClass: MockMatchReportingAdapter },
   ],
   exports: [MerchantService],
 })

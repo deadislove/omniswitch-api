@@ -172,6 +172,41 @@ it: 200 seeded merchants, default rate limits: 6700 requests, **400
 succeeded (`201`)**, **zero `5xx`s**. Matches the historical
 400-succeeded figure exactly.
 
+**Re-run 2026-10-11 (second, same day), after the three Tier 1
+business-domain additions** (VDMP/ECP chargeback monitoring, MATCH
+termination reporting, real interchange qualification/downgrade) —
+the last of these runs real work on *every successful charge*
+(`evaluateInterchangeQualification()` plus each PSP adapter's AVS/CVV
+extraction), making this the first re-run of this finding with
+genuinely new per-charge processing to measure, beyond an unrelated
+dependency bump. 200 freshly seeded merchants (`scripts/load-test/
+setup-merchants.js`'s own fixture file had gone stale from an earlier
+run earlier in the same session — a killed/incomplete seeding run left
+hour-old, already-JWT-expired merchants in place; re-seeding fixed it,
+worth remembering if this file is ever reused across sessions), default
+rate limits, `api` capped to `k8s/deployment.yaml`'s limits
+(`docker update --cpus=1 --memory=512m`): 6699 requests, **399
+succeeded (`201`)**, 5263 hit the route-level `429` cap, **zero `5xx`s,
+zero `401`s**. Matches the historical ~400-succeeded shape (399 vs.
+400 is noise rather than a regression — Finding #1's own point is that
+this number is set by the rate limiter, independent of app
+throughput). Latency: p50/median 4ms, identical to every prior run;
+p95 (87ms) and p99 (743ms) ran higher than most historical entries
+above, plausibly this machine's own contention from everything else
+running in the same session (concurrent Jest workers, other
+containers) rather than the new charge-path work itself —
+`evaluateInterchangeQualification()` is a synchronous,
+allocation-light pure function (one rate-table lookup, a handful of
+comparisons) that has no plausible way to add hundreds of milliseconds
+on its own. Also surfaced one real, unrelated
+deployment-config gap while verifying these features by hand against
+the live container first: `MATCH_REPORTING_URL` had never been added to
+`docker-compose.yml`, so `MockMatchReportingAdapter`'s default
+(`http://localhost:4000/match`) resolved to the `api` container itself
+rather than `mock-psp` — same class of bug this doc's Finding #1 intro
+comment already documents for `SANCTIONS_PROVIDER_URL`. Fixed the same
+way (pointed at the `mock-psp` service name) before this load test ran.
+
 ## Finding #2: read-path capacity, unconstrained by the charge-specific cap
 
 `GET /payments/:id` has no route-level `@Throttle` override — only the
@@ -340,6 +375,35 @@ limit even at the noisiest sampled point. **Conclusion: no regression in
 success rate; the elevated tail latency versus 2026-08-21/08-24's
 readings is explained by host contention — not by any change made
 this round.**
+
+**Attempted re-run 2026-10-11, after the three Tier 1 business-domain
+additions** (same round as Finding #1's second 2026-10-11 entry above)
+— `GET /payments/:id` now also serializes an `interchangeQualification`
+object when one was recorded: a single extra plain-object field read
+off the entity, well short of a new query or a meaningfully larger
+payload. Four consecutive attempts, each on a freshly restarted,
+freshly resource-capped container:
+
+| Attempt | Success rate | p95 | p99 | Notes |
+|---|---|---|---|---|
+| 1 | 15,818/16,900 | 1,353ms | 2,231ms | `api` container restarted mid-run (`ExitCode 0`, `OOMKilled: false` — the same signature as this doc's own 2026-08-30 confound, independent of anything this round changed) |
+| 2 | 16,900/16,900 | 1,108ms | 2,276ms | No restart, but tail latency ~100-200x the 2026-08-21 baseline |
+| 3 | 16,034/16,900 | 7,557ms | 8,868ms | Worse than attempt 2 rather than better — host load average read 5.8-9.6 across these attempts (`uptime`), itself unusual for this machine |
+| 4, after `docker system prune -f` (reclaimed 20.79GB — this host had the same "large accumulated Docker resource" confound 2026-08-22's entry already documents) | 14,426/16,900 | 8,521ms | 9,417ms | Worse again |
+
+**No usable number came out of this round** — four attempts, including
+one after directly addressing the one known confound this doc already
+has a precedent for, got worse instead of better. This reads as
+sustained, severe host contention from something outside Docker's own
+resource accounting entirely (`--cpus=1`/`--memory=512m` bounds the
+container's *share*, independent of the host's real scheduling latency
+under load) — a single extra object field on an already-small JSON
+response has no plausible mechanism to cause multi-second tail
+latency, so this isn't read as a regression from the
+interchange-qualification field addition. **The 2026-08-21 baseline
+below remains the last trustworthy measurement for this endpoint**
+pending a re-run on a genuinely quiet host; this round's attempts are
+recorded for the record, without replacing that baseline.
 
 ## What this means for `k8s/hpa.yaml`
 

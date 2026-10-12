@@ -139,6 +139,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           status: 'REQUIRES_CAPTURE',
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
+          ...this.extractCardCheckResult(response),
         };
       }
 
@@ -149,6 +150,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           status: 'SUCCEEDED',
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
+          ...this.extractCardCheckResult(response),
         };
       }
 
@@ -160,6 +162,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
         errorCode: response.last_payment_error?.code,
         errorMessage: response.last_payment_error?.message,
         riskSignal: this.extractRiskSignal(response),
+        ...this.extractCardCheckResult(response),
       };
     } catch (error) {
       await this.circuitBreaker.recordFailure(this.provider);
@@ -188,6 +191,55 @@ export class StripePSPAdapter extends PSPAdapterPort {
       ...(outcome.risk_level ? { riskLevel: outcome.risk_level } : {}),
       ...(typeof outcome.risk_score === 'number' ? { riskScore: outcome.risk_score } : {}),
     };
+  }
+
+  /**
+   * Real Stripe nests AVS/CVV check results the same place as Radar's
+   * outcome above: `PaymentIntent.charges.data[0].payment_method_details
+   * .card.checks` — see docs.stripe.com/api/charges/object#charge_object
+   * -payment_method_details-card-checks. Stripe actually runs AVS as
+   * *two* separate checks (`address_line1_check`, `address_zip_check`);
+   * this adapter combines them into this port's single normalized
+   * `avsResult`, since that's the only AVS granularity
+   * `evaluateInterchangeQualification()` needs: both pass -> MATCH, both
+   * fail -> NO_MATCH, exactly one known pass/fail each -> PARTIAL,
+   * anything unavailable/unchecked on either side -> UNAVAILABLE.
+   */
+  private extractCardCheckResult(response: any): {
+    avsResult?: PSPChargeResponse['avsResult'];
+    cvvResult?: PSPChargeResponse['cvvResult'];
+  } {
+    const checks = response.charges?.data?.[0]?.payment_method_details?.card?.checks;
+    if (!checks) return {};
+    const avsResult = this.combineAvsChecks(checks.address_line1_check, checks.address_zip_check);
+    const cvvResult = this.mapCheckResult(checks.cvc_check) as PSPChargeResponse['cvvResult'];
+    return {
+      ...(avsResult ? { avsResult } : {}),
+      ...(cvvResult ? { cvvResult } : {}),
+    };
+  }
+
+  private mapCheckResult(check?: string): 'MATCH' | 'NO_MATCH' | 'UNAVAILABLE' | undefined {
+    switch (check) {
+      case 'pass':
+        return 'MATCH';
+      case 'fail':
+        return 'NO_MATCH';
+      case 'unavailable':
+      case 'unchecked':
+        return 'UNAVAILABLE';
+      default:
+        return undefined;
+    }
+  }
+
+  private combineAvsChecks(line1?: string, zip?: string): PSPChargeResponse['avsResult'] {
+    const a = this.mapCheckResult(line1);
+    const z = this.mapCheckResult(zip);
+    if (!a && !z) return undefined;
+    if (a === z) return a;
+    if (a === 'UNAVAILABLE' || z === 'UNAVAILABLE' || !a || !z) return 'UNAVAILABLE';
+    return 'PARTIAL';
   }
 
   async refund(request: PSPRefundRequest): Promise<PSPRefundResponse> {

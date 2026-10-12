@@ -24,6 +24,7 @@ import {
 } from '../services/charge-ledger-params-resolver.service';
 import { ReserveService } from '../services/reserve.service';
 import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
+import { evaluateInterchangeQualification } from '../../domain/services/interchange-qualification';
 import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
 import { AmlReviewMonitoringService } from '../services/aml-review-monitoring.service';
 import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
@@ -370,7 +371,29 @@ export class PaymentCheckoutSaga {
 
     // ─── Step 5: Update Payment Status ──────────────────────────────────────
     if (chargeResult.status === 'SUCCEEDED') {
-      payment.markSucceeded(chargeResult.transactionId, chargeResult.rawResponse, chargeResult.riskSignal);
+      payment.markSucceeded(
+        chargeResult.transactionId,
+        chargeResult.rawResponse,
+        chargeResult.riskSignal,
+        chargeResult.avsResult,
+        chargeResult.cvvResult,
+      );
+
+      // Authorization and capture happen in this same PSP call
+      // (automatic capture — the default) — settlementDelayHours is
+      // always 0 here. See PaymentLifecycleService.capture() for the
+      // manual-capture branch, where a real delay can accrue.
+      if (input.binInfo) {
+        payment.recordInterchangeQualification(
+          evaluateInterchangeQualification({
+            cardBrand: input.binInfo.cardBrand,
+            cardProduct: input.binInfo.cardProduct,
+            avsResult: chargeResult.avsResult,
+            cvvResult: chargeResult.cvvResult,
+            settlementDelayHours: 0,
+          }),
+        );
+      }
 
       // Funds are confirmed captured *now* — this is the only place in the
       // immediate-capture path where a ledger entry should be written.
@@ -447,7 +470,13 @@ export class PaymentCheckoutSaga {
     }
 
     if (chargeResult.status === 'REQUIRES_CAPTURE') {
-      payment.requiresCapture(chargeResult.transactionId, chargeResult.rawResponse, chargeResult.riskSignal);
+      payment.requiresCapture(
+        chargeResult.transactionId,
+        chargeResult.rawResponse,
+        chargeResult.riskSignal,
+        chargeResult.avsResult,
+        chargeResult.cvvResult,
+      );
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
 

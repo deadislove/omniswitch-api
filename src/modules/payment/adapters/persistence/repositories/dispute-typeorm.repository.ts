@@ -87,6 +87,16 @@ export class DisputeTypeOrmRepository implements DisputePort {
       .getCount();
   }
 
+  async countAllByMerchantSince(merchantId: string, since: Date): Promise<number> {
+    // Same .toISOString() reasoning as countByMerchantSince() above —
+    // just no status filter.
+    return this.repo
+      .createQueryBuilder('d')
+      .where('d.merchantId = :merchantId', { merchantId })
+      .andWhere('d.createdAt >= :since', { since: since.toISOString() })
+      .getCount();
+  }
+
   async findReasonsByMerchantStatusSince(
     merchantId: string,
     status: DisputeStatus,

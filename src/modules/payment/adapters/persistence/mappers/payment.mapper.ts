@@ -10,7 +10,12 @@ import {
 import { PaymentEntity } from '../entities/payment.entity';
 import { Money } from '../../../domain/value-objects/money.vo';
 import { PaymentStatus } from '../../../domain/value-objects/payment-status.vo';
-import { BinInfo, CardBrand, CardType } from '../../../domain/value-objects/bin-info.vo';
+import { BinInfo, CardBrand, CardProduct, CardType } from '../../../domain/value-objects/bin-info.vo';
+import {
+  AvsResult,
+  CvvResult,
+  InterchangeQualificationResult,
+} from '../../../domain/services/interchange-qualification';
 
 /**
  * Payment Mapper
@@ -29,6 +34,7 @@ export class PaymentMapper {
         country: b.country,
         cardBrand: b.cardBrand as CardBrand,
         cardType: b.cardType as CardType,
+        cardProduct: b.cardProduct as CardProduct | undefined,
         issuingBank: b.issuingBank,
       });
     }
@@ -91,6 +97,9 @@ export class PaymentMapper {
       taxRecord: entity.taxRecord ?? undefined,
       delegationId: entity.delegationId ?? undefined,
       initiatedBy: entity.initiatedBy,
+      avsResult: entity.avsResult as AvsResult | undefined,
+      cvvResult: entity.cvvResult as CvvResult | undefined,
+      interchangeQualification: entity.interchangeQualification as InterchangeQualificationResult | undefined,
     });
   }
 
@@ -125,6 +134,9 @@ export class PaymentMapper {
     entity.ambiguousResolvedReason = aggregate.ambiguousResolvedReason;
     entity.ambiguousResolvedAt = aggregate.ambiguousResolvedAt;
     entity.ambiguousAutoRetryCount = aggregate.ambiguousAutoRetryCount;
+    entity.avsResult = aggregate.avsResult;
+    entity.cvvResult = aggregate.cvvResult;
+    entity.interchangeQualification = aggregate.interchangeQualification as unknown as Record<string, unknown>;
     entity.splits = aggregate.splits?.map((s) => ({
       merchantId: s.merchantId,
       amountMinorUnits: s.amount.amountMinorUnits.toString(),
@@ -138,6 +150,7 @@ export class PaymentMapper {
         country: aggregate.binInfo.country,
         cardBrand: aggregate.binInfo.cardBrand,
         cardType: aggregate.binInfo.cardType,
+        cardProduct: aggregate.binInfo.cardProduct,
         issuingBank: aggregate.binInfo.issuingBank,
       };
     }

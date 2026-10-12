@@ -83,17 +83,24 @@ to payments domain concepts generally.
   the double-entry bookkeeping model and the Outbox pattern that
   publishes it reliably
 - [`fee-model.md`](./business-domain/fee-model.md) — platform fee-rate
-  calculation and PSP interchange-cost reconciliation
+  calculation, PSP interchange-cost reconciliation, and real
+  interchange rate qualification/downgrade
 - [`fx-conversion.md`](./business-domain/fx-conversion.md) — cross-currency
   merchant settlement, refund/dispute FX replay, presentment currency
 - [`marketplace-and-payouts.md`](./business-domain/marketplace-and-payouts.md) —
   marketplace splits, payout scheduling, connected-account KYC gating
+- [`merchants.md`](./business-domain/merchants.md) — onboarding
+  (identity capture, sanctions screening, KYC/KYB), the five trust
+  signals evaluated continuously after onboarding, and account
+  termination for cause (Mastercard MATCH reporting)
 - [`disputes.md`](./business-domain/disputes.md) — the dispute state
   machine, representment, and the auto-decision policy that decides
   whether this platform contests one automatically
-- [`risk-and-fraud.md`](./business-domain/risk-and-fraud.md) — the two
-  independent risk signals this platform tracks per merchant: reserve-driving
-  risk tiering and ambiguous-payment (PSP-reliability) monitoring
+- [`risk-and-fraud.md`](./business-domain/risk-and-fraud.md) — the five
+  independent signals this platform tracks per merchant: reserve-driving
+  risk tiering, Visa VDMP/Mastercard ECP chargeback-monitoring-program
+  observation, ambiguous-payment (PSP-reliability) monitoring, AML
+  review observation, and sanctions/watchlist screening
 - [`compliance-and-security.md`](./business-domain/compliance-and-security.md) —
   why PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
   delegation scope are business decisions, beyond just engineering choices

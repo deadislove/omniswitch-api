@@ -470,6 +470,52 @@ export class MerchantEntity {
   amlReviewNotificationTarget?: string | null;
 
   /**
+   * Network chargeback-monitoring program standing — the mechanism real
+   * card networks implement as Visa's Dispute Monitoring Program (VDMP)
+   * and Mastercard's Excessive Chargeback Program (ECP): a merchant
+   * whose dispute-to-transaction ratio crosses a published threshold
+   * gets flagged, and a worse-crossing merchant gets flagged harder,
+   * independent of `riskTierAutoManaged`'s reserve-rate response to the
+   * same underlying dispute history. Deliberately a different signal
+   * from `RiskTieringService`'s lost-dispute rate: this counts *every*
+   * dispute received in the window regardless of outcome (a network
+   * penalizes a merchant for a chargeback landing at all — it costs the
+   * issuer/network processing overhead whether or not the merchant goes
+   * on to win it), where `RiskTieringService` deliberately counts
+   * `LOST` disputes only (see that service's own docblock for why). Two
+   * different questions: "is this merchant's reserve rate still
+   * correctly priced" vs. "is this merchant at risk of a network
+   * compliance fine or, eventually, forced termination." See
+   * `ChargebackMonitoringService`.
+   */
+  @Column({ name: 'chargeback_monitoring_tier', type: 'varchar', default: 'NONE' })
+  chargebackMonitoringTier: 'NONE' | 'MONITORING' | 'EXCESSIVE';
+
+  /** Same re-touch-on-new-incident semantics as ambiguousRiskFlaggedAt above. Null whenever chargebackMonitoringTier is 'NONE'. */
+  @Column({ name: 'chargeback_monitoring_flagged_at', type: 'timestamp', nullable: true })
+  chargebackMonitoringFlaggedAt?: Date;
+
+  /** Same posture as amlReviewFlagReason above. */
+  @Column({ name: 'chargeback_monitoring_reason', type: 'varchar', nullable: true })
+  chargebackMonitoringReason?: string;
+
+  /** Same posture as amlReviewFlaggedBy above. */
+  @Column({ name: 'chargeback_monitoring_flagged_by', type: 'varchar', nullable: true })
+  chargebackMonitoringFlaggedBy?: string;
+
+  /** Same "manual input pauses automation" posture as amlReviewAutoManaged above. */
+  @Column({ name: 'chargeback_monitoring_auto_managed', default: true })
+  chargebackMonitoringAutoManaged: boolean;
+
+  /** Same "each event family picks its own channel" reasoning as amlReviewNotificationChannel above. */
+  @Column({ name: 'chargeback_monitoring_notification_channel', type: 'varchar', default: 'WEBHOOK' })
+  chargebackMonitoringNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  /** Channel-specific destination for chargeback-monitoring notifications — same posture as amlReviewNotificationTarget above. */
+  @Column({ name: 'chargeback_monitoring_notification_target', type: 'varchar', nullable: true })
+  chargebackMonitoringNotificationTarget?: string | null;
+
+  /**
    * Real-world legal identity, captured optionally at `POST
    * /admin/merchants` — unlike `name` (a display name never treated as
    * verified), this is what sanctions/watchlist screening runs against
@@ -560,6 +606,56 @@ export class MerchantEntity {
 
   @Column({ name: 'sanctions_notification_target', type: 'varchar', nullable: true })
   sanctionsNotificationTarget?: string | null;
+
+  /**
+   * Whether `isActive = false` on this merchant means a real-network
+   * card-scheme termination ("terminated for cause" — fraud, laundering,
+   * excessive chargebacks, ...) rather than an ordinary deactivation
+   * (`PATCH .../status`, voluntary account closure, a credential
+   * rotation side-effect, etc.). Mastercard's MATCH ("Member Alert To
+   * Control High-risk Merchants") file is the real-world reason this
+   * distinction exists at all: only a for-cause termination gets
+   * reported into it (see `MatchReportingPort`), and every future
+   * acquirer doing their own due diligence on this merchant checks that
+   * file. `isActive` itself doesn't carry this information — it's set
+   * to `false` identically either way — so this flag (and the fields
+   * below it) exist purely to capture *why*, set only by
+   * `MerchantService.terminateForCause()`.
+   */
+  @Column({ name: 'match_terminated_for_cause', default: false })
+  matchTerminatedForCause: boolean;
+
+  /** One of `MATCH_REASON_CODES` (match-reason-code.ts) — null unless matchTerminatedForCause is true. */
+  @Column({ name: 'match_reason_code', type: 'varchar', nullable: true })
+  matchReasonCode?: string | null;
+
+  /** Free-text explanation alongside matchReasonCode — same audit-trail posture as amlReviewFlagReason. */
+  @Column({ name: 'match_reason', type: 'varchar', nullable: true })
+  matchReason?: string | null;
+
+  @Column({ name: 'match_terminated_by', type: 'varchar', nullable: true })
+  matchTerminatedBy?: string | null;
+
+  @Column({ name: 'match_terminated_at', type: 'timestamp', nullable: true })
+  matchTerminatedAt?: Date | null;
+
+  /**
+   * Null until `MatchReportingPort.report()` actually succeeds —
+   * deliberately distinct from `matchTerminatedAt` (the termination
+   * decision itself), because the two can legitimately drift apart: the
+   * termination is recorded first, unconditionally, then the network
+   * filing is attempted in a try/catch a reporting-provider outage must
+   * never roll back or block — same "side-effect failure never masks
+   * the already-correctly-recorded state" posture as every notification
+   * dispatcher in this codebase. `POST .../match/report` retries the
+   * filing on its own, without reversing or repeating the termination,
+   * whenever this stays null.
+   */
+  @Column({ name: 'match_reported_at', type: 'timestamp', nullable: true })
+  matchReportedAt?: Date | null;
+
+  @Column({ name: 'match_report_id', type: 'varchar', nullable: true })
+  matchReportId?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

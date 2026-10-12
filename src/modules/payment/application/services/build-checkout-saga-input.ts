@@ -42,6 +42,7 @@ export function buildCheckoutSagaInput(params: {
       country: dto.binInfo.country,
       cardBrand: dto.binInfo.cardBrand,
       cardType: dto.binInfo.cardType,
+      cardProduct: dto.binInfo.cardProduct,
       issuingBank: dto.binInfo.issuingBank,
     });
   }

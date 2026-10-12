@@ -83,6 +83,11 @@ import { AmlReviewNotificationDispatcherService } from './application/services/a
 import { EmailAmlReviewNotificationAdapter } from './adapters/notifications/email-aml-review-notification.adapter';
 import { SlackAmlReviewNotificationAdapter } from './adapters/notifications/slack-aml-review-notification.adapter';
 import { WebhookAmlReviewNotificationAdapter } from './adapters/notifications/webhook-aml-review-notification.adapter';
+import { ChargebackMonitoringService } from './application/services/chargeback-monitoring.service';
+import { ChargebackMonitoringNotificationDispatcherService } from './application/services/chargeback-monitoring-notification-dispatcher.service';
+import { EmailChargebackMonitoringNotificationAdapter } from './adapters/notifications/email-chargeback-monitoring-notification.adapter';
+import { SlackChargebackMonitoringNotificationAdapter } from './adapters/notifications/slack-chargeback-monitoring-notification.adapter';
+import { WebhookChargebackMonitoringNotificationAdapter } from './adapters/notifications/webhook-chargeback-monitoring-notification.adapter';
 import { PspFeeScheduleService } from './application/services/psp-fee-schedule.service';
 import { PspCostReconciliationService } from './application/services/psp-cost-reconciliation.service';
 import { ReservePolicyEscalationListener } from './application/services/reserve-policy-escalation.listener';
@@ -115,6 +120,7 @@ import { LegalHoldAdminController } from './application/controllers/legal-hold-a
 import { AmbiguousPaymentAdminController } from './application/controllers/ambiguous-payment-admin.controller';
 import { AmbiguousRiskAdminController } from './application/controllers/ambiguous-risk-admin.controller';
 import { AmlReviewAdminController } from './application/controllers/aml-review-admin.controller';
+import { ChargebackMonitoringAdminController } from './application/controllers/chargeback-monitoring-admin.controller';
 import { PspCostReconciliationAdminController } from './application/controllers/psp-cost-reconciliation-admin.controller';
 
 // Webhook Guards
@@ -199,6 +205,7 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     AmbiguousPaymentAdminController,
     AmbiguousRiskAdminController,
     AmlReviewAdminController,
+    ChargebackMonitoringAdminController,
     PspCostReconciliationAdminController,
     WebhookDeliveryAdminController,
   ],
@@ -346,6 +353,15 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     WebhookAmlReviewNotificationAdapter,
     AmlReviewNotificationDispatcherService,
     AmlReviewMonitoringService,
+
+    // Chargeback-monitoring-program (VDMP/ECP) notification channel
+    // adapters + dispatcher — same "called directly, no @OnEvent
+    // listener needed" reasoning as the AML-review block above.
+    EmailChargebackMonitoringNotificationAdapter,
+    SlackChargebackMonitoringNotificationAdapter,
+    WebhookChargebackMonitoringNotificationAdapter,
+    ChargebackMonitoringNotificationDispatcherService,
+    ChargebackMonitoringService,
 
     // Webhook delivery log — read/replay side (the write side is called
     // directly from inside each Webhook*NotificationAdapter above,

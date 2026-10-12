@@ -525,7 +525,26 @@ const server = http.createServer((req, res) => {
       // reads (PaymentIntent.charges.data[0].outcome), not a flattened
       // shortcut this mock invented.
       const riskScore = mockRiskScoreForTransaction(id);
-      const outcomeCharge = { outcome: { risk_level: stripeRiskLevelForScore(riskScore), risk_score: riskScore } };
+      // StripePSPAdapter.extractCardCheckResult()'s target — same
+      // "marker in the free-text field" convention as FORCE_3DS above:
+      // "AVSFAIL"/"CVVFAIL" anywhere in `description` (case-insensitive)
+      // simulates that specific check failing; real Stripe nests both
+      // under charges.data[0].payment_method_details.card.checks.
+      const description = params.get('description') || '';
+      const avsFails = /avsfail/i.test(description);
+      const cvvFails = /cvvfail/i.test(description);
+      const outcomeCharge = {
+        outcome: { risk_level: stripeRiskLevelForScore(riskScore), risk_score: riskScore },
+        payment_method_details: {
+          card: {
+            checks: {
+              address_line1_check: avsFails ? 'fail' : 'pass',
+              address_zip_check: avsFails ? 'fail' : 'pass',
+              cvc_check: cvvFails ? 'fail' : 'pass',
+            },
+          },
+        },
+      };
 
       const declineCode = declineCodeFor(params.get('payment_method'));
       if (declineCode) {
@@ -537,7 +556,7 @@ const server = http.createServer((req, res) => {
           charges: { data: [outcomeCharge] },
         });
       }
-      const forced = (params.get('description') || '').includes('FORCE_3DS');
+      const forced = description.includes('FORCE_3DS');
       if (forced || EU_COUNTRIES.has(binCountry)) {
         return send(res, 200, {
           id,
@@ -740,6 +759,20 @@ const server = http.createServer((req, res) => {
         accountScore: riskScore,
         results: [{ accountScoreResult: riskScore, checkId: 1, name: 'CardChunkingCheck' }],
       };
+      // AdyenPspAdapter.extractCardCheckResult()'s target — same
+      // "AVSFAIL"/"CVVFAIL" marker convention as the Stripe route above,
+      // read off `shopperStatement` (the real Adyen field
+      // AdyenPspAdapter forwards ChargePaymentDto.statementDescriptor
+      // as) since this mock request has no `description` field the way
+      // Stripe's does. Returns this port's own normalized
+      // avsResult/cvvResult values directly rather than real Adyen's
+      // numeric-coded strings — see AdyenPspAdapter.extractCardCheckResult()'s
+      // docblock for why.
+      const shopperStatement = parsedBody.shopperStatement || '';
+      const additionalData = {
+        avsResult: /avsfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
+        cvcResult: /cvvfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
+      };
 
       const declineCode = declineCodeFor((parsedBody.paymentMethod || {}).storedPaymentMethodId);
       if (declineCode) {
@@ -749,6 +782,7 @@ const server = http.createServer((req, res) => {
           refusalReasonCode: adyenRefusalReasonCodeFor(declineCode),
           refusalReason: 'Refused',
           fraudResult,
+          additionalData,
         });
       }
       if (EU_COUNTRIES.has(binCountry)) {
@@ -760,7 +794,7 @@ const server = http.createServer((req, res) => {
       }
       if (isManualCapture) {
         pendingAuthorizations.set(pspReference, { currency: amountCurrency });
-        return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult });
+        return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult, additionalData });
       }
       adyenSettlements.push({
         id: pspReference,
@@ -768,7 +802,7 @@ const server = http.createServer((req, res) => {
         currency: amountCurrency,
         createdAt: new Date().toISOString(),
       });
-      return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult });
+      return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult, additionalData });
     }
     // See the matching comment on the Stripe /v1/payment_intents/lookup
     // route above — PSPAdapterPort.queryOutcome()'s Adyen-shaped target.
@@ -926,6 +960,30 @@ const server = http.createServer((req, res) => {
         return send(res, 200, { status: 'POTENTIAL_MATCH', matchedListEntry: name.toUpperCase(), score: 0.93 });
       }
       return send(res, 200, { status: 'CLEAR' });
+    }
+
+    // MockMatchReportingAdapter's target — files a (mock) Mastercard MATCH
+    // report. Same "marker in the free-text field" convention as
+    // /sanctions/screen's "SANCTIONED" marker above: "FAIL_REPORT" anywhere
+    // in `reason` (case-insensitive) simulates a provider-side filing
+    // failure, so callers can exercise MerchantService.terminateForCause()'s
+    // failure-tolerant posture without a real network outage.
+    if (path === '/match/report' && req.method === 'POST') {
+      let parsedBody = {};
+      try {
+        parsedBody = JSON.parse(data || '{}');
+      } catch (e) {
+        // malformed body — fall through with an empty parsed body
+      }
+      const { merchantId, reasonCode, reason } = parsedBody;
+      if (!merchantId || !reasonCode) {
+        return send(res, 400, { error: 'merchantId and reasonCode are required' });
+      }
+      if (/fail_report/i.test(reason || '')) {
+        return send(res, 502, { error: 'match_network_unavailable' });
+      }
+      const reportId = 'match_mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      return send(res, 200, { reportId, reportedAt: new Date().toISOString() });
     }
 
     // Persona-shaped KYC application submission — PersonaKycProviderAdapter's

@@ -11,6 +11,8 @@ import { KYCProviderPort } from './kyc-provider.port';
 import { KYBProviderPort, BeneficialOwner } from './kyb-provider.port';
 import { lookupIndustryRiskCategory } from './mcc-risk-lookup';
 import { SanctionsScreeningService } from './sanctions/sanctions-screening.service';
+import { MatchReportingPort } from './match-reporting.port';
+import { MatchReasonCode } from './match-reason-code';
 
 const BCRYPT_ROUNDS = 12;
 // Fixed dummy hash compared against on an unknown apiKeyId, so lookup vs.
@@ -38,6 +40,7 @@ export class MerchantService {
     private readonly kybProvider: KYBProviderPort,
     private readonly sanctionsScreening: SanctionsScreeningService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly matchReporting: MatchReportingPort,
   ) {}
 
   // Forced onto master, rather than the ambient replica-routed connection (see
@@ -152,6 +155,26 @@ export class MerchantService {
         .createQueryBuilder(MerchantEntity, 'm')
         .where('m.isActive = :isActive', { isActive: true })
         .andWhere('m.riskTierAutoManaged = :autoManaged', { autoManaged: true })
+        .andWhere(afterId ? 'm.id > :afterId' : '1=1', afterId ? { afterId } : {})
+        .orderBy('m.id', 'ASC')
+        .take(limit)
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /** Same keyset-pagination shape as findActiveAutoManagedBatch() above, filtered on chargebackMonitoringAutoManaged instead, for ChargebackMonitoringService's sweep. */
+  async findActiveChargebackMonitoringAutoManagedBatch(
+    afterId: string | undefined,
+    limit: number,
+  ): Promise<MerchantEntity[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager
+        .createQueryBuilder(MerchantEntity, 'm')
+        .where('m.isActive = :isActive', { isActive: true })
+        .andWhere('m.chargebackMonitoringAutoManaged = :autoManaged', { autoManaged: true })
         .andWhere(afterId ? 'm.id > :afterId' : '1=1', afterId ? { afterId } : {})
         .orderBy('m.id', 'ASC')
         .take(limit)
@@ -913,6 +936,70 @@ export class MerchantService {
     return merchant;
   }
 
+  /** Called by ChargebackMonitoringService's own sweep — same re-touch-on-repeated-incident shape as applyAutoAmlReviewFlag() above, but carries a tier rather than a boolean. */
+  async applyAutoChargebackMonitoringTier(
+    merchantId: string,
+    tier: 'NONE' | 'MONITORING' | 'EXCESSIVE',
+    reason: string,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.chargebackMonitoringTier = tier;
+    merchant.chargebackMonitoringFlaggedAt = tier === 'NONE' ? undefined : new Date();
+    merchant.chargebackMonitoringReason = tier === 'NONE' ? undefined : reason;
+    merchant.chargebackMonitoringFlaggedBy = undefined;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `chargebackMonitoringTier for merchant ${merchantId} automatically set to ${tier}${tier !== 'NONE' ? `: ${reason}` : ''}`,
+    );
+    return merchant;
+  }
+
+  /** Manual override — same "sticks until explicitly re-enabled" posture as setAmlReviewFlagManual() above. */
+  async setChargebackMonitoringTierManual(
+    merchantId: string,
+    tier: 'NONE' | 'MONITORING' | 'EXCESSIVE',
+    reason: string,
+    flaggedBy: string,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.chargebackMonitoringTier = tier;
+    merchant.chargebackMonitoringFlaggedAt = tier === 'NONE' ? undefined : new Date();
+    merchant.chargebackMonitoringReason = reason;
+    merchant.chargebackMonitoringFlaggedBy = flaggedBy;
+    merchant.chargebackMonitoringAutoManaged = false;
+    await this.merchantRepo.save(merchant);
+    this.logger.warn(
+      `chargebackMonitoringTier for merchant ${merchantId} manually set to ${tier} by ${flaggedBy}: ${reason} (chargebackMonitoringAutoManaged disabled)`,
+    );
+    return merchant;
+  }
+
+  /** Re-enables ChargebackMonitoringService's automated tier logic for this merchant — same pattern as setAmlReviewAutoManaged() above. */
+  async setChargebackMonitoringAutoManaged(merchantId: string, enabled: boolean): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.chargebackMonitoringAutoManaged = enabled;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`chargebackMonitoringAutoManaged for merchant ${merchantId} set to ${enabled}`);
+    return merchant;
+  }
+
+  /** Same pattern as updateAmlReviewNotificationChannel() above. */
+  async updateChargebackMonitoringNotificationChannel(
+    merchantId: string,
+    channel: 'EMAIL' | 'SLACK' | 'WEBHOOK',
+    target: string | null,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = `${merchant.chargebackMonitoringNotificationChannel}:${merchant.chargebackMonitoringNotificationTarget ?? '(none)'}`;
+    merchant.chargebackMonitoringNotificationChannel = channel;
+    merchant.chargebackMonitoringNotificationTarget = target;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `Chargeback-monitoring notification channel for merchant ${merchantId} changed from ${previous} to ${channel}:${target ?? '(none)'}`,
+    );
+    return merchant;
+  }
+
   /**
    * On-demand re-screen (`POST /admin/merchants/:id/sanctions/rescreen`)
    * against this merchant's currently-stored `legalName`/`taxId` (or
@@ -1024,6 +1111,88 @@ export class MerchantService {
     }
     this.logger.warn(`Merchant ${merchantId} ${isActive ? 'reactivated' : 'deactivated'}`);
     return merchant;
+  }
+
+  /**
+   * `POST .../terminate-for-cause` — distinct from `setActive(false)`
+   * above: this records *why* the merchant is being deactivated — a
+   * real card-network termination ground rather than a voluntary
+   * closure — and files a Mastercard MATCH report, which `setActive()`
+   * has no equivalent for. Sets
+   * `isActive = false` itself rather than requiring a separate call —
+   * terminating for cause always deactivates; there's no scenario where
+   * an operator wants one without the other.
+   *
+   * The MATCH filing is attempted in a try/catch a reporting-provider
+   * outage must never roll back or block: the termination decision is
+   * persisted first, unconditionally, same "notification failure never
+   * masks the already-correctly-recorded state" posture as
+   * `ChargebackMonitoringService.evaluateMerchantEntity()`'s own
+   * try/catch around its notification dispatch. `retryMatchReport()`
+   * below re-attempts the filing on its own if this one fails.
+   */
+  async terminateForCause(
+    merchantId: string,
+    reasonCode: MatchReasonCode,
+    reason: string,
+    actingAdmin: string,
+  ): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    merchant.isActive = false;
+    merchant.matchTerminatedForCause = true;
+    merchant.matchReasonCode = reasonCode;
+    merchant.matchReason = reason;
+    merchant.matchTerminatedBy = actingAdmin;
+    merchant.matchTerminatedAt = new Date();
+    await this.merchantRepo.save(merchant);
+    await this.tokenRevocation.revokeAllForMerchant(merchantId);
+    this.logger.warn(
+      `Merchant ${merchantId} terminated for cause (MATCH code ${reasonCode}) by ${actingAdmin}: ${reason}`,
+    );
+
+    try {
+      await this.fileMatchReport(merchant);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `MATCH report filing failed for merchant ${merchantId} (termination still correctly recorded): ${msg}`,
+      );
+    }
+
+    return merchant;
+  }
+
+  /**
+   * `POST .../match/report` — re-attempts the MATCH filing for a
+   * merchant whose `terminateForCause()` call recorded the termination
+   * but whose filing failed (`matchReportedAt` still null). Unlike
+   * `terminateForCause()`'s own try/catch, a failure here propagates —
+   * an operator explicitly asking for a retry should see it fail
+   * immediately rather than have it silently logged again.
+   */
+  async retryMatchReport(merchantId: string): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    if (!merchant.matchTerminatedForCause) {
+      throw new UnprocessableEntityException({
+        message: 'Merchant was not terminated for cause — nothing to report',
+        code: 'NOT_TERMINATED_FOR_CAUSE',
+      });
+    }
+    await this.fileMatchReport(merchant);
+    return merchant;
+  }
+
+  private async fileMatchReport(merchant: MerchantEntity): Promise<void> {
+    const result = await this.matchReporting.report({
+      merchantId: merchant.merchantId,
+      legalName: merchant.legalName ?? merchant.name,
+      reasonCode: merchant.matchReasonCode as MatchReasonCode,
+      reason: merchant.matchReason ?? '',
+    });
+    merchant.matchReportedAt = result.reportedAt;
+    merchant.matchReportId = result.reportId;
+    await this.merchantRepo.save(merchant);
+    this.logger.warn(`Merchant ${merchant.merchantId} reported to MATCH: reportId=${result.reportId}`);
   }
 
   /** Explicit "log out everywhere" for a merchant, independent of any credential change. */

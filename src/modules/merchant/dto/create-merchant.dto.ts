@@ -17,6 +17,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { MATCH_REASON_CODES, MatchReasonCode } from '../match-reason-code';
 
 const VALID_ROLES = ['ADMIN', 'MERCHANT', 'OPERATOR', 'READONLY'];
 // Matches PaymentProcessorFactory's actual registered adapters (payment
@@ -167,6 +168,26 @@ export class UpdateMerchantStatusDto {
   @ApiProperty({ example: false })
   @IsBoolean()
   isActive: boolean;
+}
+
+export class TerminateForCauseDto {
+  @ApiProperty({
+    example: '04',
+    enum: MATCH_REASON_CODES,
+    description:
+      "Mastercard MATCH reason code — see match-reason-code.ts for the full list and each code's real-world meaning.",
+  })
+  @IsIn(MATCH_REASON_CODES)
+  reasonCode: MatchReasonCode;
+
+  @ApiProperty({
+    example: 'Dispute rate stayed in the EXCESSIVE chargeback-monitoring tier for 3 consecutive sweeps',
+    description:
+      'Required — same audit-trail posture as UpdateAmlReviewFlagDto.reason. Recorded alongside the MATCH filing itself.',
+  })
+  @IsString()
+  @MinLength(1)
+  reason: string;
 }
 
 export class UpdateFeeRateDto {
@@ -407,6 +428,57 @@ export class UpdateAmlReviewAutoDto {
   })
   @IsBoolean()
   enabled: boolean;
+}
+
+export class UpdateChargebackMonitoringTierDto {
+  @ApiProperty({
+    example: 'MONITORING',
+    enum: ['NONE', 'MONITORING', 'EXCESSIVE'],
+    description: "Manually set or clear this merchant's chargeback-monitoring-program tier.",
+  })
+  @IsIn(['NONE', 'MONITORING', 'EXCESSIVE'])
+  tier: 'NONE' | 'MONITORING' | 'EXCESSIVE';
+
+  @ApiProperty({
+    example: 'Manually placed on monitoring pending network correspondence',
+    description:
+      'Required — same audit-trail posture as UpdateAmlReviewFlagDto.reason. Setting this also disables chargebackMonitoringAutoManaged: a manual action sticks until explicitly re-enabled via PATCH .../chargeback-monitoring-auto.',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  reason: string;
+}
+
+export class UpdateChargebackMonitoringAutoDto {
+  @ApiProperty({
+    example: true,
+    description:
+      "true: ChargebackMonitoringService's automated tier logic may manage this merchant again. false: leave it exactly as set (a manual tier change already sets this to false as a side effect).",
+  })
+  @IsBoolean()
+  enabled: boolean;
+}
+
+export class UpdateChargebackMonitoringNotificationChannelDto {
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description:
+      "Which channel ChargebackMonitoringNotificationDispatcherService uses for this merchant's chargeback_monitoring.tier_changed event. Independent of amlReviewNotificationChannel/disputeNotificationChannel/subscriptionNotificationChannel.",
+  })
+  @IsIn(['EMAIL', 'SLACK', 'WEBHOOK'])
+  channel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/webhooks/omniswitch-chargeback-monitoring',
+    description:
+      'Channel-specific destination: a URL for WEBHOOK, a Slack Incoming Webhook URL for SLACK, or an email address for EMAIL. Omit or send null to clear it (notifications then skip this merchant entirely).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  target?: string | null;
 }
 
 export class UpdateSanctionsReviewDto {
@@ -750,6 +822,53 @@ export class MerchantSummaryDto {
   })
   amlReviewNotificationTarget: string | null;
 
+  @ApiProperty({
+    example: 'NONE',
+    enum: ['NONE', 'MONITORING', 'EXCESSIVE'],
+    description:
+      'Network chargeback-monitoring program standing (the mechanism real card networks implement as Visa VDMP / Mastercard ECP) — set by ChargebackMonitoringService from the dispute-to-transaction ratio over a rolling window. Independent of riskTier/reserveBps, which answer a different question entirely (reserve pricing, rather than network compliance exposure).',
+  })
+  chargebackMonitoringTier: 'NONE' | 'MONITORING' | 'EXCESSIVE';
+
+  @ApiProperty({ example: null, nullable: true })
+  chargebackMonitoringFlaggedAt: string | null;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: "Why this merchant is at this tier — automated summary or an operator's own stated reason",
+  })
+  chargebackMonitoringReason: string | null;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      'merchantId of the ADMIN/OPERATOR who manually set this tier — null when the current state was set automatically',
+  })
+  chargebackMonitoringFlaggedBy: string | null;
+
+  @ApiProperty({
+    example: true,
+    description: "Whether ChargebackMonitoringService's automated tier logic may manage this merchant's tier",
+  })
+  chargebackMonitoringAutoManaged: boolean;
+
+  @ApiProperty({
+    example: 'WEBHOOK',
+    enum: ['EMAIL', 'SLACK', 'WEBHOOK'],
+    description: "Which channel this merchant's chargeback-monitoring tier-change notification goes out on.",
+  })
+  chargebackMonitoringNotificationChannel: 'EMAIL' | 'SLACK' | 'WEBHOOK';
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description:
+      'Channel-specific destination — null means no chargeback-monitoring notification is sent for this merchant.',
+  })
+  chargebackMonitoringNotificationTarget: string | null;
+
   @ApiPropertyOptional({ example: null, nullable: true, description: 'Registered legal name, if supplied' })
   legalName?: string | null;
 
@@ -793,6 +912,34 @@ export class MerchantSummaryDto {
     description: 'Channel-specific destination — null means no sanctions notification is sent for this merchant.',
   })
   sanctionsNotificationTarget?: string | null;
+
+  @ApiProperty({
+    description:
+      'Whether isActive=false on this merchant is a card-network termination for cause (see TerminateForCauseDto), rather than an ordinary deactivation.',
+  })
+  matchTerminatedForCause: boolean;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  matchReasonCode?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  matchReason?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  matchTerminatedBy?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  matchTerminatedAt?: string | null;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description: 'Null until the MATCH filing actually succeeds — POST .../match/report retries it if still null.',
+  })
+  matchReportedAt?: string | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  matchReportId?: string | null;
 
   @ApiProperty()
   createdAt: string;

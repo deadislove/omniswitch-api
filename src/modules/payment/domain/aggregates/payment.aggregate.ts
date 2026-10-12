@@ -3,6 +3,7 @@ import { PaymentStatus, assertValidTransition } from '../value-objects/payment-s
 import { BinInfo } from '../value-objects/bin-info.vo';
 import { DomainEvent } from '../events/domain-event.base';
 import { classifyDeclineCode, DeclineCategory } from '../services/decline-code-classifier';
+import { AvsResult, CvvResult, InterchangeQualificationResult } from '../services/interchange-qualification';
 import {
   PaymentIntentCreatedEvent,
   PaymentChargedEvent,
@@ -133,6 +134,9 @@ export class PaymentAggregate {
     private _taxRecord?: TaxRecord,
     private _delegationId?: string,
     private _initiatedBy: PaymentInitiator = 'human',
+    private _avsResult?: AvsResult,
+    private _cvvResult?: CvvResult,
+    private _interchangeQualification?: InterchangeQualificationResult,
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -175,6 +179,9 @@ export class PaymentAggregate {
       undefined, // taxRecord
       params.delegationId,
       params.initiatedBy ?? 'human',
+      undefined, // avsResult
+      undefined, // cvvResult
+      undefined, // interchangeQualification
     );
 
     payment.addDomainEvent(
@@ -218,6 +225,9 @@ export class PaymentAggregate {
     taxRecord?: TaxRecord;
     delegationId?: string;
     initiatedBy?: PaymentInitiator;
+    avsResult?: AvsResult;
+    cvvResult?: CvvResult;
+    interchangeQualification?: InterchangeQualificationResult;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -247,6 +257,9 @@ export class PaymentAggregate {
       params.taxRecord,
       params.delegationId,
       params.initiatedBy ?? 'human',
+      params.avsResult,
+      params.cvvResult,
+      params.interchangeQualification,
     );
   }
 
@@ -289,11 +302,21 @@ export class PaymentAggregate {
     pspTransactionId: string,
     pspRawResponse?: Record<string, unknown>,
     pspRiskSignal?: PspRiskSignal,
+    avsResult?: AvsResult,
+    cvvResult?: CvvResult,
   ): void {
     assertValidTransition(this._status, PaymentStatus.REQUIRES_CAPTURE);
     this._pspTransactionId = pspTransactionId;
     this._pspRawResponse = pspRawResponse;
     this._pspRiskSignal = pspRiskSignal;
+    // Recorded now (authorization time) rather than re-derived later —
+    // whatever capture eventually completes this authorization (possibly
+    // days later, see SETTLEMENT_WINDOW_HOURS) reads these back via
+    // avsResult/cvvResult getters to run
+    // evaluateInterchangeQualification(), since that's the only point
+    // this check result was ever actually returned by the PSP.
+    this._avsResult = avsResult;
+    this._cvvResult = cvvResult;
     this.transitionTo(PaymentStatus.REQUIRES_CAPTURE);
   }
 
@@ -372,11 +395,15 @@ export class PaymentAggregate {
     pspTransactionId: string,
     pspRawResponse?: Record<string, unknown>,
     pspRiskSignal?: PspRiskSignal,
+    avsResult?: AvsResult,
+    cvvResult?: CvvResult,
   ): void {
     assertValidTransition(this._status, PaymentStatus.SUCCEEDED);
     this._pspTransactionId = pspTransactionId;
     this._pspRawResponse = pspRawResponse;
     this._pspRiskSignal = pspRiskSignal;
+    if (avsResult) this._avsResult = avsResult;
+    if (cvvResult) this._cvvResult = cvvResult;
     this.transitionTo(PaymentStatus.SUCCEEDED);
     this.addDomainEvent(
       new PaymentChargedEvent(
@@ -619,6 +646,22 @@ export class PaymentAggregate {
     this._splits = bookedSplits;
   }
 
+  /**
+   * Records this payment's interchange qualification/downgrade outcome
+   * (see `evaluateInterchangeQualification()`) — same "record once,
+   * never overwritten" posture as `recordSettlementConversion()` above:
+   * called exactly once, at the moment a charge is *actually* confirmed
+   * captured (`PaymentCheckoutSaga`'s immediate-capture branch, or
+   * `PaymentLifecycleService.capture()`'s manual-capture completion),
+   * never re-evaluated afterward even if this payment is later refunded
+   * or disputed — the interchange cost was already incurred against
+   * whatever qualification applied at capture time.
+   */
+  recordInterchangeQualification(result: InterchangeQualificationResult): void {
+    if (this._interchangeQualification) return;
+    this._interchangeQualification = result;
+  }
+
   // ─── Risk Assessment ────────────────────────────────────────────────────────
 
   /**
@@ -718,6 +761,15 @@ export class PaymentAggregate {
   }
   get pspRiskSignal(): PspRiskSignal | undefined {
     return this._pspRiskSignal;
+  }
+  get avsResult(): AvsResult | undefined {
+    return this._avsResult;
+  }
+  get cvvResult(): CvvResult | undefined {
+    return this._cvvResult;
+  }
+  get interchangeQualification(): InterchangeQualificationResult | undefined {
+    return this._interchangeQualification;
   }
   get threeDSResult(): ThreeDSResult | undefined {
     return this._threeDSResult;

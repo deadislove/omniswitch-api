@@ -12,15 +12,17 @@ instead; for a guided onboarding path through both, see
 
 - [`merchants.md`](./merchants.md) — what a `Merchant` is, PLATFORM vs.
   CONNECTED account types, the onboarding pipeline (identity capture,
-  sanctions screening, KYC), and the four independent trust signals
-  evaluated over a merchant's lifetime
+  sanctions screening, KYC), the five independent trust signals
+  evaluated over a merchant's lifetime, and account termination for
+  cause (Mastercard MATCH reporting)
 
 ## Core payment flow
 
 - [`payment-lifecycle.md`](./payment-lifecycle.md) — the payment state
   machine, what triggers each transition, idempotency
-- [`fee-model.md`](./fee-model.md) — platform fee-rate calculation and
-  PSP interchange-cost reconciliation
+- [`fee-model.md`](./fee-model.md) — platform fee-rate calculation,
+  PSP interchange-cost reconciliation, and real interchange rate
+  qualification/downgrade
 - [`fx-conversion.md`](./fx-conversion.md) — cross-currency merchant
   settlement, refund/dispute FX replay, presentment currency
 - [`ledger-accounting.md`](./ledger-accounting.md) — the double-entry
@@ -33,9 +35,11 @@ instead; for a guided onboarding path through both, see
 - [`disputes.md`](./disputes.md) — the dispute state machine,
   representment, and the auto-decision policy that decides whether
   this platform contests one automatically
-- [`risk-and-fraud.md`](./risk-and-fraud.md) — the two independent
-  risk signals this platform tracks per merchant: reserve-driving risk
-  tiering and ambiguous-payment (PSP-reliability) monitoring
+- [`risk-and-fraud.md`](./risk-and-fraud.md) — the five independent
+  signals this platform tracks per merchant: reserve-driving risk
+  tiering, Visa VDMP/Mastercard ECP chargeback-monitoring-program
+  observation, ambiguous-payment (PSP-reliability) monitoring, AML
+  review observation, and sanctions/watchlist screening
 
 ## Marketplace & recurring billing
 

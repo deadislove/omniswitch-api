@@ -68,6 +68,25 @@ export interface PSPChargeResponse {
   errorCode?: string;
   errorMessage?: string;
   riskSignal?: PSPRiskSignal;
+  /**
+   * Address Verification Service result for this authorization —
+   * real Stripe returns this per-check (`address_line1_check`/
+   * `address_zip_check`, each `pass`/`fail`/`unavailable`/`unchecked`);
+   * real Adyen returns a single coded `avsResult` string. Same
+   * "deliberately a normalized union of two different real vocabularies"
+   * idiom as `PSPRiskSignal` above — `PARTIAL` only ever comes from
+   * Stripe (one of its two checks passed, the other didn't; Adyen's own
+   * coded result doesn't distinguish that from a full match the way this
+   * adapter layer reads it). Undefined specifically when the PSP never
+   * populated anything to read at all (e.g. a REQUIRES_ACTION response
+   * that never reached a real authorization attempt) — distinct from
+   * an explicit UNAVAILABLE report. Feeds `evaluateInterchangeQualification()`
+   * (domain/services/interchange-qualification.ts) — see that
+   * function's own docblock.
+   */
+  avsResult?: 'MATCH' | 'PARTIAL' | 'NO_MATCH' | 'UNAVAILABLE';
+  /** Card Verification Value result for this authorization — same undefined-vs-UNAVAILABLE distinction as avsResult above. */
+  cvvResult?: 'MATCH' | 'NO_MATCH' | 'UNAVAILABLE';
 }
 
 export interface PSPRefundRequest {

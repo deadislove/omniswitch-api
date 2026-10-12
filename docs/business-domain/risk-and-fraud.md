@@ -1,12 +1,15 @@
 # Risk & Fraud Signals
 
-This describes the four independent signals this platform tracks per
+This describes the five independent signals this platform tracks per
 merchant — reserve-driving risk tiering (a chargeback-history signal),
-ambiguous-payment risk monitoring (a PSP-reliability signal), AML review
-observation (a HIGH-industry hard-decline signal), and sanctions/
-watchlist screening (a legal-obligation signal) — and why they're kept
-as separate mechanisms rather than merged into one "risk score." The
-next section makes that argument for the original two; AML review and
+chargeback-monitoring-program observation (a network-compliance
+signal — see below for how this differs from risk tiering despite
+both reading dispute history), ambiguous-payment risk monitoring (a
+PSP-reliability signal), AML review observation (a HIGH-industry
+hard-decline signal), and sanctions/watchlist screening (a
+legal-obligation signal) — and why they're kept as separate mechanisms
+rather than merged into one "risk score." The next section makes that
+argument for the original two; chargeback monitoring, AML review, and
 sanctions screening each answer a further, differently-shaped question
 still, covered in their own sections below. See
 [`ledger-and-settlement.md`](./ledger-and-settlement.md#merchant-risk-tiering--reserves)
@@ -147,6 +150,65 @@ reverses a top-up that already happened. See
 [`future-directions.md`](./future-directions.md#merchant-risk-tiering--reserves)
 for the fuller list, including the real (synthetic-data) calibration
 exercise this platform has actually run against these thresholds.
+
+## Chargeback-monitoring-program observation (network-compliance signal)
+
+Real card networks run mandatory merchant monitoring programs — Visa's
+Dispute Monitoring Program (VDMP) and Mastercard's Excessive Chargeback
+Program (ECP) — that flag a merchant whose dispute-to-settled-charge
+ratio crosses a published threshold. An acquirer is contractually
+obligated to track this and respond; a merchant that stays flagged long
+enough risks escalating fines and eventually forced termination from
+the network (see
+[`merchants.md#account-termination-for-cause-and-the-match-report`](./merchants.md#account-termination-for-cause-and-the-match-report)
+for what that termination actually looks like in this system).
+`ChargebackMonitoringService` models the flagging mechanism.
+
+**Why this is a separate service from risk tiering, despite both
+reading dispute history**: the two answer genuinely different
+questions, with genuinely different inputs.
+
+| | Risk tiering | Chargeback monitoring |
+|---|---|---|
+| Question | Should this merchant's reserve rate change? | Is this merchant at risk of a network compliance penalty? |
+| Numerator | `LOST` disputes only — a dispute this platform actually lost money on | Every dispute received, regardless of outcome — a network penalizes the chargeback landing at all, before anyone knows who wins it |
+| Window | 90 days | 30 days, closer to a network's own monthly assessment cadence |
+| Consequence | Adjusts `reserveBps`/`reserveHoldDays` | Flags `chargebackMonitoringTier` and notifies; never touches the reserve |
+
+A merchant could plausibly sit in `RiskTieringService`'s `LOW` tier
+(few disputes actually lost) while still tripping chargeback
+monitoring (many disputes received, win or lose) — that gap is the
+whole reason this needed its own service rather than a second
+threshold bolted onto `RiskTieringService`.
+
+**Tiers**: `NONE` → `MONITORING` (>0.65% dispute rate) →
+`EXCESSIVE` (>1.8% dispute rate), evaluated over a trailing 30-day
+window of settled charges, gated at a minimum of 10 settled charges in
+that window so a tiny sample doesn't produce a meaningless percentage.
+Both thresholds are illustrative — round numbers in the real
+neighborhood of Visa VDMP's published tiers, left uncalibrated against
+this project's own synthetic data — and
+env-configurable (`CHARGEBACK_MONITORING_THRESHOLD`/
+`CHARGEBACK_EXCESSIVE_THRESHOLD`) per deployment.
+
+**Notifies on tier *change* in either direction** — unlike AML review
+observation below (notifies once on first trip, silent on every
+subsequent incident while already flagged), an operator watching for a
+network compliance fine cares about escalation, but also wants to know
+the moment a merchant works its way back out of the program. Same
+per-merchant channel configuration shape as every other signal here
+(`PATCH /admin/merchants/:id/chargeback-monitoring-notification-channel`).
+
+**Same manual-override posture as risk tiering and the other
+auto-managed signals**: `PATCH /admin/merchants/:id/chargeback-monitoring`
+sets the tier by hand (reason required, audited) and disables
+`chargebackMonitoringAutoManaged`, until
+`PATCH /admin/merchants/:id/chargeback-monitoring-auto` re-enables it.
+Daily sweep (`EVERY_DAY_AT_3AM`, a different slot from risk tiering's
+2AM so neither sweep's batched reads land in the same minute) — no
+on-demand run endpoint, since a dispute-rate history doesn't "age out"
+the way an ambiguous-outcome incident does, so there's nothing a
+run-now call would resolve faster than the next scheduled tick.
 
 ## Ambiguous-risk monitoring (PSP-reliability signal)
 
@@ -304,10 +366,18 @@ without a human in the loop.
 
 ## Not modeled
 
-- **No connection between the two signals.** A merchant with a run of
+- **No connection between the signals.** A merchant with a run of
   ambiguous payments isn't automatically considered for risk-tier
   escalation, even though a pattern of failed PSP calls could plausibly
-  correlate with other risk. They stay genuinely independent today.
+  correlate with other risk. Chargeback monitoring reaching `EXCESSIVE`
+  doesn't automatically trigger risk-tier escalation or a termination
+  decision either — a real acquirer's termination decision is usually
+  triggered by crossing a monitoring-program threshold, but this system
+  stops at flagging; connecting that flag to
+  `MerchantService.terminateForCause()` (see
+  [`merchants.md#account-termination-for-cause-and-the-match-report`](./merchants.md#account-termination-for-cause-and-the-match-report))
+  is left as an operator's own judgment call rather than automated.
+  They stay genuinely independent signals today.
 - **No fraud-scoring model of any kind at charge time.**
   `PaymentAggregate.calculateRiskScore()` is a simple amount/card-origin
   heuristic (plus, for an agent-initiated charge only, two agent-context

@@ -208,6 +208,23 @@ export class PaymentEntity {
   @Column({ name: 'ambiguous_auto_retry_count', type: 'int', default: 0 })
   ambiguousAutoRetryCount: number;
 
+  /** Normalized AVS/CVV check results from the PSP's authorization response — see `PSPChargeResponse.avsResult`'s docblock. Set once, at authorization time; never updated afterward. */
+  @Column({ name: 'avs_result', type: 'varchar', nullable: true })
+  avsResult?: string;
+
+  @Column({ name: 'cvv_result', type: 'varchar', nullable: true })
+  cvvResult?: string;
+
+  /**
+   * This payment's interchange qualification/downgrade outcome — see
+   * `PaymentAggregate.recordInterchangeQualification()`'s docblock. Only
+   * set once a charge actually captures (immediate or manual), and only
+   * when a `binInfo` was available to look a rate up for — same
+   * "only present when the needed signal exists" posture as `taxRecord`.
+   */
+  @Column({ name: 'interchange_qualification', type: 'jsonb', nullable: true })
+  interchangeQualification?: Record<string, unknown>;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

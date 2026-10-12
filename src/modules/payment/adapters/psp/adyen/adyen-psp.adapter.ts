@@ -101,6 +101,10 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           // it doesn't change Adyen's actual capture behavior on its own.
           ...(request.captureMethod === 'manual' ? { manualCapture: 'true' } : {}),
         },
+        // Real Adyen field name — the cardholder-statement text
+        // (StripePSPAdapter forwards the same ChargePaymentDto field as
+        // `statement_descriptor`). Only other use this adapter has for it.
+        ...(request.statementDescriptor ? { shopperStatement: request.statementDescriptor } : {}),
       };
 
       const response = await this.makeRequest('POST', '/payments', body, request.idempotencyKey);
@@ -114,6 +118,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
             status: 'REQUIRES_CAPTURE',
             rawResponse: response,
             riskSignal: this.extractRiskSignal(response),
+            ...this.extractCardCheckResult(response),
           };
         }
         return {
@@ -122,6 +127,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           status: 'SUCCEEDED',
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
+          ...this.extractCardCheckResult(response),
         };
       }
 
@@ -143,6 +149,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
         errorCode: response.refusalReasonCode,
         errorMessage: response.refusalReason,
         riskSignal: this.extractRiskSignal(response),
+        ...this.extractCardCheckResult(response),
       };
     } catch (error: unknown) {
       await this.circuitBreaker.recordFailure(this.provider);
@@ -164,6 +171,30 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     const score = response.fraudResult?.accountScore;
     if (typeof score !== 'number') return undefined;
     return { riskScore: score };
+  }
+
+  /**
+   * Real Adyen returns AVS/CVV results under `additionalData` as coded
+   * strings (docs.adyen.com/risk-management/avs-checks, .../cvc-checks),
+   * e.g. `"4 Address and postal code match"`. Unlike
+   * `extractRiskSignal()`'s `fraudResult.accountScore` above (a plain
+   * number this adapter is confident it's reading correctly), this mock
+   * doesn't attempt to reproduce that full numeric-coded vocabulary —
+   * `mock-psp/server.js`'s `/adyen/payments` route returns this port's
+   * own normalized `avsResult`/`cvvResult` values directly instead, so
+   * this just passes them through rather than translating a code table
+   * this project has no way to verify is exactly right.
+   */
+  private extractCardCheckResult(response: any): {
+    avsResult?: PSPChargeResponse['avsResult'];
+    cvvResult?: PSPChargeResponse['cvvResult'];
+  } {
+    const avsResult = response.additionalData?.avsResult;
+    const cvvResult = response.additionalData?.cvcResult;
+    return {
+      ...(avsResult ? { avsResult } : {}),
+      ...(cvvResult ? { cvvResult } : {}),
+    };
   }
 
   async refund(request: PSPRefundRequest): Promise<PSPRefundResponse> {

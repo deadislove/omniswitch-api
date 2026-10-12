@@ -7,6 +7,7 @@ export class BinInfo {
   private readonly _country: string;
   private readonly _cardBrand: CardBrand;
   private readonly _cardType: CardType;
+  private readonly _cardProduct: CardProduct;
   private readonly _issuingBank?: string;
 
   constructor(params: {
@@ -14,6 +15,8 @@ export class BinInfo {
     country: string;
     cardBrand: CardBrand;
     cardType: CardType;
+    /** Defaults to CONSUMER — the common case, and the only tier most test/demo callers have any reason to set explicitly. See CardProduct's own docblock. */
+    cardProduct?: CardProduct;
     issuingBank?: string;
   }) {
     if (!/^\d{6,8}$/.test(params.bin)) {
@@ -23,6 +26,7 @@ export class BinInfo {
     this._country = params.country.toUpperCase();
     this._cardBrand = params.cardBrand;
     this._cardType = params.cardType;
+    this._cardProduct = params.cardProduct ?? CardProduct.CONSUMER;
     this._issuingBank = params.issuingBank;
   }
 
@@ -37,6 +41,9 @@ export class BinInfo {
   }
   get cardType(): CardType {
     return this._cardType;
+  }
+  get cardProduct(): CardProduct {
+    return this._cardProduct;
   }
   get issuingBank(): string | undefined {
     return this._issuingBank;
@@ -102,4 +109,24 @@ export enum CardType {
   DEBIT = 'DEBIT',
   PREPAID = 'PREPAID',
   UNKNOWN = 'UNKNOWN',
+}
+
+/**
+ * The product-tier dimension of a real interchange rate table, alongside
+ * card brand and MCC — see `interchange-rate-table.ts`. A simplified
+ * three-way split of what Visa/Mastercard actually publish as many
+ * named products (Visa Signature, Visa Infinite, Visa Business, World
+ * Elite Mastercard, Mastercard Corporate, ...): `CONSUMER` (standard
+ * consumer cards, the cheapest tier), `CONSUMER_REWARDS` (points/miles/
+ * cashback consumer cards, priced higher because issuers fund the
+ * rewards program out of interchange), and `COMMERCIAL` (business/
+ * corporate/purchasing cards, priced highest — issuers assume lower
+ * fraud/chargeback risk but also lower price sensitivity on the
+ * cardholder's employer). Not derivable from `CardBrand`/`CardType`
+ * alone — a VISA CREDIT card can be any of the three.
+ */
+export enum CardProduct {
+  CONSUMER = 'CONSUMER',
+  CONSUMER_REWARDS = 'CONSUMER_REWARDS',
+  COMMERCIAL = 'COMMERCIAL',
 }

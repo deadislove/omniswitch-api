@@ -16,7 +16,7 @@ import {
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PSPProvider } from '../../domain/aggregates/payment.aggregate';
-import { CardBrand, CardType } from '../../domain/value-objects/bin-info.vo';
+import { CardBrand, CardProduct, CardType } from '../../domain/value-objects/bin-info.vo';
 import { IsNotRawCardNumber } from './validators/not-raw-card-number.validator';
 
 export class ChargeSplitDto {
@@ -55,6 +55,16 @@ export class BinInfoDto {
   @ApiProperty({ enum: CardType, example: CardType.CREDIT })
   @IsEnum(CardType)
   cardType: CardType;
+
+  @ApiPropertyOptional({
+    enum: CardProduct,
+    example: CardProduct.CONSUMER,
+    description:
+      'Interchange product tier — see CardProduct for what each value means. Defaults to CONSUMER when omitted.',
+  })
+  @IsOptional()
+  @IsEnum(CardProduct)
+  cardProduct?: CardProduct;
 
   @ApiPropertyOptional({ example: 'Chase Bank' })
   @IsOptional()
@@ -279,6 +289,38 @@ export class CaptureRecordDto {
   createdAt: string;
 }
 
+export class InterchangeQualificationDto {
+  @ApiProperty({ enum: CardBrand })
+  cardBrand: CardBrand;
+
+  @ApiProperty({ enum: CardProduct })
+  cardProduct: CardProduct;
+
+  @ApiProperty({ description: 'Best-qualified rate for this brand/product, in basis points.' })
+  qualifiedBps: number;
+
+  @ApiProperty({ description: 'Best-qualified flat per-transaction fee, in minor units.' })
+  qualifiedFixedMinorUnits: number;
+
+  @ApiProperty()
+  downgraded: boolean;
+
+  @ApiProperty({
+    type: [String],
+    description:
+      'Empty when not downgraded. One or more of AVS_NOT_MATCHED, CVV_NOT_MATCHED, NO_AVS_CVV_DATA, LATE_SETTLEMENT.',
+  })
+  downgradeReasons: string[];
+
+  @ApiProperty({
+    description: 'Rate actually applied to this charge — qualifiedBps plus the downgrade surcharge when downgraded.',
+  })
+  appliedBps: number;
+
+  @ApiProperty()
+  appliedFixedMinorUnits: number;
+}
+
 export class PaymentDetailResponseDto {
   @ApiProperty({ example: 'pay_abc123' })
   paymentId: string;
@@ -316,6 +358,13 @@ export class PaymentDetailResponseDto {
 
   @ApiPropertyOptional({ example: 'OMNISWITCH*PREMIUM' })
   statementDescriptor?: string;
+
+  @ApiPropertyOptional({
+    type: InterchangeQualificationDto,
+    description:
+      'Only present once this charge actually captures and a binInfo was supplied — see InterchangeQualificationDto.',
+  })
+  interchangeQualification?: InterchangeQualificationDto;
 
   @ApiProperty()
   createdAt: string;
