@@ -115,6 +115,49 @@ for European cards), but the PSP's response still decides the outcome — see
 was actually invoked, specifically so this regression can't come back
 silently.
 
+### SCA exemptions: a real claim this platform can make, beyond just a hint
+
+`binCountry` above tells the PSP a challenge is *expected*; it says nothing
+about whether this specific charge might legitimately skip one. Real
+PSD2/EMVCo rules define exemption categories an acquirer can claim —
+`evaluateScaExemption()` (`domain/services/sca-exemption.ts`) computes
+whether one applies, and `PSPChargeRequest.scaExemptionRequested` forwards
+the claim to the PSP. Same hint-rather-than-pre-emptive-decision posture as
+`binCountry`: the PSP's own SCA engine still decides whether to honor it.
+
+**Three categories, checked in order:**
+
+- **MIT** (merchant-initiated transaction) — the cardholder genuinely
+  isn't present for this specific charge. Doesn't depend on card origin at
+  all: `SubscriptionService` sets `CheckoutSagaInput.isMitRenewal` on every
+  renewal and plan-change-proration charge (never on a subscription's
+  first-period charge, which is the real cardholder-present moment, or its
+  trial-conversion equivalent — the `PSPAdapterPort.verifyPaymentMethod()`
+  check already done at trial signup).
+- **LOW_VALUE** — under an illustrative threshold (the real PSD2 figure is
+  €30/£30), and this payment method hasn't already ridden on 5 consecutive
+  low-value exemptions since its last real challenge (`ScaExemptionTrackerService`,
+  Redis-backed, keyed on `paymentMethodId` — the one stable per-card
+  reference this platform ever has; a one-off `cardToken` charge has no
+  such key and is never tracked).
+- **TRANSACTION_RISK_ANALYSIS** — under a higher illustrative cap, and this
+  charge's own `calculateRiskScore()` output is low enough.
+
+**The two real PSPs model this completely differently, and this platform
+is honest about both wire shapes rather than picking one and faking the
+other**:
+
+| | Adyen | Stripe |
+|---|---|---|
+| LOW_VALUE / TRA | Real `scaExemption` request field (`lowValue`/`transactionRiskAnalysis`); real `exemptionIndicator` response field — can legitimately differ from what was requested | No request field at all — Stripe claims these two itself, opaquely. This platform's own claim is still recorded (`scaExemptionRequested`) for audit, but has no wire effect and `scaExemptionIndicator` stays null |
+| MIT | `shopperInteraction: 'ContAuth'` — a different real field, not `scaExemption` | `off_session: true` |
+
+Both `scaExemptionRequested` (computed before the PSP is ever called) and
+`scaExemptionIndicator` (read from the PSP's response, when it has one) are
+recorded on the payment and surfaced on `GET /payments/:id` — the gap
+between the two is itself a legible signal of how often a real PSP's own
+SCA engine disagrees with this platform's claim.
+
 ## Refund accounting
 
 A payment can be refunded multiple times, partially, as long as the running

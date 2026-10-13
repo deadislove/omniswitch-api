@@ -366,6 +366,25 @@ export class PaymentDetailResponseDto {
   })
   interchangeQualification?: InterchangeQualificationDto;
 
+  @ApiPropertyOptional({
+    enum: ['LOW_VALUE', 'TRANSACTION_RISK_ANALYSIS', 'MIT'],
+    nullable: true,
+    description:
+      'The SCA exemption this platform requested from the PSP, if any — only present when a binInfo-carrying European charge or a subscription MIT charge was evaluated. See scaExemptionReason for why, and scaExemptionIndicator for what the PSP actually applied.',
+  })
+  scaExemptionRequested?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  scaExemptionReason?: string | null;
+
+  @ApiPropertyOptional({
+    enum: ['LOW_VALUE', 'TRANSACTION_RISK_ANALYSIS', 'MIT'],
+    nullable: true,
+    description:
+      "What the PSP actually applied — can differ from scaExemptionRequested if the PSP's own SCA engine rejected the request and challenged anyway.",
+  })
+  scaExemptionIndicator?: string | null;
+
   @ApiProperty()
   createdAt: string;
 

@@ -105,6 +105,19 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
         // (StripePSPAdapter forwards the same ChargePaymentDto field as
         // `statement_descriptor`). Only other use this adapter has for it.
         ...(request.statementDescriptor ? { shopperStatement: request.statementDescriptor } : {}),
+        // MIT isn't an Adyen `scaExemption` value — real Adyen models
+        // "cardholder not present for this charge" via
+        // `shopperInteraction: 'ContAuth'` instead (see
+        // PSPChargeRequest.scaExemptionRequested's own docblock for why
+        // this and the two real scaExemption values below are genuinely
+        // different wire mechanisms rather than just a naming choice).
+        ...(request.scaExemptionRequested === 'MIT'
+          ? { shopperInteraction: 'ContAuth' }
+          : request.scaExemptionRequested === 'LOW_VALUE'
+            ? { scaExemption: 'lowValue' }
+            : request.scaExemptionRequested === 'TRANSACTION_RISK_ANALYSIS'
+              ? { scaExemption: 'transactionRiskAnalysis' }
+              : {}),
       };
 
       const response = await this.makeRequest('POST', '/payments', body, request.idempotencyKey);
@@ -119,6 +132,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
             rawResponse: response,
             riskSignal: this.extractRiskSignal(response),
             ...this.extractCardCheckResult(response),
+            ...this.extractScaExemptionIndicator(request, response),
           };
         }
         return {
@@ -128,6 +142,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
+          ...this.extractScaExemptionIndicator(request, response),
         };
       }
 
@@ -195,6 +210,31 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
       ...(avsResult ? { avsResult } : {}),
       ...(cvvResult ? { cvvResult } : {}),
     };
+  }
+
+  /**
+   * `MIT` was requested via `shopperInteraction: 'ContAuth'` instead of
+   * Adyen's `scaExemption` field (see the request-building block above) — there
+   * is no issuer-granted/rejected "exemption" to read back for it the
+   * way there is for the other two, so this just echoes back what was
+   * requested rather than reading a response field that wouldn't carry
+   * it. `LOW_VALUE`/`TRANSACTION_RISK_ANALYSIS` read the real
+   * `exemptionIndicator` Adyen returns under `additionalData` — which
+   * can legitimately differ from what was requested (the issuer's own
+   * SCA engine can still reject a requested exemption and challenge
+   * anyway).
+   */
+  private extractScaExemptionIndicator(
+    request: PSPChargeRequest,
+    response: any,
+  ): { scaExemptionIndicator?: PSPChargeResponse['scaExemptionIndicator'] } {
+    if (request.scaExemptionRequested === 'MIT') {
+      return { scaExemptionIndicator: 'MIT' };
+    }
+    const indicator = response.additionalData?.exemptionIndicator;
+    if (indicator === 'lowValue') return { scaExemptionIndicator: 'LOW_VALUE' };
+    if (indicator === 'transactionRiskAnalysis') return { scaExemptionIndicator: 'TRANSACTION_RISK_ANALYSIS' };
+    return {};
   }
 
   async refund(request: PSPRefundRequest): Promise<PSPRefundResponse> {

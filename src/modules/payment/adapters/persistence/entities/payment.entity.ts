@@ -225,6 +225,25 @@ export class PaymentEntity {
   @Column({ name: 'interchange_qualification', type: 'jsonb', nullable: true })
   interchangeQualification?: Record<string, unknown>;
 
+  /**
+   * The SCA exemption claim `evaluateScaExemption()` computed for this
+   * charge, requested from the PSP before it was ever called — see
+   * `PaymentAggregate.recordScaExemptionRequested()`'s docblock.
+   * `scaExemptionReason` is always set once any charge attempt happens
+   * (even when `scaExemptionRequested` stays null, meaning no exemption
+   * applied), since the reasoning itself is useful for audit regardless
+   * of the outcome.
+   */
+  @Column({ name: 'sca_exemption_requested', type: 'varchar', nullable: true })
+  scaExemptionRequested?: string;
+
+  @Column({ name: 'sca_exemption_reason', type: 'varchar', nullable: true })
+  scaExemptionReason?: string;
+
+  /** What the PSP actually applied, read from its response — can differ from `scaExemptionRequested` (a PSP's own SCA engine can reject a requested exemption and challenge anyway). */
+  @Column({ name: 'sca_exemption_indicator', type: 'varchar', nullable: true })
+  scaExemptionIndicator?: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

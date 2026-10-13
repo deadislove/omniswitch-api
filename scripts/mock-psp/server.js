@@ -557,7 +557,14 @@ const server = http.createServer((req, res) => {
         });
       }
       const forced = description.includes('FORCE_3DS');
-      if (forced || EU_COUNTRIES.has(binCountry)) {
+      // StripePSPAdapter's `off_session=true` — real Stripe field for
+      // "cardholder not present for this charge" (MIT), grounds to skip
+      // a challenge even for an otherwise-EU-forcing card. Unlike Adyen,
+      // Stripe has no request field for LOW_VALUE/TRANSACTION_RISK_ANALYSIS
+      // (see PSPChargeRequest.scaExemptionRequested's own docblock), so
+      // this mock has nothing to honor for those two.
+      const offSession = params.get('off_session') === 'true';
+      if (forced || (EU_COUNTRIES.has(binCountry) && !offSession)) {
         return send(res, 200, {
           id,
           status: 'requires_action',
@@ -769,9 +776,19 @@ const server = http.createServer((req, res) => {
       // numeric-coded strings — see AdyenPspAdapter.extractCardCheckResult()'s
       // docblock for why.
       const shopperStatement = parsedBody.shopperStatement || '';
+      // AdyenPspAdapter's real `scaExemption` request values — honored
+      // here by reflecting back `exemptionIndicator`, same real Adyen
+      // response field AdyenPspAdapter.extractScaExemptionIndicator()
+      // reads. `shopperInteraction: 'ContAuth'` (MIT) is a separate real
+      // field with no `exemptionIndicator` of its own — see that
+      // method's own docblock for why.
+      const scaExemption = parsedBody.scaExemption;
       const additionalData = {
         avsResult: /avsfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
         cvcResult: /cvvfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
+        ...(scaExemption === 'lowValue' || scaExemption === 'transactionRiskAnalysis'
+          ? { exemptionIndicator: scaExemption }
+          : {}),
       };
 
       const declineCode = declineCodeFor((parsedBody.paymentMethod || {}).storedPaymentMethodId);
@@ -785,7 +802,15 @@ const server = http.createServer((req, res) => {
           additionalData,
         });
       }
-      if (EU_COUNTRIES.has(binCountry)) {
+      // A valid scaExemption or MIT's shopperInteraction: 'ContAuth' both
+      // give an issuer real grounds to skip the challenge even for an
+      // otherwise-EU-forcing card — see StripePSPAdapter's `off_session`
+      // equivalent above for the same real-world mechanic on Stripe.
+      const hasScaBypass =
+        parsedBody.shopperInteraction === 'ContAuth' ||
+        scaExemption === 'lowValue' ||
+        scaExemption === 'transactionRiskAnalysis';
+      if (EU_COUNTRIES.has(binCountry) && !hasScaBypass) {
         return send(res, 200, {
           pspReference,
           resultCode: 'RedirectShopper',

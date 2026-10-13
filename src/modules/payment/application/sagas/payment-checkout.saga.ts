@@ -25,6 +25,8 @@ import {
 import { ReserveService } from '../services/reserve.service';
 import { buildCrossBorderTaxRecord } from '../../domain/services/tax-record';
 import { evaluateInterchangeQualification } from '../../domain/services/interchange-qualification';
+import { evaluateScaExemption } from '../../domain/services/sca-exemption';
+import { ScaExemptionTrackerService } from '../services/sca-exemption-tracker.service';
 import { AmbiguousRiskMonitoringService } from '../services/ambiguous-risk-monitoring.service';
 import { AmlReviewMonitoringService } from '../services/aml-review-monitoring.service';
 import { isAmbiguousOutcomeError } from '../../adapters/psp/payment-processor.factory';
@@ -82,6 +84,22 @@ export interface CheckoutSagaInput {
    * method's own docblock.
    */
   agentPercentOfRemainingMonthlyBudget?: number;
+  /**
+   * True for a subscription charge where the cardholder genuinely isn't
+   * present for this specific attempt (a renewal or a plan-change
+   * proration, both initiated by `SubscriptionService` against an
+   * already-established payment method) — the real MIT (merchant-
+   * initiated transaction) exemption category `evaluateScaExemption()`
+   * checks first, ahead of the amount/risk-based ones. `SubscriptionService`
+   * only ever sets this `true` for its renewal/proration call sites —
+   * a subscription's first-period charge stays unset, since that one
+   * genuinely is the cardholder-present moment (or, for a trial
+   * conversion, stands in for
+   * the `PSPAdapterPort.verifyPaymentMethod()` authentication that
+   * already happened at trial signup), the same real-world distinction
+   * PSD2 draws.
+   */
+  isMitRenewal?: boolean;
 }
 
 export interface CheckoutSagaResult {
@@ -166,6 +184,7 @@ export class PaymentCheckoutSaga {
     private readonly reserveService: ReserveService,
     private readonly ambiguousRiskMonitoring: AmbiguousRiskMonitoringService,
     private readonly amlReviewMonitoring: AmlReviewMonitoringService,
+    private readonly scaExemptionTracker: ScaExemptionTrackerService,
   ) {}
 
   async execute(input: CheckoutSagaInput): Promise<CheckoutSagaResult> {
@@ -278,6 +297,29 @@ export class PaymentCheckoutSaga {
 
     this.logger.log(`[Saga] Step 2: Risk score=${riskScore}`);
 
+    // ─── SCA exemption (only computed when it could plausibly apply) ────────
+    // MIT doesn't depend on card origin at all; LOW_VALUE/TRANSACTION_RISK_ANALYSIS
+    // are specifically PSD2/EEA concepts — see evaluateScaExemption()'s own
+    // docblock. Skipped entirely otherwise, same "only present when the
+    // needed signal exists" posture as taxRecord/interchangeQualification —
+    // the overwhelming majority of charges have no reason to carry this.
+    const isMitRenewal = input.isMitRenewal === true;
+    const isEuropean = input.binInfo?.isEuropean() ?? false;
+    let scaExemptionRequested: ReturnType<typeof evaluateScaExemption>['exemption'];
+    if (isMitRenewal || isEuropean) {
+      const lowValueStreakCount =
+        !isMitRenewal && input.paymentMethodId ? await this.scaExemptionTracker.getStreak(input.paymentMethodId) : 0;
+      const eligibility = evaluateScaExemption({
+        amount: input.amount,
+        riskScore,
+        isMitRenewal,
+        isEuropean,
+        lowValueStreakCount,
+      });
+      scaExemptionRequested = eligibility.exemption;
+      payment.recordScaExemptionRequested(eligibility.exemption, eligibility.reason);
+    }
+
     // ─── Step 3: Smart PSP Routing ───────────────────────────────────────────
     let routingDecision: any;
     try {
@@ -341,6 +383,7 @@ export class PaymentCheckoutSaga {
                 cardToken: input.cardToken,
                 captureMethod: input.captureMethod,
                 binCountry: input.binInfo?.country,
+                scaExemptionRequested,
               }),
           ),
         { 'payment.id': input.paymentId, 'payment.amount': input.amount.toString() },
@@ -377,7 +420,20 @@ export class PaymentCheckoutSaga {
         chargeResult.riskSignal,
         chargeResult.avsResult,
         chargeResult.cvvResult,
+        chargeResult.scaExemptionIndicator,
       );
+      // A LOW_VALUE exemption that actually went through without a
+      // challenge advances this payment method's streak toward the real
+      // PSD2 cap; anything else that reached SUCCEEDED (a real
+      // authentication happened, or no exemption was relevant at all)
+      // resets it — see ScaExemptionTrackerService's own docblock.
+      if (input.paymentMethodId) {
+        if (chargeResult.scaExemptionIndicator === 'LOW_VALUE') {
+          await this.scaExemptionTracker.recordLowValueExemptionUsed(input.paymentMethodId);
+        } else if (scaExemptionRequested === 'LOW_VALUE') {
+          await this.scaExemptionTracker.resetStreak(input.paymentMethodId);
+        }
+      }
 
       // Authorization and capture happen in this same PSP call
       // (automatic capture — the default) — settlementDelayHours is
@@ -476,7 +532,15 @@ export class PaymentCheckoutSaga {
         chargeResult.riskSignal,
         chargeResult.avsResult,
         chargeResult.cvvResult,
+        chargeResult.scaExemptionIndicator,
       );
+      if (input.paymentMethodId) {
+        if (chargeResult.scaExemptionIndicator === 'LOW_VALUE') {
+          await this.scaExemptionTracker.recordLowValueExemptionUsed(input.paymentMethodId);
+        } else if (scaExemptionRequested === 'LOW_VALUE') {
+          await this.scaExemptionTracker.resetStreak(input.paymentMethodId);
+        }
+      }
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
 
@@ -496,6 +560,12 @@ export class PaymentCheckoutSaga {
 
     if (chargeResult.status === 'REQUIRES_ACTION') {
       payment.requiresAction(chargeResult.actionUrl!, riskScore, chargeResult.transactionId);
+      // A real challenge is happening now — whatever was requested
+      // (including a LOW_VALUE claim the PSP's own SCA engine rejected),
+      // this is a genuine fresh authentication, so the streak resets.
+      if (input.paymentMethodId && scaExemptionRequested === 'LOW_VALUE') {
+        await this.scaExemptionTracker.resetStreak(input.paymentMethodId);
+      }
       await this.paymentRepository.update(payment);
       this.publishDomainEvents(payment);
 

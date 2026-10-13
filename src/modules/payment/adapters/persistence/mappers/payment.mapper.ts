@@ -16,6 +16,7 @@ import {
   CvvResult,
   InterchangeQualificationResult,
 } from '../../../domain/services/interchange-qualification';
+import { ScaExemptionType } from '../../../domain/services/sca-exemption';
 
 /**
  * Payment Mapper
@@ -100,6 +101,9 @@ export class PaymentMapper {
       avsResult: entity.avsResult as AvsResult | undefined,
       cvvResult: entity.cvvResult as CvvResult | undefined,
       interchangeQualification: entity.interchangeQualification as InterchangeQualificationResult | undefined,
+      scaExemptionRequested: entity.scaExemptionRequested as ScaExemptionType | undefined,
+      scaExemptionReason: entity.scaExemptionReason ?? undefined,
+      scaExemptionIndicator: entity.scaExemptionIndicator as ScaExemptionType | undefined,
     });
   }
 
@@ -137,6 +141,9 @@ export class PaymentMapper {
     entity.avsResult = aggregate.avsResult;
     entity.cvvResult = aggregate.cvvResult;
     entity.interchangeQualification = aggregate.interchangeQualification as unknown as Record<string, unknown>;
+    entity.scaExemptionRequested = aggregate.scaExemptionRequested;
+    entity.scaExemptionReason = aggregate.scaExemptionReason;
+    entity.scaExemptionIndicator = aggregate.scaExemptionIndicator;
     entity.splits = aggregate.splits?.map((s) => ({
       merchantId: s.merchantId,
       amountMinorUnits: s.amount.amountMinorUnits.toString(),

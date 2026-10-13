@@ -84,6 +84,7 @@ import { EmailAmlReviewNotificationAdapter } from './adapters/notifications/emai
 import { SlackAmlReviewNotificationAdapter } from './adapters/notifications/slack-aml-review-notification.adapter';
 import { WebhookAmlReviewNotificationAdapter } from './adapters/notifications/webhook-aml-review-notification.adapter';
 import { ChargebackMonitoringService } from './application/services/chargeback-monitoring.service';
+import { ScaExemptionTrackerService } from './application/services/sca-exemption-tracker.service';
 import { ChargebackMonitoringNotificationDispatcherService } from './application/services/chargeback-monitoring-notification-dispatcher.service';
 import { EmailChargebackMonitoringNotificationAdapter } from './adapters/notifications/email-chargeback-monitoring-notification.adapter';
 import { SlackChargebackMonitoringNotificationAdapter } from './adapters/notifications/slack-chargeback-monitoring-notification.adapter';
@@ -362,6 +363,10 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     WebhookChargebackMonitoringNotificationAdapter,
     ChargebackMonitoringNotificationDispatcherService,
     ChargebackMonitoringService,
+
+    // SCA exemption streak tracking (Redis-backed via CachePort, already
+    // bound above) — PaymentCheckoutSaga's own dependency.
+    ScaExemptionTrackerService,
 
     // Webhook delivery log — read/replay side (the write side is called
     // directly from inside each Webhook*NotificationAdapter above,

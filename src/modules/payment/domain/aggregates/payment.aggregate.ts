@@ -4,6 +4,7 @@ import { BinInfo } from '../value-objects/bin-info.vo';
 import { DomainEvent } from '../events/domain-event.base';
 import { classifyDeclineCode, DeclineCategory } from '../services/decline-code-classifier';
 import { AvsResult, CvvResult, InterchangeQualificationResult } from '../services/interchange-qualification';
+import { ScaExemptionType } from '../services/sca-exemption';
 import {
   PaymentIntentCreatedEvent,
   PaymentChargedEvent,
@@ -137,6 +138,9 @@ export class PaymentAggregate {
     private _avsResult?: AvsResult,
     private _cvvResult?: CvvResult,
     private _interchangeQualification?: InterchangeQualificationResult,
+    private _scaExemptionRequested?: ScaExemptionType,
+    private _scaExemptionReason?: string,
+    private _scaExemptionIndicator?: ScaExemptionType,
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -182,6 +186,9 @@ export class PaymentAggregate {
       undefined, // avsResult
       undefined, // cvvResult
       undefined, // interchangeQualification
+      undefined, // scaExemptionRequested
+      undefined, // scaExemptionReason
+      undefined, // scaExemptionIndicator
     );
 
     payment.addDomainEvent(
@@ -228,6 +235,9 @@ export class PaymentAggregate {
     avsResult?: AvsResult;
     cvvResult?: CvvResult;
     interchangeQualification?: InterchangeQualificationResult;
+    scaExemptionRequested?: ScaExemptionType;
+    scaExemptionReason?: string;
+    scaExemptionIndicator?: ScaExemptionType;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -260,6 +270,9 @@ export class PaymentAggregate {
       params.avsResult,
       params.cvvResult,
       params.interchangeQualification,
+      params.scaExemptionRequested,
+      params.scaExemptionReason,
+      params.scaExemptionIndicator,
     );
   }
 
@@ -304,6 +317,7 @@ export class PaymentAggregate {
     pspRiskSignal?: PspRiskSignal,
     avsResult?: AvsResult,
     cvvResult?: CvvResult,
+    scaExemptionIndicator?: ScaExemptionType,
   ): void {
     assertValidTransition(this._status, PaymentStatus.REQUIRES_CAPTURE);
     this._pspTransactionId = pspTransactionId;
@@ -317,6 +331,7 @@ export class PaymentAggregate {
     // this check result was ever actually returned by the PSP.
     this._avsResult = avsResult;
     this._cvvResult = cvvResult;
+    this._scaExemptionIndicator = scaExemptionIndicator;
     this.transitionTo(PaymentStatus.REQUIRES_CAPTURE);
   }
 
@@ -397,6 +412,7 @@ export class PaymentAggregate {
     pspRiskSignal?: PspRiskSignal,
     avsResult?: AvsResult,
     cvvResult?: CvvResult,
+    scaExemptionIndicator?: ScaExemptionType,
   ): void {
     assertValidTransition(this._status, PaymentStatus.SUCCEEDED);
     this._pspTransactionId = pspTransactionId;
@@ -404,6 +420,7 @@ export class PaymentAggregate {
     this._pspRiskSignal = pspRiskSignal;
     if (avsResult) this._avsResult = avsResult;
     if (cvvResult) this._cvvResult = cvvResult;
+    if (scaExemptionIndicator) this._scaExemptionIndicator = scaExemptionIndicator;
     this.transitionTo(PaymentStatus.SUCCEEDED);
     this.addDomainEvent(
       new PaymentChargedEvent(
@@ -662,6 +679,23 @@ export class PaymentAggregate {
     this._interchangeQualification = result;
   }
 
+  /**
+   * Records the SCA exemption claim `evaluateScaExemption()` computed
+   * for this charge, *before* the PSP is ever called — distinct from
+   * `_scaExemptionIndicator` (what the PSP actually applied, read from
+   * its response at `markSucceeded()`/`requiresCapture()` time). The two
+   * can legitimately differ: a PSP's own SCA engine can reject a
+   * requested LOW_VALUE/TRANSACTION_RISK_ANALYSIS exemption and
+   * challenge anyway. Record-once, same posture as
+   * `recordInterchangeQualification()` above — one claim per charge
+   * attempt, immune to being overwritten by a retry against a different PSP.
+   */
+  recordScaExemptionRequested(exemption: ScaExemptionType | undefined, reason: string): void {
+    if (this._scaExemptionReason) return;
+    this._scaExemptionRequested = exemption;
+    this._scaExemptionReason = reason;
+  }
+
   // ─── Risk Assessment ────────────────────────────────────────────────────────
 
   /**
@@ -770,6 +804,15 @@ export class PaymentAggregate {
   }
   get interchangeQualification(): InterchangeQualificationResult | undefined {
     return this._interchangeQualification;
+  }
+  get scaExemptionRequested(): ScaExemptionType | undefined {
+    return this._scaExemptionRequested;
+  }
+  get scaExemptionReason(): string | undefined {
+    return this._scaExemptionReason;
+  }
+  get scaExemptionIndicator(): ScaExemptionType | undefined {
+    return this._scaExemptionIndicator;
   }
   get threeDSResult(): ThreeDSResult | undefined {
     return this._threeDSResult;

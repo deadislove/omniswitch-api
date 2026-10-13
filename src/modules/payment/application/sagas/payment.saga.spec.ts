@@ -101,6 +101,12 @@ const createMockAmlReviewMonitoring = () => ({
   evaluate: jest.fn().mockResolvedValue(undefined),
 });
 
+const createMockScaExemptionTracker = () => ({
+  getStreak: jest.fn().mockResolvedValue(0),
+  recordLowValueExemptionUsed: jest.fn().mockResolvedValue(undefined),
+  resetStreak: jest.fn().mockResolvedValue(undefined),
+});
+
 // ─── Test Fixtures ───────────────────────────────────────────────────────────
 
 const createSagaInput = (overrides: Partial<CheckoutSagaInput> = {}): CheckoutSagaInput => ({
@@ -137,6 +143,7 @@ describe('PaymentCheckoutSaga', () => {
   let reserveService: any;
   let ambiguousRiskMonitoring: any;
   let amlReviewMonitoring: any;
+  let scaExemptionTracker: any;
 
   beforeEach(() => {
     paymentRepository = createMockPaymentRepository();
@@ -149,6 +156,7 @@ describe('PaymentCheckoutSaga', () => {
     reserveService = createMockReserveService();
     ambiguousRiskMonitoring = createMockAmbiguousRiskMonitoring();
     amlReviewMonitoring = createMockAmlReviewMonitoring();
+    scaExemptionTracker = createMockScaExemptionTracker();
 
     saga = new PaymentCheckoutSaga(
       paymentRepository,
@@ -160,6 +168,7 @@ describe('PaymentCheckoutSaga', () => {
       reserveService,
       ambiguousRiskMonitoring,
       amlReviewMonitoring,
+      scaExemptionTracker,
     );
   });
 

@@ -22,6 +22,28 @@ export interface PSPChargeRequest {
    * before calling the PSP.
    */
   binCountry?: string;
+  /**
+   * A real PSD2/EMVCo SCA exemption claim this platform computed via
+   * `evaluateScaExemption()`, forwarded as a request — same hint-rather-
+   * than-pre-emptive-decision posture as `binCountry` above, since the
+   * PSP's own SCA engine still decides whether to honor it. Each adapter
+   * forwards this into a genuinely different real wire field depending
+   * on which value it is:
+   * - `LOW_VALUE`/`TRANSACTION_RISK_ANALYSIS` are real Adyen `scaExemption`
+   *   request values (`lowValue`/`transactionRiskAnalysis`) — Stripe has
+   *   no equivalent request field for either (Stripe claims these two
+   *   itself, opaquely), so `StripePSPAdapter` has nothing to forward
+   *   them into.
+   * - `MIT` isn't an Adyen `scaExemption` value at all — both PSPs model
+   *   "the cardholder wasn't present for this specific charge" as its
+   *   own real field instead: Adyen's `shopperInteraction: 'ContAuth'`,
+   *   Stripe's `off_session: true`. Both adapters forward `MIT` into
+   *   their own real field rather than a shared one.
+   *
+   * See `PSPChargeResponse.scaExemptionIndicator` for what a PSP
+   * actually applied, when it tells us.
+   */
+  scaExemptionRequested?: 'LOW_VALUE' | 'TRANSACTION_RISK_ANALYSIS' | 'MIT';
   metadata?: Record<string, string>;
   /** 'manual' authorizes without capturing funds; caller must call capture() separately. */
   captureMethod?: 'automatic' | 'manual';
@@ -87,6 +109,16 @@ export interface PSPChargeResponse {
   avsResult?: 'MATCH' | 'PARTIAL' | 'NO_MATCH' | 'UNAVAILABLE';
   /** Card Verification Value result for this authorization — same undefined-vs-UNAVAILABLE distinction as avsResult above. */
   cvvResult?: 'MATCH' | 'NO_MATCH' | 'UNAVAILABLE';
+  /**
+   * The exemption type the PSP actually applied, if any — distinct from
+   * `PSPChargeRequest.scaExemptionRequested` (what this platform asked
+   * for): a PSP's own SCA engine can reject a requested exemption and
+   * still challenge, or (real Stripe) claim one on its own without ever
+   * being asked. Real Adyen returns this as `exemptionIndicator`; real
+   * Stripe doesn't expose an equivalent field in a way this adapter can
+   * read, so `StripePSPAdapter` always leaves this undefined.
+   */
+  scaExemptionIndicator?: 'LOW_VALUE' | 'TRANSACTION_RISK_ANALYSIS' | 'MIT';
 }
 
 export interface PSPRefundRequest {

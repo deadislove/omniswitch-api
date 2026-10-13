@@ -278,6 +278,10 @@ export class SubscriptionService {
         orderId: subscription.orderId,
         description: `Subscription ${subscription.id} — proration for switching to plan ${newPlan.name}`,
         paymentMethodId: subscription.paymentMethodId,
+        // The cardholder didn't re-enter anything to change plans — same
+        // merchant-initiated-transaction reasoning as a renewal charge
+        // (CheckoutSagaInput.isMitRenewal's own docblock).
+        isMitRenewal: true,
       });
       if (result.status !== PaymentStatus.SUCCEEDED) {
         throw new UnprocessableEntityException({
@@ -442,6 +446,11 @@ export class SubscriptionService {
           orderId: subscription.orderId,
           description: subscription.description ?? `Subscription ${subscription.id} renewal`,
           paymentMethodId: subscription.paymentMethodId,
+          // See CheckoutSagaInput.isMitRenewal's own docblock — covers
+          // both an ordinary renewal and a trial's first real charge
+          // (the cardholder-present-equivalent authentication already
+          // happened at trial signup, via verifyPaymentMethod()).
+          isMitRenewal: true,
         });
 
         if (result.status === PaymentStatus.SUCCEEDED) {

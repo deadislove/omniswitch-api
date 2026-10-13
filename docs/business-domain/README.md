@@ -19,7 +19,8 @@ instead; for a guided onboarding path through both, see
 ## Core payment flow
 
 - [`payment-lifecycle.md`](./payment-lifecycle.md) — the payment state
-  machine, what triggers each transition, idempotency
+  machine, what triggers each transition, idempotency, and real
+  PSD2/EMVCo SCA exemption claims (low-value, TRA, MIT)
 - [`fee-model.md`](./fee-model.md) — platform fee-rate calculation,
   PSP interchange-cost reconciliation, and real interchange rate
   qualification/downgrade

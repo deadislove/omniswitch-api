@@ -105,6 +105,15 @@ export class StripePSPAdapter extends PSPAdapterPort {
         // decision on our side.
         params.append('metadata[bin_country]', request.binCountry);
       }
+      if (request.scaExemptionRequested === 'MIT') {
+        // Real Stripe field — "the cardholder isn't present for this
+        // charge," which Stripe's own SCA engine treats as grounds to
+        // skip a challenge. Unlike Adyen's `scaExemption`, Stripe has no
+        // equivalent request field for LOW_VALUE/TRANSACTION_RISK_ANALYSIS
+        // — Stripe claims those two itself, opaquely — so this is the
+        // only `scaExemptionRequested` value this adapter ever forwards.
+        params.append('off_session', 'true');
+      }
       if (request.metadata) {
         // Merchant-supplied custom metadata (ChargePaymentDto.metadata) —
         // Stripe's own PaymentIntent has a real `metadata` object for
@@ -140,6 +149,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
+          ...(request.scaExemptionRequested === 'MIT' ? { scaExemptionIndicator: 'MIT' as const } : {}),
         };
       }
 
@@ -151,6 +161,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
+          ...(request.scaExemptionRequested === 'MIT' ? { scaExemptionIndicator: 'MIT' as const } : {}),
         };
       }
 

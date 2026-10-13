@@ -75,7 +75,8 @@ trying to understand *why* a payment behaves the way it does, or you're new
 to payments domain concepts generally.
 
 - [`payment-lifecycle.md`](./business-domain/payment-lifecycle.md) — the
-  payment state machine, what triggers each transition, idempotency
+  payment state machine, what triggers each transition, idempotency, and
+  real PSD2/EMVCo SCA exemption claims (low-value, TRA, MIT)
 - [`ledger-and-settlement.md`](./business-domain/ledger-and-settlement.md) —
   smart PSP routing, PSP-cost reconciliation, merchant risk tiering &
   reserves — see also the four topics split into their own files below
