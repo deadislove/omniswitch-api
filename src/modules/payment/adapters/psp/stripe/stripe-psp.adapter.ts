@@ -149,6 +149,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
+          ...this.extractNetworkTokenization(response),
           ...(request.scaExemptionRequested === 'MIT' ? { scaExemptionIndicator: 'MIT' as const } : {}),
         };
       }
@@ -161,6 +162,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           rawResponse: response,
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
+          ...this.extractNetworkTokenization(response),
           ...(request.scaExemptionRequested === 'MIT' ? { scaExemptionIndicator: 'MIT' as const } : {}),
         };
       }
@@ -228,6 +230,22 @@ export class StripePSPAdapter extends PSPAdapterPort {
       ...(avsResult ? { avsResult } : {}),
       ...(cvvResult ? { cvvResult } : {}),
     };
+  }
+
+  /**
+   * Real Stripe nests this the same place as the checks above:
+   * `PaymentIntent.charges.data[0].payment_method_details.card
+   * .network_token.used` — unlike Adyen's additionalData-gated
+   * equivalent, this is always present on a card charge regardless of
+   * account configuration, so `networkTokenized` only stays undefined
+   * here when there's no card charge to read it from at all (e.g. a
+   * REQUIRES_ACTION response that never reached an authorization
+   * attempt).
+   */
+  private extractNetworkTokenization(response: any): { networkTokenized?: boolean } {
+    const used = response.charges?.data?.[0]?.payment_method_details?.card?.network_token?.used;
+    if (typeof used !== 'boolean') return {};
+    return { networkTokenized: used };
   }
 
   private mapCheckResult(check?: string): 'MATCH' | 'NO_MATCH' | 'UNAVAILABLE' | undefined {

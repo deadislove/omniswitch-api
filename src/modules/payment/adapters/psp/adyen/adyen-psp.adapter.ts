@@ -133,6 +133,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
             riskSignal: this.extractRiskSignal(response),
             ...this.extractCardCheckResult(response),
             ...this.extractScaExemptionIndicator(request, response),
+            ...this.extractNetworkTokenization(response),
           };
         }
         return {
@@ -143,6 +144,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
           ...this.extractScaExemptionIndicator(request, response),
+          ...this.extractNetworkTokenization(response),
         };
       }
 
@@ -235,6 +237,27 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     if (indicator === 'lowValue') return { scaExemptionIndicator: 'LOW_VALUE' };
     if (indicator === 'transactionRiskAnalysis') return { scaExemptionIndicator: 'TRANSACTION_RISK_ANALYSIS' };
     return {};
+  }
+
+  /**
+   * Real Adyen only populates `additionalData['networkToken.bin']`/
+   * `additionalData['networkToken.tokenSummary']` when the merchant
+   * account opted into "Network token bin and summary for tokenised
+   * payments" (docs.adyen.com/online-payments/network-tokenization) —
+   * their presence means this specific authorization actually used a
+   * network token. Deliberately not using the top-level
+   * `networkTxReference` field as a signal here even though it's
+   * related: real Adyen returns that on every approved card payment
+   * (it's the network's own reference for *later* MIT/subscription
+   * charges, not evidence that *this* charge itself used a network
+   * token), so treating its presence as `networkTokenized` would
+   * overstate how often this fires.
+   */
+  private extractNetworkTokenization(response: any): { networkTokenized?: boolean } {
+    const bin = response.additionalData?.['networkToken.bin'];
+    const summary = response.additionalData?.['networkToken.tokenSummary'];
+    if (!bin && !summary) return {};
+    return { networkTokenized: true };
   }
 
   async refund(request: PSPRefundRequest): Promise<PSPRefundResponse> {

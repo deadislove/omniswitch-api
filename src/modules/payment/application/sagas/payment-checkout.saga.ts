@@ -421,6 +421,7 @@ export class PaymentCheckoutSaga {
         chargeResult.avsResult,
         chargeResult.cvvResult,
         chargeResult.scaExemptionIndicator,
+        chargeResult.networkTokenized,
       );
       // A LOW_VALUE exemption that actually went through without a
       // challenge advances this payment method's streak toward the real
@@ -533,6 +534,7 @@ export class PaymentCheckoutSaga {
         chargeResult.avsResult,
         chargeResult.cvvResult,
         chargeResult.scaExemptionIndicator,
+        chargeResult.networkTokenized,
       );
       if (input.paymentMethodId) {
         if (chargeResult.scaExemptionIndicator === 'LOW_VALUE') {

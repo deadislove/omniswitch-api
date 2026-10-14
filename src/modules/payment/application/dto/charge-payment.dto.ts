@@ -385,6 +385,13 @@ export class PaymentDetailResponseDto {
   })
   scaExemptionIndicator?: string | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Whether this authorization used a real network token (Visa VTS / Mastercard MDES) instead of the raw PAN, read from the PSP\'s own response. Null means the PSP never told us either way (e.g. Adyen only reports this when the merchant account opted into the relevant additionalData field) — not a confirmed "false."',
+  })
+  networkTokenized?: boolean | null;
+
   @ApiProperty()
   createdAt: string;
 

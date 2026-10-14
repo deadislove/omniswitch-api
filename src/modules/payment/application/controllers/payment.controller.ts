@@ -475,6 +475,7 @@ export class PaymentController {
       scaExemptionRequested: payment.scaExemptionRequested ?? null,
       scaExemptionReason: payment.scaExemptionReason ?? null,
       scaExemptionIndicator: payment.scaExemptionIndicator ?? null,
+      networkTokenized: payment.networkTokenized ?? null,
       createdAt: payment.createdAt.toISOString(),
       updatedAt: payment.updatedAt.toISOString(),
     };

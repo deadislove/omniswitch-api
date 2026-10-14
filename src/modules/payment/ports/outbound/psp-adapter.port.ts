@@ -119,6 +119,29 @@ export interface PSPChargeResponse {
    * read, so `StripePSPAdapter` always leaves this undefined.
    */
   scaExemptionIndicator?: 'LOW_VALUE' | 'TRANSACTION_RISK_ANALYSIS' | 'MIT';
+  /**
+   * Whether this specific authorization used a real network token (Visa
+   * Token Service / Mastercard MDES) in place of the raw PAN — a
+   * network-level surrogate distinct from, and underneath, this
+   * platform's own PSP-level tokenization (Stripe/Adyen's opaque
+   * `cardToken`/`paymentMethodId`, already never a raw PAN for PCI
+   * scope). Real Stripe exposes this directly:
+   * `charges.data[0].payment_method_details.card.network_token.used`
+   * (always present on a card charge, true/false). Real Adyen only
+   * populates `additionalData['networkToken.bin']`/
+   * `additionalData['networkToken.tokenSummary']` when the merchant
+   * account has opted into "Network token bin and summary for
+   * tokenised payments" under Customer Area > Developers > Additional
+   * data (docs.adyen.com/online-payments/network-tokenization) — so for
+   * Adyen, undefined doesn't distinguish "not network-tokenized" from
+   * "account never opted into this additionalData field," same honesty
+   * gap as `PSPRiskSignal.riskScore`'s own docblock. There is no real
+   * `tokenRequestorId`-equivalent field on either PSP's charge
+   * response — Adyen exposes `tokenRequestor.id` only on its Balance
+   * Platform issuing API (a different product), which this platform,
+   * as an acquiring-side integration, never calls.
+   */
+  networkTokenized?: boolean;
 }
 
 export interface PSPRefundRequest {

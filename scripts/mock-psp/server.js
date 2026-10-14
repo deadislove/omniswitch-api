@@ -533,6 +533,15 @@ const server = http.createServer((req, res) => {
       const description = params.get('description') || '';
       const avsFails = /avsfail/i.test(description);
       const cvvFails = /cvvfail/i.test(description);
+      // StripePSPAdapter.extractNetworkTokenization()'s target — same
+      // "marker in the payment method reference" convention
+      // declineCodeFor() already uses below, since whether a stored
+      // payment method is network-tokenized is a property of the
+      // payment method itself, not the free-text description. Real
+      // Stripe always populates this boolean on a card charge
+      // (payment_method_details.card.network_token.used), never gated
+      // behind an account opt-in the way Adyen's additionalData is.
+      const networkTokenized = /nettoken/i.test(params.get('payment_method') || '');
       const outcomeCharge = {
         outcome: { risk_level: stripeRiskLevelForScore(riskScore), risk_score: riskScore },
         payment_method_details: {
@@ -542,6 +551,7 @@ const server = http.createServer((req, res) => {
               address_zip_check: avsFails ? 'fail' : 'pass',
               cvc_check: cvvFails ? 'fail' : 'pass',
             },
+            network_token: { used: networkTokenized },
           },
         },
       };
@@ -783,12 +793,22 @@ const server = http.createServer((req, res) => {
       // field with no `exemptionIndicator` of its own — see that
       // method's own docblock for why.
       const scaExemption = parsedBody.scaExemption;
+      // AdyenPSPAdapter.extractNetworkTokenization()'s target — same
+      // "marker in the stored payment method reference" convention as
+      // the Stripe route's networkTokenized above. Real Adyen only
+      // populates these two keys when the merchant account opted into
+      // "Network token bin and summary for tokenised payments" — this
+      // mock always includes them once the marker is present, since it
+      // has no notion of per-account additionalData opt-in to simulate.
+      const storedPaymentMethodId = (parsedBody.paymentMethod || {}).storedPaymentMethodId || '';
+      const networkTokenized = /nettoken/i.test(storedPaymentMethodId);
       const additionalData = {
         avsResult: /avsfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
         cvcResult: /cvvfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
         ...(scaExemption === 'lowValue' || scaExemption === 'transactionRiskAnalysis'
           ? { exemptionIndicator: scaExemption }
           : {}),
+        ...(networkTokenized ? { 'networkToken.bin': '411111', 'networkToken.tokenSummary': '4242' } : {}),
       };
 
       const declineCode = declineCodeFor((parsedBody.paymentMethod || {}).storedPaymentMethodId);

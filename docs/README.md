@@ -104,7 +104,9 @@ to payments domain concepts generally.
   review observation, and sanctions/watchlist screening
 - [`compliance-and-security.md`](./business-domain/compliance-and-security.md) —
   why PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
-  delegation scope are business decisions, beyond just engineering choices
+  delegation scope are business decisions, beyond just engineering
+  choices; also covers network tokenization (Visa VTS / Mastercard MDES)
+  as a different, lower layer than PCI-scope tokenization
 - [`subscriptions.md`](./business-domain/subscriptions.md) — the
   subscription state machine, how billing/dunning/crash-recovery/plan
   catalog & proration/trial-verification work, and what's still

@@ -54,7 +54,9 @@ instead; for a guided onboarding path through both, see
 
 - [`compliance-and-security.md`](./compliance-and-security.md) — why
   PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
-  delegation scope are business decisions first, engineering choices second
+  delegation scope are business decisions first, engineering choices
+  second; also covers network tokenization (Visa VTS / Mastercard MDES)
+  as a different, lower layer than PCI-scope tokenization
 - [`future-directions.md`](./future-directions.md) — business
   capabilities written in domain language rather than implementation
   terms: marketplace splits, subscriptions, risk tiering/reserves,

@@ -49,6 +49,33 @@ frontend embeds the tokenization widget, a decision this backend can't
 make on their behalf. That's a real integration-contract implication,
 beyond just an internal engineering note.
 
+## Network tokenization: a different, lower layer than PCI tokenization
+
+The tokenization above is about this backend never touching a raw PAN —
+a PCI-scope decision. Real card networks separately support replacing
+the PAN itself with a **network token** (Visa Token Service /
+Mastercard MDES): a device/merchant-bound surrogate the network keeps
+in sync when the underlying card expires or gets reissued, reducing
+fraud liability versus a raw PAN since the network vouches for the
+binding. This happens *underneath* whatever opaque `cardToken`/
+`paymentMethodId` this platform ever sees — a wallet (Apple Pay/Google
+Pay) or an on-file card can be network-tokenized or not, independent of
+whether this backend's own PCI scoping decision above applies, since
+that decision is about this backend never seeing a PAN either way.
+
+`PSPChargeResponse.networkTokenized` surfaces whether a given
+authorization actually used one, read from the PSP's own response —
+same "ingest the PSP's own signal" pattern as `pspRiskSignal`, rather
+than something this platform computes or decides. Real Stripe always
+populates this (`payment_method_details.card.network_token.used`,
+explicitly `true` or `false`); real Adyen only does when the merchant
+account opted into "Network token bin and summary for tokenised
+payments," so `undefined` for an Adyen-routed charge means "the PSP
+never told us either way," not a confirmed `false` — see that field's
+own docblock in `psp-adapter.port.ts` for the exact per-PSP wire shape.
+See `fee-model.md`'s interchange section for why this also connects,
+if only loosely, to a transaction's qualified interchange rate.
+
 ## AML/KYC: why payouts are gated and charges aren't
 
 A marketplace platform routing money to connected sellers has a real

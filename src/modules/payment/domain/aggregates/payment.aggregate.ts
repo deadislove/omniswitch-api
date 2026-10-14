@@ -141,6 +141,7 @@ export class PaymentAggregate {
     private _scaExemptionRequested?: ScaExemptionType,
     private _scaExemptionReason?: string,
     private _scaExemptionIndicator?: ScaExemptionType,
+    private _networkTokenized?: boolean,
   ) {}
 
   // ─── Factory Methods ────────────────────────────────────────────────────────
@@ -189,6 +190,7 @@ export class PaymentAggregate {
       undefined, // scaExemptionRequested
       undefined, // scaExemptionReason
       undefined, // scaExemptionIndicator
+      undefined, // networkTokenized
     );
 
     payment.addDomainEvent(
@@ -238,6 +240,7 @@ export class PaymentAggregate {
     scaExemptionRequested?: ScaExemptionType;
     scaExemptionReason?: string;
     scaExemptionIndicator?: ScaExemptionType;
+    networkTokenized?: boolean;
   }): PaymentAggregate {
     return new PaymentAggregate(
       params.id,
@@ -273,6 +276,7 @@ export class PaymentAggregate {
       params.scaExemptionRequested,
       params.scaExemptionReason,
       params.scaExemptionIndicator,
+      params.networkTokenized,
     );
   }
 
@@ -318,6 +322,7 @@ export class PaymentAggregate {
     avsResult?: AvsResult,
     cvvResult?: CvvResult,
     scaExemptionIndicator?: ScaExemptionType,
+    networkTokenized?: boolean,
   ): void {
     assertValidTransition(this._status, PaymentStatus.REQUIRES_CAPTURE);
     this._pspTransactionId = pspTransactionId;
@@ -332,6 +337,7 @@ export class PaymentAggregate {
     this._avsResult = avsResult;
     this._cvvResult = cvvResult;
     this._scaExemptionIndicator = scaExemptionIndicator;
+    if (networkTokenized !== undefined) this._networkTokenized = networkTokenized;
     this.transitionTo(PaymentStatus.REQUIRES_CAPTURE);
   }
 
@@ -413,6 +419,7 @@ export class PaymentAggregate {
     avsResult?: AvsResult,
     cvvResult?: CvvResult,
     scaExemptionIndicator?: ScaExemptionType,
+    networkTokenized?: boolean,
   ): void {
     assertValidTransition(this._status, PaymentStatus.SUCCEEDED);
     this._pspTransactionId = pspTransactionId;
@@ -421,6 +428,7 @@ export class PaymentAggregate {
     if (avsResult) this._avsResult = avsResult;
     if (cvvResult) this._cvvResult = cvvResult;
     if (scaExemptionIndicator) this._scaExemptionIndicator = scaExemptionIndicator;
+    if (networkTokenized !== undefined) this._networkTokenized = networkTokenized;
     this.transitionTo(PaymentStatus.SUCCEEDED);
     this.addDomainEvent(
       new PaymentChargedEvent(
@@ -813,6 +821,9 @@ export class PaymentAggregate {
   }
   get scaExemptionIndicator(): ScaExemptionType | undefined {
     return this._scaExemptionIndicator;
+  }
+  get networkTokenized(): boolean | undefined {
+    return this._networkTokenized;
   }
   get threeDSResult(): ThreeDSResult | undefined {
     return this._threeDSResult;

@@ -244,6 +244,18 @@ export class PaymentEntity {
   @Column({ name: 'sca_exemption_indicator', type: 'varchar', nullable: true })
   scaExemptionIndicator?: string;
 
+  /**
+   * Whether this authorization used a real network token (Visa VTS /
+   * Mastercard MDES) rather than the raw PAN — see
+   * `PSPChargeResponse.networkTokenized`'s docblock for the real
+   * per-PSP wire shape this is read from. Nullable rather than
+   * defaulting to `false`: undefined means "the PSP never told us
+   * either way" (e.g. Adyen's additionalData opt-in wasn't enabled),
+   * which is a different fact from "confirmed not network-tokenized."
+   */
+  @Column({ name: 'network_tokenized', type: 'boolean', nullable: true })
+  networkTokenized?: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

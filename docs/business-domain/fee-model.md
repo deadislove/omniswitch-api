@@ -131,3 +131,20 @@ adapters normalize their own vocabulary into this port's shared
 `AvsResult`/`CvvResult` types — see `PSPChargeResponse`'s own docblock
 for the exact mapping, including why `PARTIAL` (one of Stripe's two
 AVS checks passing, the other failing) only ever comes from Stripe.
+
+**Network tokenization is a real, if minor, connection to this same
+layer.** A transaction authorized via a real network token (Visa VTS /
+Mastercard MDES — see `compliance-and-security.md`'s own section on
+this, a different layer from this backend's PCI-scope tokenization)
+often qualifies for a better real-world interchange rate than the same
+card presented as a raw PAN, since the network itself vouches for the
+token-to-card binding. `PSPChargeResponse.networkTokenized` surfaces
+the PSP's own signal for this (undefined for Adyen unless the merchant
+account opted into the relevant additionalData field — see that
+field's docblock), but this platform's own
+`lookupInterchangeRate()`/`evaluateInterchangeQualification()` doesn't
+yet fold it into the rate this illustrative model actually applies —
+recorded for visibility only, the same "no decisioning role yet"
+posture `PaymentAggregate.pspRiskSignal` already uses, rather than a
+rate adjustment this project has a published source to model
+accurately.
