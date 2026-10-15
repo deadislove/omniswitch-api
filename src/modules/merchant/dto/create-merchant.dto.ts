@@ -151,6 +151,16 @@ export class CreateMerchantDto {
   payoutReserveHoldDays?: number;
 
   @ApiPropertyOptional({
+    example: 'STANDARD',
+    enum: ['STANDARD', 'INSTANT'],
+    description:
+      "This merchant's default net-amount payout rail. Only meaningful for a CONNECTED merchant. Omit for STANDARD (the default) — see MerchantEntity.payoutRail's docblock.",
+  })
+  @IsOptional()
+  @IsIn(['STANDARD', 'INSTANT'])
+  payoutRail?: 'STANDARD' | 'INSTANT';
+
+  @ApiPropertyOptional({
     example: ['STRIPE', 'ADYEN'],
     enum: VALID_PSP_PROVIDERS,
     isArray: true,
@@ -352,6 +362,19 @@ export class UpdatePayoutReservePolicyDto {
   @Min(0)
   @Max(3650)
   payoutReserveHoldDays: number;
+}
+
+const VALID_PAYOUT_RAILS = ['STANDARD', 'INSTANT'] as const;
+
+export class UpdatePayoutRailDto {
+  @ApiProperty({
+    example: 'INSTANT',
+    enum: VALID_PAYOUT_RAILS,
+    description:
+      "Default rail for this merchant's net-amount payout transfer. STANDARD is whatever BANK_TRANSFER_PROVIDER is globally configured (mock/ach/wire); INSTANT settles in minutes for a premium fee (see calculateInstantPayoutFee()). Takes effect on the next scheduled transfer sweep — an explicit per-call rail always overrides this default.",
+  })
+  @IsIn(VALID_PAYOUT_RAILS)
+  payoutRail: 'STANDARD' | 'INSTANT';
 }
 
 export class UpdatePspEntitlementDto {
@@ -674,6 +697,13 @@ export class MerchantSummaryDto {
     description: "Days a payout's withheld rolling reserve sits before it becomes releasable",
   })
   payoutReserveHoldDays: number;
+
+  @ApiProperty({
+    example: 'STANDARD',
+    enum: VALID_PAYOUT_RAILS,
+    description: "This merchant's default net-amount payout rail — see UpdatePayoutRailDto.payoutRail",
+  })
+  payoutRail: 'STANDARD' | 'INSTANT';
 
   @ApiProperty({
     example: 'NOT_STARTED',

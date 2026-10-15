@@ -29,6 +29,7 @@ import { PayoutTypeOrmRepository } from './adapters/persistence/repositories/pay
 import { MockBankTransferAdapter } from './adapters/bank/mock-bank-transfer.adapter';
 import { AchBankTransferAdapter } from './adapters/bank/ach-bank-transfer.adapter';
 import { WireBankTransferAdapter } from './adapters/bank/wire-bank-transfer.adapter';
+import { InstantBankTransferAdapter } from './adapters/bank/instant-bank-transfer.adapter';
 import { BankTransferWebhookGuard } from './adapters/bank/bank-transfer-webhook.guard';
 import { DelegationTypeOrmRepository } from './adapters/persistence/repositories/delegation-typeorm.repository';
 import { ChargeApprovalTypeOrmRepository } from './adapters/persistence/repositories/charge-approval-typeorm.repository';
@@ -270,6 +271,12 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     MockBankTransferAdapter,
     AchBankTransferAdapter,
     WireBankTransferAdapter,
+    // Also an ordinary provider, but deliberately never one of the
+    // useFactory's choices below — PayoutService injects this one
+    // directly, since picking the instant rail is a per-payout/
+    // per-merchant decision, not a whole-deployment default. See
+    // BankTransferPort's own docblock.
+    InstantBankTransferAdapter,
     {
       provide: BankTransferPort,
       useFactory: (

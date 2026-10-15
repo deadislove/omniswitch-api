@@ -45,7 +45,8 @@ instead; for a guided onboarding path through both, see
 ## Marketplace & recurring billing
 
 - [`marketplace-and-payouts.md`](./marketplace-and-payouts.md) —
-  marketplace splits, payout scheduling, connected-account KYC gating
+  marketplace splits, payout scheduling, connected-account KYC gating,
+  and the instant payout rail as a real, per-payout/per-merchant choice
 - [`subscriptions.md`](./subscriptions.md) — the subscription state
   machine, how billing/dunning/crash-recovery/plan catalog &
   proration/trial-verification work, and what's still simplified

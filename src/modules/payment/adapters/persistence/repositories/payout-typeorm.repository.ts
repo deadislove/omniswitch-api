@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { PayoutPort, FindPayoutsFilter } from '../../../ports/outbound/payout.port';
-import { Payout } from '../../../domain/aggregates/payout.aggregate';
+import { Payout, PayoutRail } from '../../../domain/aggregates/payout.aggregate';
 import { PayoutSweepRun } from '../../../domain/aggregates/payout-sweep-run.aggregate';
 import { Money } from '../../../domain/value-objects/money.vo';
 import { PayoutEntity } from '../entities/payout.entity';
@@ -142,7 +142,13 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     return entities.map((e) => this.toDomain(e));
   }
 
-  async markTransferPending(id: string, transferId: string, submittedAt: Date): Promise<boolean> {
+  async markTransferPending(
+    id: string,
+    transferId: string,
+    submittedAt: Date,
+    rail?: PayoutRail,
+    instantFeeAmount?: Money,
+  ): Promise<boolean> {
     const result = await this.payoutRepo
       .createQueryBuilder()
       .update(PayoutEntity)
@@ -151,6 +157,8 @@ export class PayoutTypeOrmRepository implements PayoutPort {
         transferId,
         transferInitiatedAt: submittedAt,
         transferError: () => 'NULL',
+        ...(rail ? { transferRail: rail } : {}),
+        ...(instantFeeAmount ? { instantFeeAmountMinorUnits: instantFeeAmount.amountMinorUnits.toString() } : {}),
       })
       .where('id = :id', { id })
       .andWhere('transferStatus NOT IN (:...excluded)', { excluded: ['INITIATED', 'PENDING_CONFIRMATION'] })
@@ -158,11 +166,24 @@ export class PayoutTypeOrmRepository implements PayoutPort {
     return (result.affected ?? 0) > 0;
   }
 
-  async markTransferInitiated(id: string, transferId: string, initiatedAt: Date): Promise<boolean> {
+  async markTransferInitiated(
+    id: string,
+    transferId: string,
+    initiatedAt: Date,
+    rail?: PayoutRail,
+    instantFeeAmount?: Money,
+  ): Promise<boolean> {
     const result = await this.payoutRepo
       .createQueryBuilder()
       .update(PayoutEntity)
-      .set({ transferStatus: 'INITIATED', transferId, transferInitiatedAt: initiatedAt, transferError: () => 'NULL' })
+      .set({
+        transferStatus: 'INITIATED',
+        transferId,
+        transferInitiatedAt: initiatedAt,
+        transferError: () => 'NULL',
+        ...(rail ? { transferRail: rail } : {}),
+        ...(instantFeeAmount ? { instantFeeAmountMinorUnits: instantFeeAmount.amountMinorUnits.toString() } : {}),
+      })
       .where('id = :id', { id })
       .andWhere('transferStatus != :initiated', { initiated: 'INITIATED' })
       .execute();
@@ -315,6 +336,10 @@ export class PayoutTypeOrmRepository implements PayoutPort {
       reserveTransferId: entity.reserveTransferId ?? undefined,
       reserveTransferInitiatedAt: entity.reserveTransferInitiatedAt ?? undefined,
       reserveTransferError: entity.reserveTransferError ?? undefined,
+      transferRail: entity.transferRail ?? undefined,
+      instantFeeAmount: entity.instantFeeAmountMinorUnits
+        ? Money.fromMinorUnits(BigInt(entity.instantFeeAmountMinorUnits), entity.currencyCode)
+        : undefined,
     });
   }
 }

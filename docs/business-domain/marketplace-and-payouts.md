@@ -338,6 +338,63 @@ which of a payout's two transfers a given `transferId` belongs to, so
 then the reserve one — same idempotent, log-and-ignore posture toward
 an unrecognized or already-resolved `transferId` either way.
 
+### Instant payouts: a real rail choice, not just a faster settlement mechanism
+
+Real PSPs (Stripe Instant Payouts, Visa Direct push-to-card) and
+real-time payment networks (RTP, FedNow) let a connected merchant
+receive payout funds within minutes instead of the standard rail's 1-2
+business days, usually for a premium fee — a real differentiator a
+gig-economy seller cares about day-to-day. `InstantBankTransferAdapter`
+models this as a fourth `BankTransferPort` implementation, same
+`PENDING` -> webhook-confirmed shape as `AchBankTransferAdapter`/
+`WireBankTransferAdapter` (this mock can't simulate either rail's real
+wall-clock settlement delay, so the honest differentiator modeled here
+is the rail choice and its fee, not a faster clock).
+
+**Deliberately *not* one of `BANK_TRANSFER_PROVIDER`'s three choices.**
+The existing `mock`/`ach`/`wire` pick is a whole-deployment default,
+read once at DI-container build time — appropriate for "which rail does
+this environment use," wrong for "should this specific merchant/payout
+pay extra to settle faster," which is a product decision that can
+legitimately differ payout to payout. `PayoutService` injects
+`InstantBankTransferAdapter` directly instead, and resolves
+`PayoutRail` (`STANDARD` | `INSTANT`) per call: an explicit
+`rail` on `POST /admin/marketplace/payouts/:id/initiate-transfer`
+always wins; absent that, the recipient merchant's own
+`MerchantEntity.payoutRail` default applies (`PATCH
+/admin/merchants/:merchantId/payout-rail`, settable at creation too);
+absent both, `STANDARD` — the existing global `BankTransferPort`
+binding, completely unchanged from before this rail existed.
+
+**The premium is a real deduction, not a cosmetic note.** Choosing
+`INSTANT` computes `calculateInstantPayoutFee()` — an illustrative
+150bps, in the real neighborhood of Stripe Instant Payouts' published
+rate — against `netAmount`, and actually sends `netAmount` minus that
+fee; the fee itself is recorded (`Payout.instantFeeAmount`,
+`transferRail`) and surfaced on `GET /payouts/:id` for audit, alongside
+(not instead of) the unmodified `netAmount` a merchant was always owed.
+A payout small enough that the fee would meet or exceed `netAmount` is
+rejected (`PAYOUT_INSTANT_FEE_EXCEEDS_NET_AMOUNT`, 409) rather than
+silently sending zero or a negative amount — unreachable at 150bps and
+any real currency's minor-unit granularity today, but guarded rather
+than assumed in case that rate is ever reconfigured higher.
+
+**Scoped to the net-amount transfer only.** The reserve-release
+follow-up transfer (`initiateReserveTransfer()`) always uses the
+standard rail — a smaller, rarer leg where the instant option wasn't
+judged worth the added surface area in this pass; see `PayoutRail`'s
+own docblock in `payout.aggregate.ts` for that scoping decision.
+
+Verified in `test/instant-payout.e2e-spec.ts` (6 tests): an explicit
+`INSTANT` choice deducts the correct fee and lands in
+`PENDING_CONFIRMATION` via `InstantBankTransferAdapter`; omitting
+`rail` resolves to `STANDARD` with no fee; a merchant's own
+`payoutRail` default is honored when no explicit choice is given, and
+an explicit per-call choice overrides it; a signed settlement webhook
+confirms an instant transfer to `INITIATED` while preserving the
+recorded rail/fee; and `PATCH .../payout-rail` changes what a later
+sweep-initiated transfer uses.
+
 Verified against real infrastructure in `test/marketplace-payouts.e2e-spec.ts`
 (15 tests, the mock rail/mock KYC provider), `test/bank-transfer-rail.e2e-spec.ts`
 (10 tests, the two real bank-transfer rails), and `test/kyc-review.e2e-spec.ts`

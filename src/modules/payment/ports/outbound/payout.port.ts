@@ -1,4 +1,5 @@
-import { Payout } from '../../domain/aggregates/payout.aggregate';
+import { Payout, PayoutRail } from '../../domain/aggregates/payout.aggregate';
+import { Money } from '../../domain/value-objects/money.vo';
 import { PayoutSweepRun } from '../../domain/aggregates/payout-sweep-run.aggregate';
 
 export interface FindPayoutsFilter {
@@ -66,7 +67,21 @@ export abstract class PayoutPort {
    * false if the condition didn't hold, same pattern as
    * markReserveReleased(). See `Payout.recordTransferPending()`.
    */
-  abstract markTransferPending(id: string, transferId: string, submittedAt: Date): Promise<boolean>;
+  /**
+   * `rail`/`instantFeeAmount`, when given, persist which rail was
+   * actually chosen and the instant premium cost — see
+   * `Payout.recordTransferPending()`'s own docblock for why these are
+   * only ever passed here (the point the rail was actually chosen),
+   * never re-passed by `markTransferInitiated()`'s settlement-
+   * confirmation call site.
+   */
+  abstract markTransferPending(
+    id: string,
+    transferId: string,
+    submittedAt: Date,
+    rail?: PayoutRail,
+    instantFeeAmount?: Money,
+  ): Promise<boolean>;
 
   /**
    * Atomic, conditional on transferStatus currently *not* being
@@ -79,7 +94,14 @@ export abstract class PayoutPort {
    * (mock's synchronous SENT) or from PENDING_CONFIRMATION (a real
    * rail's async webhook confirming settlement).
    */
-  abstract markTransferInitiated(id: string, transferId: string, initiatedAt: Date): Promise<boolean>;
+  /** Same `rail`/`instantFeeAmount` semantics as `markTransferPending()` above — only actually populated on the direct-from-NOT_INITIATED synchronous path; the PENDING_CONFIRMATION-settlement call site never passes them. */
+  abstract markTransferInitiated(
+    id: string,
+    transferId: string,
+    initiatedAt: Date,
+    rail?: PayoutRail,
+    instantFeeAmount?: Money,
+  ): Promise<boolean>;
 
   abstract markTransferFailed(id: string, error: string): Promise<void>;
 

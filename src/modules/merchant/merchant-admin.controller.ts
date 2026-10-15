@@ -15,6 +15,7 @@ import {
   UpdateMccCodeDto,
   UpdateReservePolicyDto,
   UpdatePayoutReservePolicyDto,
+  UpdatePayoutRailDto,
   UpdateRiskTierAutoDto,
   UpdatePspEntitlementDto,
   UpdateSanctionsReviewDto,
@@ -63,6 +64,7 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     platformMerchantId: merchant.platformMerchantId ?? null,
     payoutReserveBps: merchant.payoutReserveBps,
     payoutReserveHoldDays: merchant.payoutReserveHoldDays,
+    payoutRail: merchant.payoutRail,
     kycStatus: merchant.kycStatus,
     kycApplicationId: merchant.kycApplicationId ?? null,
     kybStatus: merchant.kybStatus,
@@ -394,6 +396,21 @@ export class MerchantAdminController {
       dto.payoutReserveBps,
       dto.payoutReserveHoldDays,
     );
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/payout-rail')
+  @ApiOperation({
+    summary:
+      "Change a merchant's default net-amount payout rail (STANDARD/INSTANT) — takes effect on the next scheduled transfer sweep, overridden by an explicit per-call rail choice",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updatePayoutRail(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdatePayoutRailDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updatePayoutRail(merchantId, dto.payoutRail);
     return toSummary(merchant);
   }
 

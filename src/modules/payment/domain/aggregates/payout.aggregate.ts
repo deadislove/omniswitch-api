@@ -31,6 +31,28 @@ export type PayoutReserveStatus = 'NONE' | 'HELD' | 'RELEASED';
  */
 export type PayoutTransferStatus = 'NOT_INITIATED' | 'PENDING_CONFIRMATION' | 'INITIATED' | 'FAILED';
 
+/**
+ * Which rail actually carried `netAmount`'s transfer — `STANDARD` is
+ * whatever `BankTransferPort` is globally bound to at DI-container
+ * build time (`BANK_TRANSFER_PROVIDER` — mock/ach/wire), unchanged from
+ * before this type existed; `INSTANT` is a real, separately-selectable
+ * rail (`InstantBankTransferAdapter`) a connected merchant can choose
+ * (or an operator can choose per transfer) to get settled in minutes
+ * instead of the standard rail's 1-2 business days, for a premium fee
+ * — see `calculateInstantPayoutFee()`. Deliberately a two-way choice
+ * rather than exposing ACH vs. wire as a third/fourth option here: a
+ * merchant doesn't pick its own standard rail's wire protocol in
+ * reality either, that's a backend/banking-relationship detail, not a
+ * product decision the way "faster, for a fee" is. Only ever set on
+ * the *net amount* transfer, never the reserve-release follow-up
+ * transfer (`recordReserveTransferPending()`/`recordReserveTransferInitiated()`
+ * below) — that smaller, rarer leg always uses the standard rail; see
+ * `docs/business-domain/marketplace-and-payouts.md` for why this scope
+ * boundary was drawn here rather than threading the choice through
+ * both legs.
+ */
+export type PayoutRail = 'STANDARD' | 'INSTANT';
+
 export class Payout {
   private constructor(
     private readonly _id: string,
@@ -53,6 +75,8 @@ export class Payout {
     private _reserveTransferId: string | undefined,
     private _reserveTransferInitiatedAt: Date | undefined,
     private _reserveTransferError: string | undefined,
+    private _transferRail: PayoutRail | undefined,
+    private _instantFeeAmount: Money | undefined,
   ) {}
 
   static create(params: {
@@ -106,6 +130,8 @@ export class Payout {
       undefined,
       undefined,
       undefined,
+      undefined, // transferRail
+      undefined, // instantFeeAmount
     );
   }
 
@@ -130,6 +156,8 @@ export class Payout {
     reserveTransferId?: string;
     reserveTransferInitiatedAt?: Date;
     reserveTransferError?: string;
+    transferRail?: PayoutRail;
+    instantFeeAmount?: Money;
   }): Payout {
     return new Payout(
       params.id,
@@ -152,6 +180,8 @@ export class Payout {
       params.reserveTransferId,
       params.reserveTransferInitiatedAt,
       params.reserveTransferError,
+      params.transferRail,
+      params.instantFeeAmount,
     );
   }
 
@@ -189,7 +219,7 @@ export class Payout {
    * `POST /webhooks/bank-transfer` receiver. `MockBankTransferAdapter`
    * never calls this — it goes straight to `recordTransferInitiated()`.
    */
-  recordTransferPending(transferId: string, now: Date): void {
+  recordTransferPending(transferId: string, now: Date, rail?: PayoutRail, instantFeeAmount?: Money): void {
     if (this._kycBlocked) {
       throw new Error(`Payout ${this._id} is KYC-blocked, cannot initiate a transfer`);
     }
@@ -203,6 +233,8 @@ export class Payout {
     this._transferId = transferId;
     this._transferInitiatedAt = now;
     this._transferError = undefined;
+    if (rail) this._transferRail = rail;
+    if (instantFeeAmount) this._instantFeeAmount = instantFeeAmount;
   }
 
   /**
@@ -217,9 +249,16 @@ export class Payout {
    * file-level docblock and
    * docs/business-domain/marketplace-and-payouts.md for why that's a
    * real, documented gap rather than something this method silently gets
-   * wrong.
+   * wrong. `rail`/`instantFeeAmount`, when given, record which rail
+   * actually carried this transfer and what the instant premium cost —
+   * see `PayoutRail`'s own docblock. Only ever passed at the point the
+   * rail was actually chosen (`recordTransferPending()`'s initial call,
+   * or this method's own direct-from-`NOT_INITIATED` synchronous path);
+   * `confirmTransfer()`'s later settlement confirmation never re-passes
+   * them, which is why both are optional here — preserving whatever was
+   * already recorded rather than clobbering it with `undefined`.
    */
-  recordTransferInitiated(transferId: string, now: Date): void {
+  recordTransferInitiated(transferId: string, now: Date, rail?: PayoutRail, instantFeeAmount?: Money): void {
     if (this._kycBlocked) {
       throw new Error(`Payout ${this._id} is KYC-blocked, cannot initiate a transfer`);
     }
@@ -233,6 +272,8 @@ export class Payout {
     this._transferId = transferId;
     this._transferInitiatedAt = now;
     this._transferError = undefined;
+    if (rail) this._transferRail = rail;
+    if (instantFeeAmount) this._instantFeeAmount = instantFeeAmount;
   }
 
   /** The bank/PSP declined the transfer — recorded rather than thrown, so a sweep can move on to the next payout (see PayoutService.initiateEligibleTransfers()'s per-item try/catch). Also used from PENDING_CONFIRMATION when a real rail's async webhook reports settlement failure. */
@@ -353,6 +394,13 @@ export class Payout {
   }
   get reserveTransferError(): string | undefined {
     return this._reserveTransferError;
+  }
+
+  get transferRail(): PayoutRail | undefined {
+    return this._transferRail;
+  }
+  get instantFeeAmount(): Money | undefined {
+    return this._instantFeeAmount;
   }
 
   get reserveStatus(): PayoutReserveStatus {

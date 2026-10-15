@@ -145,6 +145,7 @@ setDefault('BANK_TRANSFER_PROVIDER_URL', 'http://localhost:4000/bank');
 // in-process (Jest/Supertest), not as a container mock-psp could reach.
 setDefault('ACH_PROVIDER_URL', 'http://localhost:4000/ach');
 setDefault('WIRE_PROVIDER_URL', 'http://localhost:4000/wire');
+setDefault('INSTANT_PROVIDER_URL', 'http://localhost:4000/instant');
 setDefault('BANK_TRANSFER_WEBHOOK_SECRET', 'bts_e2e_test_placeholder');
 setDefault('EMAIL_PROVIDER_URL', 'http://localhost:4000/v1/email');
 // KYC_PROVIDER intentionally left unset here (defaults to 'mock' — see

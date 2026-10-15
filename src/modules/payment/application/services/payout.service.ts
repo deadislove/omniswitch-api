@@ -5,10 +5,12 @@ import { PayoutPort, FindPayoutsFilter } from '../../ports/outbound/payout.port'
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
 import { BankTransferPort } from '../../ports/outbound/bank-transfer.port';
 import { CachePort } from '../../ports/outbound/cache.port';
-import { Payout } from '../../domain/aggregates/payout.aggregate';
+import { Payout, PayoutRail } from '../../domain/aggregates/payout.aggregate';
 import { PayoutSweepRun } from '../../domain/aggregates/payout-sweep-run.aggregate';
 import { Money } from '../../domain/value-objects/money.vo';
 import { MerchantService } from '../../../merchant/merchant.service';
+import { InstantBankTransferAdapter } from '../../adapters/bank/instant-bank-transfer.adapter';
+import { calculateInstantPayoutFee } from '../../domain/services/instant-payout-fee';
 
 const SWEEP_LOCK_KEY = 'payout-sweep-lock';
 // Generous relative to how long a sweep actually takes (one DB write per
@@ -43,6 +45,7 @@ export class PayoutService {
     private readonly merchantService: MerchantService,
     private readonly bankTransfer: BankTransferPort,
     private readonly cache: CachePort,
+    private readonly instantBankTransfer: InstantBankTransferAdapter,
   ) {}
 
   /**
@@ -310,16 +313,25 @@ export class PayoutService {
    * caller is waiting on; the sweep version below catches per-item
    * instead so one merchant's declined transfer doesn't block the rest.
    *
-   * A real rail (`AchBankTransferAdapter`/`WireBankTransferAdapter`)
-   * returns `PENDING` here — this method returns with the Payout in
-   * `PENDING_CONFIRMATION` rather than `INITIATED`; final settlement arrives
-   * later via `confirmTransfer()`, called from the
-   * `POST /webhooks/bank-transfer` receiver. Only `MockBankTransferAdapter`
-   * (`SENT`) reaches `INITIATED` synchronously, inside this same call.
-   * Reads via `findByIdOnMaster()` — see `releaseReserve()`'s own
-   * docblock for why.
+   * A real rail (`AchBankTransferAdapter`/`WireBankTransferAdapter`/
+   * `InstantBankTransferAdapter`) returns `PENDING` here — this method
+   * returns with the Payout in `PENDING_CONFIRMATION` rather than
+   * `INITIATED`; final settlement arrives later via `confirmTransfer()`,
+   * called from the `POST /webhooks/bank-transfer` receiver. Only
+   * `MockBankTransferAdapter` (`SENT`) reaches `INITIATED` synchronously,
+   * inside this same call. Reads via `findByIdOnMaster()` — see
+   * `releaseReserve()`'s own docblock for why.
+   *
+   * `options.rail`, when given, overrides the merchant's own
+   * `payoutRail` default (see `MerchantEntity.payoutRail`'s docblock) —
+   * `STANDARD` sends `netAmount` via whichever rail
+   * `BANK_TRANSFER_PROVIDER` is globally bound to (unchanged from
+   * before this option existed); `INSTANT` sends `netAmount` minus
+   * `calculateInstantPayoutFee()`'s premium via `InstantBankTransferAdapter`
+   * instead, injected directly rather than through that global binding
+   * — see `PayoutRail`'s own docblock for why.
    */
-  async initiateTransfer(payoutId: string): Promise<Payout> {
+  async initiateTransfer(payoutId: string, options: { rail?: PayoutRail } = {}): Promise<Payout> {
     const payout = await this.payoutPort.findByIdOnMaster(payoutId);
     if (!payout) {
       throw new NotFoundException({ statusCode: 404, error: `Payout ${payoutId} not found`, code: 'PAYOUT_NOT_FOUND' });
@@ -346,10 +358,35 @@ export class PayoutService {
       });
     }
 
+    let rail = options.rail;
+    if (!rail) {
+      // Forced onto master — same reasoning as merchant lookups
+      // elsewhere in this service: a merchant that just changed its
+      // payoutRail preference moments before this sweep/call shouldn't
+      // risk reading a stale replica copy of it.
+      const merchant = await this.merchantService.findByMerchantIdOnMaster(payout.merchantId);
+      rail = merchant?.payoutRail ?? 'STANDARD';
+    }
+
+    let transferAmount = payout.netAmount;
+    let instantFeeAmount: Money | undefined;
+    if (rail === 'INSTANT') {
+      instantFeeAmount = calculateInstantPayoutFee(payout.netAmount);
+      if (instantFeeAmount.amountMinorUnits >= payout.netAmount.amountMinorUnits) {
+        throw new ConflictException({
+          statusCode: 409,
+          error: `Payout ${payoutId}'s instant transfer fee (${instantFeeAmount.toString()}) would meet or exceed its net amount (${payout.netAmount.toString()})`,
+          code: 'PAYOUT_INSTANT_FEE_EXCEEDS_NET_AMOUNT',
+        });
+      }
+      transferAmount = payout.netAmount.subtract(instantFeeAmount);
+    }
+    const adapter = rail === 'INSTANT' ? this.instantBankTransfer : this.bankTransfer;
+
     const idempotencyKey = uuidv4();
-    const result = await this.bankTransfer.initiateTransfer({
+    const result = await adapter.initiateTransfer({
       merchantId: payout.merchantId,
-      amount: payout.netAmount,
+      amount: transferAmount,
       idempotencyKey,
     });
 
@@ -364,7 +401,13 @@ export class PayoutService {
 
     const now = new Date();
     if (result.status === 'PENDING') {
-      const pending = await this.payoutPort.markTransferPending(payoutId, result.transferId!, now);
+      const pending = await this.payoutPort.markTransferPending(
+        payoutId,
+        result.transferId!,
+        now,
+        rail,
+        instantFeeAmount,
+      );
       if (!pending) {
         throw new ConflictException({
           statusCode: 409,
@@ -372,14 +415,22 @@ export class PayoutService {
           code: 'PAYOUT_TRANSFER_ALREADY_INITIATED',
         });
       }
-      payout.recordTransferPending(result.transferId!, now);
+      payout.recordTransferPending(result.transferId!, now, rail, instantFeeAmount);
       this.logger.log(
-        `Payout ${payoutId} transfer submitted (${payout.netAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId} — awaiting async settlement confirmation`,
+        `Payout ${payoutId} transfer submitted (${transferAmount.toString()}, rail=${rail}` +
+          (instantFeeAmount ? `, instantFee=${instantFeeAmount.toString()}` : '') +
+          `) for merchant ${payout.merchantId}, transferId=${result.transferId} — awaiting async settlement confirmation`,
       );
       return payout;
     }
 
-    const initiated = await this.payoutPort.markTransferInitiated(payoutId, result.transferId!, now);
+    const initiated = await this.payoutPort.markTransferInitiated(
+      payoutId,
+      result.transferId!,
+      now,
+      rail,
+      instantFeeAmount,
+    );
     if (!initiated) {
       throw new ConflictException({
         statusCode: 409,
@@ -391,9 +442,11 @@ export class PayoutService {
     // Return the in-memory aggregate, mutated to match what was just
     // committed — same "don't re-fetch after your own write" posture as
     // releaseReserve() above.
-    payout.recordTransferInitiated(result.transferId!, now);
+    payout.recordTransferInitiated(result.transferId!, now, rail, instantFeeAmount);
     this.logger.log(
-      `Payout ${payoutId} transfer initiated (${payout.netAmount.toString()}) for merchant ${payout.merchantId}, transferId=${result.transferId}`,
+      `Payout ${payoutId} transfer initiated (${transferAmount.toString()}, rail=${rail}` +
+        (instantFeeAmount ? `, instantFee=${instantFeeAmount.toString()}` : '') +
+        `) for merchant ${payout.merchantId}, transferId=${result.transferId}`,
     );
     return payout;
   }

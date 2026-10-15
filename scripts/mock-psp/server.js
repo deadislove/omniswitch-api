@@ -1129,8 +1129,12 @@ const server = http.createServer((req, res) => {
     // immediately, before ever submitting to clearing); "transferfail" is
     // accepted, then fails during clearing (insufficient funds — a real
     // rail can only discover this once it actually tries to move money).
-    if ((path === '/ach/transfers' || path === '/wire/transfers') && req.method === 'POST') {
-      const rail = path === '/ach/transfers' ? 'ach' : 'wire';
+    if ((path === '/ach/transfers' || path === '/wire/transfers' || path === '/instant/transfers') && req.method === 'POST') {
+      // InstantBankTransferAdapter's target — same two-phase
+      // pending-then-webhook shape as ach/wire above (see that
+      // adapter's own docblock for why a genuinely async shape is the
+      // honest model for this rail too, despite its real-world name).
+      const rail = path === '/ach/transfers' ? 'ach' : path === '/wire/transfers' ? 'wire' : 'instant';
       let parsedBody = {};
       try {
         parsedBody = JSON.parse(data || '{}');
@@ -1161,7 +1165,7 @@ const server = http.createServer((req, res) => {
     // resolved yet (webhook already fired, GET race) returns 404, matching
     // how a real not-yet-indexed resource would look mid-race.
     if (
-      (segments[0] === 'ach' || segments[0] === 'wire') &&
+      (segments[0] === 'ach' || segments[0] === 'wire' || segments[0] === 'instant') &&
       segments[1] === 'transfers' &&
       segments[2] &&
       req.method === 'GET'

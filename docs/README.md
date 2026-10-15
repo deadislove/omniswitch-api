@@ -89,7 +89,8 @@ to payments domain concepts generally.
 - [`fx-conversion.md`](./business-domain/fx-conversion.md) — cross-currency
   merchant settlement, refund/dispute FX replay, presentment currency
 - [`marketplace-and-payouts.md`](./business-domain/marketplace-and-payouts.md) —
-  marketplace splits, payout scheduling, connected-account KYC gating
+  marketplace splits, payout scheduling, connected-account KYC gating,
+  and the instant payout rail as a real, per-payout/per-merchant choice
 - [`merchants.md`](./business-domain/merchants.md) — onboarding
   (identity capture, sanctions screening, KYC/KYB), the five trust
   signals evaluated continuously after onboarding, and account

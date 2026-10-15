@@ -37,16 +37,24 @@ export interface BankTransferResponse {
  * call" shape as FXRateProviderPort/KYCProviderPort, rather than a whole
  * PSP-style multi-method interface.
  *
- * Three concrete adapters implement this — `MockBankTransferAdapter`
+ * Four concrete adapters implement this — `MockBankTransferAdapter`
  * (synchronous, local dev/test default), `AchBankTransferAdapter`, and
- * `WireBankTransferAdapter` (both real, async-settling rails) — selected
- * at DI-container build time via `BANK_TRANSFER_PROVIDER`
- * (`mock`/`ach`/`wire`) in `payment.module.ts`'s `useFactory` binding for
- * this port, the same "one env var picks which concrete adapter answers
- * this interface" idiom `scripts/jobs/backup-storage/get-backup-storage.ts`
- * uses for `DELETION_BACKUP_STORAGE` — the difference is that binding
- * happens inside Nest DI here (these adapters have their own injected
+ * `WireBankTransferAdapter` (both real, async-settling standard rails),
+ * plus `InstantBankTransferAdapter` (also async-settling, a separate
+ * premium rail). The first three are selected at DI-container build
+ * time via `BANK_TRANSFER_PROVIDER` (`mock`/`ach`/`wire`) in
+ * `payment.module.ts`'s `useFactory` binding for this port, the same
+ * "one env var picks which concrete adapter answers this interface"
+ * idiom `scripts/jobs/backup-storage/get-backup-storage.ts` uses for
+ * `DELETION_BACKUP_STORAGE` — the difference is that binding happens
+ * inside Nest DI here (these adapters have their own injected
  * dependencies) rather than in a standalone script.
+ * `InstantBankTransferAdapter` is deliberately *not* part of that
+ * global pick — `PayoutService.initiateTransfer()` injects and selects
+ * it directly, per transfer, since whether to pay a premium for faster
+ * settlement is a per-payout/per-merchant decision rather than a
+ * whole-deployment default. See `PayoutRail`'s own docblock in
+ * `payout.aggregate.ts`.
  */
 /** The two terminal outcomes a `PENDING` transfer can resolve to — never `PENDING` itself; a still-pending transfer has nothing to report yet, so `getTransferStatus()` returns `null` for it (see below). */
 export type BankTransferOutcome = 'SETTLED' | 'FAILED';

@@ -123,6 +123,10 @@ services:
       # below to verify mock-psp's signed settlement callback.
       ACH_PROVIDER_URL: http://mock-psp:4000/ach
       WIRE_PROVIDER_URL: http://mock-psp:4000/wire
+      # InstantBankTransferAdapter — unlike the two above, never selected
+      # via BANK_TRANSFER_PROVIDER; PayoutService injects and picks this
+      # one directly per payout/merchant (see PayoutRail's own docblock).
+      INSTANT_PROVIDER_URL: http://mock-psp:4000/instant
       # EmailDisputeNotificationAdapter's target — mock-psp also serves
       # /v1/email/send, mimicking a real transactional-email provider's
       # {to, subject, body} shape (see docs/business-domain/disputes.md).

@@ -223,6 +223,20 @@ export class MerchantEntity {
   payoutReserveHoldDays: number;
 
   /**
+   * This merchant's default rail preference for its *net amount* payout
+   * transfer — `STANDARD` (whatever `BANK_TRANSFER_PROVIDER` is globally
+   * bound to) or `INSTANT` (a real, separately-selectable rail settling
+   * in minutes for a premium fee — see `PayoutRail`'s own docblock in
+   * `payout.aggregate.ts`). `PayoutService.initiateTransfer()`'s
+   * explicit per-call override always wins over this default; this is
+   * just what the scheduled sweep (`initiateEligibleTransfers()`) uses
+   * when no override is given. Only meaningful for a `CONNECTED`
+   * merchant, same scoping as `payoutReserveBps` above.
+   */
+  @Column({ name: 'payout_rail', type: 'varchar', default: 'STANDARD' })
+  payoutRail: 'STANDARD' | 'INSTANT';
+
+  /**
    * Onboarding/KYC review status — only meaningful for a `CONNECTED`
    * merchant. Defaults to `NOT_STARTED` for every merchant (existing
    * `PLATFORM` merchants are unaffected — nothing reads this field for

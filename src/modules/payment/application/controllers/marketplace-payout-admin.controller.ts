@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Body,
   Param,
   Query,
   UseGuards,
@@ -11,12 +12,17 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsIn } from 'class-validator';
 import { PayoutService } from '../services/payout.service';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../shared/guards/roles.guard';
 import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
-import { Payout, PayoutReserveStatus, PayoutTransferStatus } from '../../domain/aggregates/payout.aggregate';
+import {
+  Payout,
+  PayoutReserveStatus,
+  PayoutTransferStatus,
+  PayoutRail,
+} from '../../domain/aggregates/payout.aggregate';
 import { PayoutSweepRun } from '../../domain/aggregates/payout-sweep-run.aggregate';
 
 class ListPayoutsQuery {
@@ -110,8 +116,32 @@ class PayoutSummaryDto {
   @ApiPropertyOptional()
   reserveTransferError?: string;
 
+  @ApiPropertyOptional({
+    enum: ['STANDARD', 'INSTANT'],
+    description:
+      "Which rail actually carried the net-amount transfer — see PayoutRail's own docblock. Absent until a transfer has actually been initiated. Never set for the reserve-release follow-up transfer.",
+  })
+  transferRail?: PayoutRail;
+
+  @ApiPropertyOptional({
+    description:
+      "The premium charged for using the instant rail, in this payout's own currency. Absent unless transferRail is INSTANT.",
+  })
+  instantFeeAmount?: number;
+
   @ApiProperty()
   createdAt: string;
+}
+
+class InitiateTransferDto {
+  @ApiPropertyOptional({
+    enum: ['STANDARD', 'INSTANT'],
+    description:
+      "Overrides the recipient merchant's own payoutRail default for this one transfer. INSTANT settles in minutes for a premium fee (see calculateInstantPayoutFee()); omit to use the merchant's configured default (PATCH /admin/merchants/:merchantId/payout-rail).",
+  })
+  @IsOptional()
+  @IsIn(['STANDARD', 'INSTANT'])
+  rail?: PayoutRail;
 }
 
 class PayoutSweepRunResultDto {
@@ -181,6 +211,8 @@ function toSummary(payout: Payout): PayoutSummaryDto {
     reserveTransferId: payout.reserveTransferId,
     reserveTransferInitiatedAt: payout.reserveTransferInitiatedAt?.toISOString(),
     reserveTransferError: payout.reserveTransferError,
+    transferRail: payout.transferRail,
+    instantFeeAmount: payout.instantFeeAmount?.amount,
     createdAt: payout.createdAt.toISOString(),
   };
 }
@@ -289,16 +321,20 @@ export class MarketplacePayoutAdminController {
 
   @Post('payouts/:id/initiate-transfer')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Initiate a (mock) bank transfer for this payout's netAmount — see BankTransferPort" })
+  @ApiOperation({
+    summary:
+      "Initiate a (mock) bank transfer for this payout's netAmount — see BankTransferPort. Optionally overrides the recipient merchant's own payoutRail default for this one transfer",
+  })
   @ApiResponse({ status: 200, type: PayoutSummaryDto })
   @ApiResponse({ status: 404, description: 'Payout not found' })
   @ApiResponse({
     status: 409,
-    description: 'Payout is KYC-blocked, has no net amount, or its transfer is already initiated',
+    description:
+      'Payout is KYC-blocked, has no net amount, its transfer is already initiated, or (INSTANT) the fee would meet or exceed the net amount',
   })
   @ApiResponse({ status: 422, description: 'The bank declined the transfer' })
-  async initiateTransfer(@Param('id') id: string): Promise<PayoutSummaryDto> {
-    const payout = await this.payoutService.initiateTransfer(id);
+  async initiateTransfer(@Param('id') id: string, @Body() dto: InitiateTransferDto = {}): Promise<PayoutSummaryDto> {
+    const payout = await this.payoutService.initiateTransfer(id, { rail: dto.rail });
     return toSummary(payout);
   }
 

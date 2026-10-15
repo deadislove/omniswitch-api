@@ -1,5 +1,5 @@
 import { Entity, PrimaryColumn, Column, CreateDateColumn, Index } from 'typeorm';
-import { PayoutTransferStatus } from '../../../domain/aggregates/payout.aggregate';
+import { PayoutTransferStatus, PayoutRail } from '../../../domain/aggregates/payout.aggregate';
 
 @Entity('payouts')
 @Index(['merchantId', 'createdAt'])
@@ -66,6 +66,14 @@ export class PayoutEntity {
 
   @Column({ name: 'reserve_transfer_error', type: 'varchar', nullable: true })
   reserveTransferError?: string | null;
+
+  /** Which rail actually carried the net-amount transfer — see `PayoutRail`'s own docblock. Null until a transfer has actually been initiated. Never set for the reserve-release follow-up transfer (see that type's docblock for why). */
+  @Column({ name: 'transfer_rail', type: 'varchar', nullable: true })
+  transferRail?: PayoutRail | null;
+
+  /** The premium charged for using the instant rail, in this payout's own currency's minor units — see `calculateInstantPayoutFee()`. Null unless transferRail is INSTANT. */
+  @Column({ name: 'instant_fee_amount_minor_units', type: 'bigint', nullable: true })
+  instantFeeAmountMinorUnits?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

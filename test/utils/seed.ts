@@ -33,6 +33,7 @@ export async function seedMerchant(
     platformMerchantId?: string;
     payoutReserveBps?: number;
     payoutReserveHoldDays?: number;
+    payoutRail?: 'STANDARD' | 'INSTANT';
     /** Omit for the default — every PSP this system has an adapter for (STRIPE, ADYEN) — so existing specs are unaffected. */
     enabledPspProviders?: string[];
   },
@@ -52,6 +53,7 @@ export async function seedMerchant(
     platformMerchantId: params.platformMerchantId,
     payoutReserveBps: params.payoutReserveBps,
     payoutReserveHoldDays: params.payoutReserveHoldDays,
+    payoutRail: params.payoutRail,
     enabledPspProviders: params.enabledPspProviders,
   });
 

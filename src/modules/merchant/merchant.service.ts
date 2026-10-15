@@ -245,6 +245,7 @@ export class MerchantService {
     platformMerchantId?: string;
     payoutReserveBps?: number;
     payoutReserveHoldDays?: number;
+    payoutRail?: 'STANDARD' | 'INSTANT';
     enabledPspProviders?: string[];
   }): Promise<{
     merchant: MerchantEntity;
@@ -342,6 +343,7 @@ export class MerchantService {
       ...(params.platformMerchantId ? { platformMerchantId: params.platformMerchantId } : {}),
       ...(params.payoutReserveBps !== undefined ? { payoutReserveBps: params.payoutReserveBps } : {}),
       ...(params.payoutReserveHoldDays !== undefined ? { payoutReserveHoldDays: params.payoutReserveHoldDays } : {}),
+      ...(params.payoutRail !== undefined ? { payoutRail: params.payoutRail } : {}),
       ...(params.enabledPspProviders ? { enabledPspProviders: params.enabledPspProviders } : {}),
     });
 
@@ -574,6 +576,22 @@ export class MerchantService {
     this.logger.log(
       `Payout reserve policy for merchant ${merchantId} changed from ${previous} to ${payoutReserveBps}bps/${payoutReserveHoldDays}d`,
     );
+    return merchant;
+  }
+
+  /**
+   * Changes this merchant's default net-amount payout rail — see
+   * `MerchantEntity.payoutRail`'s own docblock. Takes effect on the next
+   * scheduled transfer sweep; an explicit `rail` argument to
+   * `PayoutService.initiateTransfer()` always overrides this default
+   * regardless of when it was set.
+   */
+  async updatePayoutRail(merchantId: string, payoutRail: 'STANDARD' | 'INSTANT'): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = merchant.payoutRail;
+    merchant.payoutRail = payoutRail;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`Payout rail for merchant ${merchantId} changed from ${previous} to ${payoutRail}`);
     return merchant;
   }
 
