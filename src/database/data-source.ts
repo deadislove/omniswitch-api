@@ -12,6 +12,7 @@ import { PayoutEntity } from '../modules/payment/adapters/persistence/entities/p
 import { PayoutSweepRunEntity } from '../modules/payment/adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from '../modules/payment/adapters/persistence/entities/delegation.entity';
 import { ChargeApprovalEntity } from '../modules/payment/adapters/persistence/entities/charge-approval.entity';
+import { BnplOrderEntity } from '../modules/payment/adapters/persistence/entities/bnpl-order.entity';
 import { MerchantEntity } from '../modules/merchant/merchant.entity';
 import { WebhookDeliveryLogEntity } from '../shared/webhook-delivery-log/webhook-delivery-log.entity';
 
@@ -58,6 +59,7 @@ export const AppDataSource = new DataSource({
     PayoutSweepRunEntity,
     DelegationEntity,
     ChargeApprovalEntity,
+    BnplOrderEntity,
     WebhookDeliveryLogEntity,
   ],
   migrations: [__dirname + '/migrations/*.{ts,js}'],

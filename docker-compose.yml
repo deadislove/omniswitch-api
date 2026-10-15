@@ -127,6 +127,11 @@ services:
       # via BANK_TRANSFER_PROVIDER; PayoutService injects and picks this
       # one directly per payout/merchant (see PayoutRail's own docblock).
       INSTANT_PROVIDER_URL: http://mock-psp:4000/instant
+      # KlarnaBnplAdapter — same single-adapter-behind-its-own-port
+      # reasoning as INSTANT_PROVIDER_URL above (see BnplAdapterPort's own
+      # docblock): no provider-pick env var, since this reference project
+      # only models one BNPL provider.
+      KLARNA_PROVIDER_URL: http://mock-psp:4000/klarna
       # EmailDisputeNotificationAdapter's target — mock-psp also serves
       # /v1/email/send, mimicking a real transactional-email provider's
       # {to, subject, body} shape (see docs/business-domain/disputes.md).

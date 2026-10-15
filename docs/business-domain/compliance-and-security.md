@@ -76,6 +76,36 @@ own docblock in `psp-adapter.port.ts` for the exact per-PSP wire shape.
 See `fee-model.md`'s interchange section for why this also connects,
 if only loosely, to a transaction's qualified interchange rate.
 
+## Wallet payment methods: a different authentication flow, surfaced as a signal
+
+Apple Pay/Google Pay are a different authentication/cryptogram flow
+from a typed-in card — device-level biometric/passcode authentication
+plus a device-specific cryptogram, rather than a PAN and CVV a
+cardholder can type into any form — with a genuinely higher real-world
+authorization rate as a result. This platform doesn't run that flow
+itself (no frontend to collect a wallet payment through); the same
+opaque `cardToken`/`paymentMethodId` this platform already treats as
+PCI-out-of-scope could already carry a wallet-sourced token without a
+code change.
+
+`PSPChargeResponse.paymentMethodType` surfaces whether a given
+authorization actually came from a wallet, read from the PSP's own
+response — same "ingest the PSP's own signal" posture as
+`networkTokenized` above, not something this platform computes. Real
+Stripe exposes this one level up from the network-token field read
+above (`payment_method_details.card.wallet`, present only for an
+actual wallet charge); real Adyen exposes it at the top-level
+`paymentMethod.type` (`'applepay'`/`'googlepay'` vs. `'scheme'`) with
+no merchant-account opt-in gate the way `networkTokenized` has — see
+that field's own docblock in `psp-adapter.port.ts` for the exact
+per-PSP wire shape. Deliberately *not* fed into
+`PaymentAggregate.calculateRiskScore()` despite being a genuinely
+lower-risk signal: that method runs before the PSP is ever called (to
+decide 3DS/SCA routing), while this is only known from the PSP's
+response — the same timing gap that already keeps `networkTokenized`
+out of risk scoring too. Stored and surfaced on `GET /payments/:id`
+only.
+
 ## AML/KYC: why payouts are gated and charges aren't
 
 A marketplace platform routing money to connected sellers has a real

@@ -542,6 +542,13 @@ const server = http.createServer((req, res) => {
       // (payment_method_details.card.network_token.used), never gated
       // behind an account opt-in the way Adyen's additionalData is.
       const networkTokenized = /nettoken/i.test(params.get('payment_method') || '');
+      // StripePSPAdapter.extractPaymentMethodType()'s target — same
+      // marker-in-the-payment-method-reference convention as
+      // networkTokenized above. Real Stripe nests a wallet charge's
+      // `wallet` object (`{type: 'apple_pay'|'google_pay'|'link'}`)
+      // one level up from `network_token`, present only for an actual
+      // wallet charge and absent entirely for a typed-in card.
+      const isWallet = /applepay|googlepay|wallet/i.test(params.get('payment_method') || '');
       const outcomeCharge = {
         outcome: { risk_level: stripeRiskLevelForScore(riskScore), risk_score: riskScore },
         payment_method_details: {
@@ -552,6 +559,7 @@ const server = http.createServer((req, res) => {
               cvc_check: cvvFails ? 'fail' : 'pass',
             },
             network_token: { used: networkTokenized },
+            ...(isWallet ? { wallet: { type: /applepay/i.test(params.get('payment_method') || '') ? 'apple_pay' : 'google_pay' } } : {}),
           },
         },
       };
@@ -802,6 +810,15 @@ const server = http.createServer((req, res) => {
       // has no notion of per-account additionalData opt-in to simulate.
       const storedPaymentMethodId = (parsedBody.paymentMethod || {}).storedPaymentMethodId || '';
       const networkTokenized = /nettoken/i.test(storedPaymentMethodId);
+      // AdyenPSPAdapter.extractPaymentMethodType()'s target — same
+      // marker-in-the-stored-payment-method-reference convention as
+      // networkTokenized above. Real Adyen's top-level `paymentMethod.type`
+      // on an Authorised response is `'applepay'`/`'googlepay'` for a
+      // wallet charge, `'scheme'` for a typed-in card — no
+      // additionalData opt-in gate the way networkTokenized has.
+      const isApplePay = /applepay/i.test(storedPaymentMethodId);
+      const isGooglePay = /googlepay/i.test(storedPaymentMethodId);
+      const responsePaymentMethod = { type: isApplePay ? 'applepay' : isGooglePay ? 'googlepay' : 'scheme' };
       const additionalData = {
         avsResult: /avsfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
         cvcResult: /cvvfail/i.test(shopperStatement) ? 'NO_MATCH' : 'MATCH',
@@ -839,7 +856,13 @@ const server = http.createServer((req, res) => {
       }
       if (isManualCapture) {
         pendingAuthorizations.set(pspReference, { currency: amountCurrency });
-        return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult, additionalData });
+        return send(res, 200, {
+          pspReference,
+          resultCode: 'Authorised',
+          fraudResult,
+          additionalData,
+          paymentMethod: responsePaymentMethod,
+        });
       }
       adyenSettlements.push({
         id: pspReference,
@@ -847,7 +870,13 @@ const server = http.createServer((req, res) => {
         currency: amountCurrency,
         createdAt: new Date().toISOString(),
       });
-      return send(res, 200, { pspReference, resultCode: 'Authorised', fraudResult, additionalData });
+      return send(res, 200, {
+        pspReference,
+        resultCode: 'Authorised',
+        fraudResult,
+        additionalData,
+        paymentMethod: responsePaymentMethod,
+      });
     }
     // See the matching comment on the Stripe /v1/payment_intents/lookup
     // route above — PSPAdapterPort.queryOutcome()'s Adyen-shaped target.
@@ -1175,6 +1204,76 @@ const server = http.createServer((req, res) => {
         return send(res, 404, { error: 'transfer not found' });
       }
       return send(res, 200, { id: segments[2], ...state });
+    }
+
+    // KlarnaBnplAdapter.createOrder()'s target — modeled on real Klarna's
+    // `/payments/v1/authorizations/{authorization_token}/order` (placing
+    // an order once the customer has already authorized it — this mock
+    // has no customer-facing session/authorization step to simulate, see
+    // that adapter's own docblock). `fraud_status` is real Klarna's own
+    // field name for its real-time credit decision. "klarnareject"
+    // anywhere in `description` (case-insensitive) is this mock's decline
+    // marker, same "magic substring" convention as the other mock
+    // endpoints — carried into the generated `order_id` as
+    // "capturefail"/"refundfail" markers when present, so a later
+    // captures/refunds call (which has no merchant-supplied text field of
+    // its own) can still trigger a deterministic failure.
+    if (path === '/klarna/payments/v1/authorizations/mock/order' && req.method === 'POST') {
+      let parsedBody = {};
+      try {
+        parsedBody = JSON.parse(data || '{}');
+      } catch (e) {
+        // malformed body — fall through with an empty parsed body
+      }
+      const description = parsedBody.description || '';
+      const orderId =
+        'klarna_order_' +
+        Date.now() +
+        '_' +
+        Math.random().toString(36).slice(2, 8) +
+        (/klarnacapturefail/i.test(description) ? '_capturefail' : '') +
+        (/klarnarefundfail/i.test(description) ? '_refundfail' : '');
+      if (/klarnareject/i.test(description)) {
+        return send(res, 200, { order_id: orderId, fraud_status: 'REJECTED', error: 'credit_declined' });
+      }
+      return send(res, 200, { order_id: orderId, fraud_status: 'ACCEPTED' });
+    }
+
+    // KlarnaBnplAdapter.captureOrder()'s target — modeled on real Klarna's
+    // Order Management API `/ordermanagement/v1/orders/{order_id}/captures`,
+    // the point Klarna actually pays the merchant.
+    if (
+      segments[0] === 'klarna' &&
+      segments[1] === 'ordermanagement' &&
+      segments[2] === 'v1' &&
+      segments[3] === 'orders' &&
+      segments[5] === 'captures' &&
+      req.method === 'POST'
+    ) {
+      const orderId = segments[4];
+      if (/capturefail/i.test(orderId)) {
+        return send(res, 422, { error: 'capture_failed' });
+      }
+      return send(res, 200, { capture_id: 'klarna_capture_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) });
+    }
+
+    // KlarnaBnplAdapter.refundOrder()'s target — modeled on real Klarna's
+    // Order Management API `/ordermanagement/v1/orders/{order_id}/refunds`
+    // — a Klarna-side action, never a card-network reversal, since no
+    // card network was ever involved in the capture leg either.
+    if (
+      segments[0] === 'klarna' &&
+      segments[1] === 'ordermanagement' &&
+      segments[2] === 'v1' &&
+      segments[3] === 'orders' &&
+      segments[5] === 'refunds' &&
+      req.method === 'POST'
+    ) {
+      const orderId = segments[4];
+      if (/refundfail/i.test(orderId)) {
+        return send(res, 422, { error: 'refund_failed' });
+      }
+      return send(res, 200, { refund_id: 'klarna_refund_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) });
     }
 
     // Transactional email send — EmailDisputeNotificationAdapter's target.

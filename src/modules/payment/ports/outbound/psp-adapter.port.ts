@@ -142,6 +142,30 @@ export interface PSPChargeResponse {
    * as an acquiring-side integration, never calls.
    */
   networkTokenized?: boolean;
+  /**
+   * Whether this authorization came from a wallet (Apple Pay/Google
+   * Pay) rather than a typed-in card — a different authentication/
+   * cryptogram flow with a genuinely higher real-world authorization
+   * rate, read from the PSP's own response the same "ingest the PSP's
+   * own signal" posture as `networkTokenized` above, not a claim this
+   * platform computes itself. Real Stripe exposes this at
+   * `charges.data[0].payment_method_details.type` (`'card'` either
+   * way) plus `.card.wallet?.type` (`'apple_pay'`/`'google_pay'`/
+   * `'link'`, absent entirely for a typed-in card — absence there, not
+   * a `'card'` sentinel, is how this adapter tells the two apart). Real
+   * Adyen exposes it at `paymentMethod.type`
+   * (`'applepay'`/`'googlepay'`/`'scheme'` for a typed-in card) with no
+   * merchant-account opt-in gate the way `networkTokenized` has — so
+   * unlike that field, `undefined` here means "not a wallet," not "the
+   * PSP never told us." Deliberately not fed into
+   * `calculateRiskScore()` despite a wallet charge being a genuinely
+   * lower-risk signal — that method runs *before* the PSP is ever
+   * called (to decide 3DS/SCA routing), while this is only known from
+   * the PSP's own response, the same timing gap that already keeps
+   * `networkTokenized` out of risk scoring too. Stored and surfaced on
+   * `GET /payments/:id` only, same posture as that field.
+   */
+  paymentMethodType?: 'card' | 'wallet';
 }
 
 export interface PSPRefundRequest {

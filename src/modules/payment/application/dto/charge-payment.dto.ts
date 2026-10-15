@@ -392,6 +392,14 @@ export class PaymentDetailResponseDto {
   })
   networkTokenized?: boolean | null;
 
+  @ApiPropertyOptional({
+    enum: ['card', 'wallet'],
+    nullable: true,
+    description:
+      "Whether this authorization came from a wallet (Apple Pay/Google Pay) rather than a typed-in card, read from the PSP's own response. Null only when there was no card charge to read it from at all (e.g. a REQUIRES_ACTION response) — unlike networkTokenized, not gated behind a per-PSP opt-in.",
+  })
+  paymentMethodType?: 'card' | 'wallet' | null;
+
   @ApiProperty()
   createdAt: string;
 

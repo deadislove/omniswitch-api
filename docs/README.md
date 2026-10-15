@@ -91,6 +91,9 @@ to payments domain concepts generally.
 - [`marketplace-and-payouts.md`](./business-domain/marketplace-and-payouts.md) —
   marketplace splits, payout scheduling, connected-account KYC gating,
   and the instant payout rail as a real, per-payout/per-merchant choice
+- [`bnpl.md`](./business-domain/bnpl.md) — buy-now-pay-later (Klarna)
+  as its own mechanism with its own settlement rail, lifecycle, and
+  fee model, distinct from a card charge
 - [`merchants.md`](./business-domain/merchants.md) — onboarding
   (identity capture, sanctions screening, KYC/KYB), the five trust
   signals evaluated continuously after onboarding, and account
@@ -107,7 +110,9 @@ to payments domain concepts generally.
   why PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
   delegation scope are business decisions, beyond just engineering
   choices; also covers network tokenization (Visa VTS / Mastercard MDES)
-  as a different, lower layer than PCI-scope tokenization
+  as a different, lower layer than PCI-scope tokenization, and wallet
+  (Apple Pay/Google Pay) as a different authentication flow surfaced
+  as a signal
 - [`subscriptions.md`](./business-domain/subscriptions.md) — the
   subscription state machine, how billing/dunning/crash-recovery/plan
   catalog & proration/trial-verification work, and what's still

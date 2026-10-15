@@ -105,6 +105,7 @@ export class PaymentMapper {
       scaExemptionReason: entity.scaExemptionReason ?? undefined,
       scaExemptionIndicator: entity.scaExemptionIndicator as ScaExemptionType | undefined,
       networkTokenized: entity.networkTokenized ?? undefined,
+      paymentMethodType: entity.paymentMethodType as 'card' | 'wallet' | undefined,
     });
   }
 
@@ -146,6 +147,7 @@ export class PaymentMapper {
     entity.scaExemptionReason = aggregate.scaExemptionReason;
     entity.scaExemptionIndicator = aggregate.scaExemptionIndicator;
     entity.networkTokenized = aggregate.networkTokenized;
+    entity.paymentMethodType = aggregate.paymentMethodType;
     entity.splits = aggregate.splits?.map((s) => ({
       merchantId: s.merchantId,
       amountMinorUnits: s.amount.amountMinorUnits.toString(),

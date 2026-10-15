@@ -150,6 +150,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
           ...this.extractNetworkTokenization(response),
+          ...this.extractPaymentMethodType(response),
           ...(request.scaExemptionRequested === 'MIT' ? { scaExemptionIndicator: 'MIT' as const } : {}),
         };
       }
@@ -163,6 +164,7 @@ export class StripePSPAdapter extends PSPAdapterPort {
           riskSignal: this.extractRiskSignal(response),
           ...this.extractCardCheckResult(response),
           ...this.extractNetworkTokenization(response),
+          ...this.extractPaymentMethodType(response),
           ...(request.scaExemptionRequested === 'MIT' ? { scaExemptionIndicator: 'MIT' as const } : {}),
         };
       }
@@ -246,6 +248,20 @@ export class StripePSPAdapter extends PSPAdapterPort {
     const used = response.charges?.data?.[0]?.payment_method_details?.card?.network_token?.used;
     if (typeof used !== 'boolean') return {};
     return { networkTokenized: used };
+  }
+
+  /**
+   * Real Stripe nests this one level up from `network_token` above:
+   * `PaymentIntent.charges.data[0].payment_method_details.card.wallet`
+   * — present (an object with a `type` of `'apple_pay'`/`'google_pay'`/
+   * `'link'`) only when the charge actually came from a wallet; absent
+   * entirely for a typed-in card, so (unlike `networkTokenized`) that
+   * absence is itself the signal, not an unknown.
+   */
+  private extractPaymentMethodType(response: any): { paymentMethodType?: PSPChargeResponse['paymentMethodType'] } {
+    const card = response.charges?.data?.[0]?.payment_method_details?.card;
+    if (!card) return {};
+    return { paymentMethodType: card.wallet ? 'wallet' : 'card' };
   }
 
   private mapCheckResult(check?: string): 'MATCH' | 'NO_MATCH' | 'UNAVAILABLE' | undefined {

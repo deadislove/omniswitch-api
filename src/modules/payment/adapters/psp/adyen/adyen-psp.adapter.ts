@@ -134,6 +134,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
             ...this.extractCardCheckResult(response),
             ...this.extractScaExemptionIndicator(request, response),
             ...this.extractNetworkTokenization(response),
+            ...this.extractPaymentMethodType(response),
           };
         }
         return {
@@ -145,6 +146,7 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
           ...this.extractCardCheckResult(response),
           ...this.extractScaExemptionIndicator(request, response),
           ...this.extractNetworkTokenization(response),
+          ...this.extractPaymentMethodType(response),
         };
       }
 
@@ -258,6 +260,21 @@ export class AdyenPSPAdapter extends PSPAdapterPort {
     const summary = response.additionalData?.['networkToken.tokenSummary'];
     if (!bin && !summary) return {};
     return { networkTokenized: true };
+  }
+
+  /**
+   * Real Adyen returns this at the top level of an Authorised response:
+   * `paymentMethod.type` — `'applepay'`/`'googlepay'` for a wallet
+   * charge, `'scheme'` for a typed-in card. Unlike `networkTokenized`
+   * above, there's no merchant-account opt-in gate, so `undefined` here
+   * (a response shape this mock never actually omits it from) would
+   * only happen for a response this adapter has no `paymentMethod` to
+   * read at all.
+   */
+  private extractPaymentMethodType(response: any): { paymentMethodType?: PSPChargeResponse['paymentMethodType'] } {
+    const type = response.paymentMethod?.type;
+    if (!type) return {};
+    return { paymentMethodType: type === 'applepay' || type === 'googlepay' ? 'wallet' : 'card' };
   }
 
   async refund(request: PSPRefundRequest): Promise<PSPRefundResponse> {

@@ -30,6 +30,9 @@ instead; for a guided onboarding path through both, see
   bookkeeping model and the Outbox pattern that publishes it reliably
 - [`ledger-and-settlement.md`](./ledger-and-settlement.md) — smart PSP
   routing, PSP-cost reconciliation, merchant risk tiering & reserves
+- [`bnpl.md`](./bnpl.md) — buy-now-pay-later (Klarna) as its own
+  mechanism with its own settlement rail, lifecycle, and fee model,
+  distinct from a card charge
 
 ## Disputes & risk
 
@@ -57,7 +60,9 @@ instead; for a guided onboarding path through both, see
   PCI DSS tokenization, AML/KYC payout gating, and agentic-payment
   delegation scope are business decisions first, engineering choices
   second; also covers network tokenization (Visa VTS / Mastercard MDES)
-  as a different, lower layer than PCI-scope tokenization
+  as a different, lower layer than PCI-scope tokenization, and wallet
+  (Apple Pay/Google Pay) as a different authentication flow surfaced
+  as a signal
 - [`future-directions.md`](./future-directions.md) — business
   capabilities written in domain language rather than implementation
   terms: marketplace splits, subscriptions, risk tiering/reserves,

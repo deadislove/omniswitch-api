@@ -9,7 +9,32 @@ export type OutboxStatus = 'PENDING' | 'PUBLISHED' | 'FAILED';
  */
 export interface LedgerEntry {
   accountId: string;
-  accountType: 'MERCHANT' | 'PLATFORM' | 'PSP_SETTLEMENT' | 'FEE' | 'RESERVE' | 'FX_CLEARING';
+  accountType:
+    | 'MERCHANT'
+    | 'PLATFORM'
+    | 'PSP_SETTLEMENT'
+    | 'FEE'
+    | 'RESERVE'
+    | 'FX_CLEARING'
+    /**
+     * Money received from a BNPL provider (Klarna) at order capture —
+     * a deliberately separate account from `PSP_SETTLEMENT`, since this
+     * is a fundamentally different settlement rail (the BNPL provider
+     * pays the merchant upfront and collects installments from the
+     * customer itself, rather than a card network authorizing a
+     * cardholder's bank to move money) — see `BnplOrder`'s own docblock
+     * and `createBnplCaptureEntries()`/`createBnplRefundEntries()`
+     * below.
+     */
+    | 'BNPL_SETTLEMENT'
+    /**
+     * The BNPL provider's own merchant fee (real Klarna charges roughly
+     * 3-6% + a fixed fee depending on market/plan — see
+     * `domain/services/bnpl-fee.ts`) — a distinct line item from this
+     * platform's own `FEE` account, since it's a cost Klarna charges
+     * regardless of whatever this platform charges on top.
+     */
+    | 'BNPL_PROVIDER_FEE';
   entryType: LedgerEntryType;
   amount: Money;
   description: string;
@@ -545,6 +570,110 @@ export class LedgerOutboxEvent {
       id: params.id,
       paymentId: params.paymentId,
       eventType: 'PAYMENT_REFUNDED',
+      entries,
+    });
+  }
+
+  /**
+   * A BNPL order's capture — the point real Klarna actually pays the
+   * merchant, independent of whether the end customer ever finishes
+   * paying Klarna back in installments (that credit risk is Klarna's
+   * own, not this platform's or the merchant's). `BNPL_SETTLEMENT`
+   * stands in for `PSP_SETTLEMENT` (money received from Klarna rather
+   * than a card network); `providerFee` is Klarna's own merchant fee,
+   * booked as a separate line item from this platform's own
+   * `platformFee` — see `LedgerEntry.accountType`'s own docblock.
+   * Deliberately no splits/FX/reserve-hold parameters, unlike
+   * `createChargeEntries()` — out of scope for this pass; see
+   * `docs/business-domain/bnpl.md` for that scoping decision.
+   */
+  static createBnplCaptureEntries(params: {
+    id: string;
+    bnplOrderId: string;
+    merchantId: string;
+    amount: Money;
+    platformFee: Money;
+    providerFee: Money;
+  }): LedgerOutboxEvent {
+    const netAmount = params.amount.subtract(params.platformFee).subtract(params.providerFee);
+    const entries: LedgerEntry[] = [
+      {
+        accountId: 'BNPL_SETTLEMENT_ACCOUNT',
+        accountType: 'BNPL_SETTLEMENT',
+        entryType: 'DEBIT',
+        amount: params.amount,
+        description: `BNPL settlement debit for order ${params.bnplOrderId}`,
+      },
+      {
+        accountId: 'PLATFORM_FEE_ACCOUNT',
+        accountType: 'FEE',
+        entryType: 'CREDIT',
+        amount: params.platformFee,
+        description: `Platform fee for BNPL order ${params.bnplOrderId}`,
+      },
+      {
+        accountId: 'KLARNA_FEE_ACCOUNT',
+        accountType: 'BNPL_PROVIDER_FEE',
+        entryType: 'CREDIT',
+        amount: params.providerFee,
+        description: `Klarna merchant fee for order ${params.bnplOrderId}`,
+      },
+      {
+        accountId: params.merchantId,
+        accountType: 'MERCHANT',
+        entryType: 'CREDIT',
+        amount: netAmount,
+        description: `Net BNPL settlement credit for order ${params.bnplOrderId}`,
+      },
+    ];
+
+    return LedgerOutboxEvent.create({
+      id: params.id,
+      paymentId: params.bnplOrderId,
+      eventType: 'BNPL_CAPTURED',
+      entries,
+    });
+  }
+
+  /**
+   * A BNPL refund — real Klarna routes this back through Klarna itself
+   * (a merchant-initiated refund call against the Klarna order), never
+   * a card-network reversal, since no card network was ever involved in
+   * the capture leg either. Deliberately does not claw back a
+   * proportional share of `platformFee`/`providerFee` the way a card
+   * refund doesn't either — both were already earned/incurred against
+   * work already done (the order was placed and captured); only the
+   * merchant's own net share is reversed. A known simplification versus
+   * `createRefundEntries()`'s splits/FX support — out of scope here,
+   * same reasoning as `createBnplCaptureEntries()`'s own docblock.
+   */
+  static createBnplRefundEntries(params: {
+    id: string;
+    bnplOrderId: string;
+    merchantId: string;
+    refundAmount: Money;
+  }): LedgerOutboxEvent {
+    const entries: LedgerEntry[] = [
+      {
+        accountId: 'BNPL_SETTLEMENT_ACCOUNT',
+        accountType: 'BNPL_SETTLEMENT',
+        entryType: 'CREDIT',
+        amount: params.refundAmount,
+        description: `BNPL settlement credit (refund) for order ${params.bnplOrderId}`,
+      },
+      {
+        accountId: params.merchantId,
+        accountType: 'MERCHANT',
+        entryType: 'DEBIT',
+        amount: params.refundAmount,
+        description: `Refund debit for BNPL order ${params.bnplOrderId}`,
+      },
+    ];
+
+    return LedgerOutboxEvent.create({
+      id: params.id,
+      paymentId: params.bnplOrderId,
+      eventType: 'BNPL_REFUNDED',
       entries,
     });
   }

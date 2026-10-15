@@ -11,6 +11,13 @@ import { ReserveHoldEntity } from './adapters/persistence/entities/reserve-hold.
 import { SubscriptionEntity } from './adapters/persistence/entities/subscription.entity';
 import { PlanEntity } from './adapters/persistence/entities/plan.entity';
 import { PayoutEntity } from './adapters/persistence/entities/payout.entity';
+import { BnplOrderEntity } from './adapters/persistence/entities/bnpl-order.entity';
+import { BnplOrderTypeOrmRepository } from './adapters/persistence/repositories/bnpl-order-typeorm.repository';
+import { BnplOrderPort } from './ports/outbound/bnpl-order.port';
+import { BnplAdapterPort } from './ports/outbound/bnpl-adapter.port';
+import { KlarnaBnplAdapter } from './adapters/bnpl/klarna-bnpl.adapter';
+import { BnplService } from './application/services/bnpl.service';
+import { BnplController } from './application/controllers/bnpl.controller';
 import { PayoutSweepRunEntity } from './adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from './adapters/persistence/entities/delegation.entity';
 import { ChargeApprovalEntity } from './adapters/persistence/entities/charge-approval.entity';
@@ -163,6 +170,7 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
       PayoutSweepRunEntity,
       DelegationEntity,
       ChargeApprovalEntity,
+      BnplOrderEntity,
     ]),
     // No separate ThrottlerModule registration here: @nestjs/throttler's
     // ThrottlerModule is @Global(), so there is exactly one
@@ -210,6 +218,7 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     ChargebackMonitoringAdminController,
     PspCostReconciliationAdminController,
     WebhookDeliveryAdminController,
+    BnplController,
   ],
   providers: [
     // PSP Adapters
@@ -263,6 +272,15 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
       provide: PayoutPort,
       useClass: PayoutTypeOrmRepository,
     },
+    {
+      provide: BnplOrderPort,
+      useClass: BnplOrderTypeOrmRepository,
+    },
+    {
+      provide: BnplAdapterPort,
+      useClass: KlarnaBnplAdapter,
+    },
+    BnplService,
     // Real adapters as ordinary providers (each has its own ConfigService
     // dependency), then a useFactory picks which one BankTransferPort
     // actually resolves to at DI-container build time — BANK_TRANSFER_PROVIDER

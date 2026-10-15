@@ -256,6 +256,17 @@ export class PaymentEntity {
   @Column({ name: 'network_tokenized', type: 'boolean', nullable: true })
   networkTokenized?: boolean;
 
+  /**
+   * Whether this authorization came from a wallet (Apple Pay/Google
+   * Pay) rather than a typed-in card — see
+   * `PSPChargeResponse.paymentMethodType`'s docblock. Unlike
+   * `networkTokenized`, nullable here only because an authorization
+   * that never reached a card charge at all (e.g. REQUIRES_ACTION) has
+   * nothing to read this from — not because of a per-PSP opt-in gate.
+   */
+  @Column({ name: 'payment_method_type', type: 'varchar', nullable: true })
+  paymentMethodType?: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
