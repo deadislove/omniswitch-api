@@ -27,7 +27,8 @@ instead; for a guided onboarding path through both, see
 - [`fx-conversion.md`](./fx-conversion.md) — cross-currency merchant
   settlement, refund/dispute FX replay, presentment currency
 - [`ledger-accounting.md`](./ledger-accounting.md) — the double-entry
-  bookkeeping model and the Outbox pattern that publishes it reliably
+  bookkeeping model, the Outbox pattern that publishes it reliably, and
+  the periodic merchant statement packaged from it
 - [`ledger-and-settlement.md`](./ledger-and-settlement.md) — smart PSP
   routing, PSP-cost reconciliation, merchant risk tiering & reserves
 - [`bnpl.md`](./bnpl.md) — buy-now-pay-later (Klarna) as its own

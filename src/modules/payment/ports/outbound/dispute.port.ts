@@ -46,4 +46,23 @@ export abstract class DisputePort {
     status: DisputeStatus,
     since: Date,
   ): Promise<(string | null)[]>;
+
+  /**
+   * Full `Dispute` objects (not just a count, unlike
+   * `countByMerchantSince()`) for a merchant in a given status, bounded
+   * on *both* ends — `MerchantStatementService` needs the real amount of
+   * each chargeback to report alongside the count, and a closed
+   * statement period needs an upper bound every other query here (all
+   * open-ended "since") doesn't. `createdAt`-bounded, same convention
+   * `countByMerchantSince()` already uses: a dispute's chargeback is
+   * attributed to the period it was *received* in, not the period it
+   * was eventually resolved in, so a later-arriving resolution can't
+   * retroactively change an already-generated statement.
+   */
+  abstract findByMerchantStatusInRange(
+    merchantId: string,
+    status: DisputeStatus,
+    since: Date,
+    until: Date,
+  ): Promise<Dispute[]>;
 }

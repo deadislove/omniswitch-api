@@ -112,6 +112,24 @@ export class DisputeTypeOrmRepository implements DisputePort {
     return rows.map((r) => r.reason);
   }
 
+  async findByMerchantStatusInRange(
+    merchantId: string,
+    status: DisputeStatus,
+    since: Date,
+    until: Date,
+  ): Promise<Dispute[]> {
+    // .toISOString() — same naive-TIMESTAMP reasoning as
+    // countByMerchantSince() above.
+    const entities = await this.repo
+      .createQueryBuilder('d')
+      .where('d.merchantId = :merchantId', { merchantId })
+      .andWhere('d.status = :status', { status })
+      .andWhere('d.createdAt >= :since', { since: since.toISOString() })
+      .andWhere('d.createdAt < :until', { until: until.toISOString() })
+      .getMany();
+    return entities.map((e) => this.toDomain(e));
+  }
+
   private toDomain(entity: DisputeEntity): Dispute {
     return Dispute.reconstitute({
       id: entity.id,

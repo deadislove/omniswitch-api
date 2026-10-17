@@ -209,6 +209,30 @@ export class MerchantService {
   }
 
   /**
+   * Same keyset-pagination shape as findActiveAutoManagedBatch() above,
+   * for MerchantStatementService's monthly statement-generation sweep —
+   * no opt-out concept here (unlike risk-tiering/chargeback-monitoring's
+   * auto-managed flags, or sanctions screening's HIT exclusion): every
+   * active merchant gets a statement for a period it was active in,
+   * since there's no business reason a merchant would want its own
+   * periodic activity summary turned off.
+   */
+  async findActiveBatch(afterId: string | undefined, limit: number): Promise<MerchantEntity[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager
+        .createQueryBuilder(MerchantEntity, 'm')
+        .where('m.isActive = :isActive', { isActive: true })
+        .andWhere(afterId ? 'm.id > :afterId' : '1=1', afterId ? { afterId } : {})
+        .orderBy('m.id', 'ASC')
+        .take(limit)
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
    * Creates a new merchant with a freshly generated API Key ID/Secret pair
    * and HMAC signing key. The plaintext secret and HMAC key are only ever
    * returned here, at creation time — the API key secret is hashed

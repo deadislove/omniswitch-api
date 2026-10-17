@@ -18,6 +18,12 @@ import { BnplAdapterPort } from './ports/outbound/bnpl-adapter.port';
 import { KlarnaBnplAdapter } from './adapters/bnpl/klarna-bnpl.adapter';
 import { BnplService } from './application/services/bnpl.service';
 import { BnplController } from './application/controllers/bnpl.controller';
+import { MerchantStatementEntity } from './adapters/persistence/entities/merchant-statement.entity';
+import { MerchantStatementTypeOrmRepository } from './adapters/persistence/repositories/merchant-statement-typeorm.repository';
+import { MerchantStatementPort } from './ports/outbound/merchant-statement.port';
+import { MerchantStatementService } from './application/services/merchant-statement.service';
+import { MerchantStatementController } from './application/controllers/merchant-statement.controller';
+import { MerchantStatementAdminController } from './application/controllers/merchant-statement-admin.controller';
 import { PayoutSweepRunEntity } from './adapters/persistence/entities/payout-sweep-run.entity';
 import { DelegationEntity } from './adapters/persistence/entities/delegation.entity';
 import { ChargeApprovalEntity } from './adapters/persistence/entities/charge-approval.entity';
@@ -171,6 +177,7 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
       DelegationEntity,
       ChargeApprovalEntity,
       BnplOrderEntity,
+      MerchantStatementEntity,
     ]),
     // No separate ThrottlerModule registration here: @nestjs/throttler's
     // ThrottlerModule is @Global(), so there is exactly one
@@ -219,6 +226,8 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
     PspCostReconciliationAdminController,
     WebhookDeliveryAdminController,
     BnplController,
+    MerchantStatementController,
+    MerchantStatementAdminController,
   ],
   providers: [
     // PSP Adapters
@@ -281,6 +290,11 @@ import { WebhookDeliveryAdminController } from './application/controllers/webhoo
       useClass: KlarnaBnplAdapter,
     },
     BnplService,
+    {
+      provide: MerchantStatementPort,
+      useClass: MerchantStatementTypeOrmRepository,
+    },
+    MerchantStatementService,
     // Real adapters as ordinary providers (each has its own ConfigService
     // dependency), then a useFactory picks which one BankTransferPort
     // actually resolves to at DI-container build time — BANK_TRANSFER_PROVIDER

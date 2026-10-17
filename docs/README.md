@@ -81,8 +81,8 @@ to payments domain concepts generally.
   smart PSP routing, PSP-cost reconciliation, merchant risk tiering &
   reserves — see also the four topics split into their own files below
 - [`ledger-accounting.md`](./business-domain/ledger-accounting.md) —
-  the double-entry bookkeeping model and the Outbox pattern that
-  publishes it reliably
+  the double-entry bookkeeping model, the Outbox pattern that publishes
+  it reliably, and the periodic merchant statement packaged from it
 - [`fee-model.md`](./business-domain/fee-model.md) — platform fee-rate
   calculation, PSP interchange-cost reconciliation, and real
   interchange rate qualification/downgrade
