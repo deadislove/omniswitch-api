@@ -61,6 +61,17 @@ export class CreateMerchantDto {
   @MaxLength(64)
   taxId?: string;
 
+  @ApiPropertyOptional({
+    example: 'US',
+    description:
+      'ISO 3166-1 alpha-2 country of tax residency/registration, if known at onboarding time — distinct from the CONNECTED-only KYB country, see MerchantEntity.country\'s own docblock.',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(2)
+  country?: string;
+
   @ApiProperty({ example: ['MERCHANT'], enum: VALID_ROLES, isArray: true })
   @IsArray()
   @ArrayNotEmpty()
@@ -320,6 +331,17 @@ export class UpdateMccCodeDto {
   @IsOptional()
   @Matches(/^\d{4}$/, { message: 'mccCode must be exactly 4 digits' })
   mccCode?: string | null;
+}
+
+export class UpdateCountryDto {
+  @ApiPropertyOptional({
+    example: 'US',
+    description:
+      "This merchant's own ISO 3166-1 alpha-2 country of tax residency/registration — see MerchantEntity.country's own docblock. Omit or send null to clear it back to unknown.",
+  })
+  @IsOptional()
+  @Matches(/^[A-Za-z]{2}$/, { message: 'country must be exactly 2 letters' })
+  country?: string | null;
 }
 
 export class UpdateReservePolicyDto {
@@ -904,6 +926,13 @@ export class MerchantSummaryDto {
 
   @ApiPropertyOptional({ example: null, nullable: true, description: 'Tax identification number, if supplied' })
   taxId?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'US',
+    nullable: true,
+    description: 'ISO 3166-1 alpha-2 tax-residency country, if known — see MerchantEntity.country\'s own docblock',
+  })
+  country?: string | null;
 
   @ApiProperty({
     example: 'CLEAR',

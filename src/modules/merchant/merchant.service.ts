@@ -233,6 +233,30 @@ export class MerchantService {
   }
 
   /**
+   * Same keyset-pagination shape as findActiveAutoManagedBatch() above,
+   * filtered by `country` instead — for TaxForm1099KService's annual
+   * sweep, which only evaluates merchants confirmed US-based (`country`
+   * left `null` is excluded entirely rather than assumed non-US; an
+   * operator can still force-generate for a specific merchant on demand
+   * regardless of this field).
+   */
+  async findActiveByCountryBatch(country: string, afterId: string | undefined, limit: number): Promise<MerchantEntity[]> {
+    const queryRunner = this.dataSource.createQueryRunner('master');
+    try {
+      return await queryRunner.manager
+        .createQueryBuilder(MerchantEntity, 'm')
+        .where('m.isActive = :isActive', { isActive: true })
+        .andWhere('m.country = :country', { country })
+        .andWhere(afterId ? 'm.id > :afterId' : '1=1', afterId ? { afterId } : {})
+        .orderBy('m.id', 'ASC')
+        .take(limit)
+        .getMany();
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
    * Creates a new merchant with a freshly generated API Key ID/Secret pair
    * and HMAC signing key. The plaintext secret and HMAC key are only ever
    * returned here, at creation time — the API key secret is hashed
@@ -260,6 +284,7 @@ export class MerchantService {
     name: string;
     legalName?: string;
     taxId?: string;
+    country?: string;
     roles: string[];
     platformFeeBps?: number;
     settlementCurrency?: string;
@@ -355,6 +380,7 @@ export class MerchantService {
       isActive: true,
       ...(params.legalName ? { legalName: params.legalName } : {}),
       ...(params.taxId ? { taxId: params.taxId } : {}),
+      ...(params.country ? { country: params.country.toUpperCase() } : {}),
       sanctionsScreeningStatus: screening.status,
       sanctionsScreeningConfidence: screening.confidence,
       sanctionsScreenedAt: new Date(),
@@ -539,6 +565,16 @@ export class MerchantService {
    * fields back to "no MCC on file" (industryRiskCategory reverts to
    * UNKNOWN, the same as a merchant that never had one set).
    */
+  /** See MerchantEntity.country's own docblock for why this exists separately from kybCountry. */
+  async updateCountry(merchantId: string, country: string | null): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = merchant.country ?? '(none)';
+    merchant.country = country ? country.toUpperCase() : null;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(`Tax-residency country for merchant ${merchantId} changed from ${previous} to ${merchant.country ?? '(none)'}`);
+    return merchant;
+  }
+
   async updateMccCode(merchantId: string, mccCode: string | null): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
     const previous = `${merchant.mccCode ?? '(none)'}/${merchant.industryRiskCategory}`;

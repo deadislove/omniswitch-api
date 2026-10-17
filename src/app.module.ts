@@ -23,6 +23,7 @@ import { DelegationEntity } from './modules/payment/adapters/persistence/entitie
 import { ChargeApprovalEntity } from './modules/payment/adapters/persistence/entities/charge-approval.entity';
 import { BnplOrderEntity } from './modules/payment/adapters/persistence/entities/bnpl-order.entity';
 import { MerchantStatementEntity } from './modules/payment/adapters/persistence/entities/merchant-statement.entity';
+import { MerchantTaxForm1099KEntity } from './modules/payment/adapters/persistence/entities/merchant-tax-form-1099k.entity';
 import { MerchantEntity } from './modules/merchant/merchant.entity';
 import { WebhookDeliveryLogEntity } from './shared/webhook-delivery-log/webhook-delivery-log.entity';
 import { HealthController } from './health/health.controller';
@@ -78,6 +79,7 @@ import { DeprecationHeaderInterceptor } from './shared/interceptors/deprecation-
           ChargeApprovalEntity,
           BnplOrderEntity,
           MerchantStatementEntity,
+          MerchantTaxForm1099KEntity,
           WebhookDeliveryLogEntity,
         ],
         // Schema is owned by TypeORM migrations (src/database/migrations/,

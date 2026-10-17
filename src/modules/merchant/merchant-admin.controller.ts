@@ -13,6 +13,7 @@ import {
   UpdateAmlReviewNotificationChannelDto,
   UpdateChargebackMonitoringNotificationChannelDto,
   UpdateMccCodeDto,
+  UpdateCountryDto,
   UpdateReservePolicyDto,
   UpdatePayoutReservePolicyDto,
   UpdatePayoutRailDto,
@@ -95,6 +96,7 @@ export function toSummary(merchant: MerchantEntity): MerchantSummaryDto {
     chargebackMonitoringNotificationTarget: merchant.chargebackMonitoringNotificationTarget ?? null,
     legalName: merchant.legalName ?? null,
     taxId: merchant.taxId ?? null,
+    country: merchant.country ?? null,
     sanctionsScreeningStatus: merchant.sanctionsScreeningStatus,
     sanctionsScreenedAt: merchant.sanctionsScreenedAt?.toISOString() ?? null,
     sanctionsMatchDetails: merchant.sanctionsMatchDetails ?? null,
@@ -347,6 +349,21 @@ export class MerchantAdminController {
       dto.channel,
       dto.target ?? null,
     );
+    return toSummary(merchant);
+  }
+
+  @Patch(':merchantId/tax-country')
+  @ApiOperation({
+    summary:
+      "Set this merchant's own tax-residency country — distinct from the CONNECTED-only KYB country; TaxForm1099KService's annual sweep only considers merchants with this set to 'US'. Omit/null clears it back to unknown.",
+  })
+  @ApiResponse({ status: 200, type: MerchantSummaryDto })
+  @ApiResponse({ status: 404, description: 'Merchant not found' })
+  async updateCountry(
+    @Param('merchantId') merchantId: string,
+    @Body() dto: UpdateCountryDto,
+  ): Promise<MerchantSummaryDto> {
+    const merchant = await this.merchantService.updateCountry(merchantId, dto.country ?? null);
     return toSummary(merchant);
   }
 

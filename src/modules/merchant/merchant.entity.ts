@@ -550,6 +550,24 @@ export class MerchantEntity {
   taxId?: string | null;
 
   /**
+   * This merchant's own country of tax residency/registration (ISO
+   * 3166-1 alpha-2) — distinct from `kybCountry` above, which is
+   * CONNECTED-only and captured at KYB submission. Every merchant
+   * (`PLATFORM` or `CONNECTED`) can set this, since it's needed for
+   * `TaxForm1099KService` to know which merchants are even in scope for
+   * a US 1099-K (a `PLATFORM` merchant, the common case, never goes
+   * through KYB at all, so `kybCountry` is routinely null for exactly
+   * the merchants this matters most for). `null` means "unknown" — the
+   * annual 1099-K sweep skips a merchant it can't confirm is US-based
+   * rather than guessing; an operator can still force-generate for a
+   * specific merchant on demand regardless. See
+   * docs/business-domain/merchants.md and
+   * docs/technical/compliance-certification-roadmap.md#1099-k-information-return-reporting.
+   */
+  @Column({ name: 'country', type: 'varchar', nullable: true, length: 2 })
+  country?: string | null;
+
+  /**
    * Sanctions/watchlist screening outcome. `NOT_SCREENED` only occurs
    * for a merchant that predates this field (a migration doesn't
    * retroactively screen existing rows — see

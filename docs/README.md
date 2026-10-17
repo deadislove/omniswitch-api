@@ -45,7 +45,9 @@ methodology. Read this if you're changing code.
 - [`security-and-compliance.md`](./technical/security-and-compliance.md) —
   JWT revocation design and an honest PCI DSS scope/gap assessment
 - [`compliance-certification-roadmap.md`](./technical/compliance-certification-roadmap.md) —
-  the SOC 2 / PCI DSS certification path — not a certification itself
+  the SOC 2 / PCI DSS certification path — not a certification itself —
+  plus illustrative 1099-K annual information-return reporting, never
+  actually filed with the IRS
 - [`secret-management.md`](./technical/secret-management.md) —
   Vault-backed envelope encryption for the one secret this app mints
   itself

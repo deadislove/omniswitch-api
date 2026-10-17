@@ -92,6 +92,17 @@ creation itself — not a later, separate step:
   Submitting a `legalName` later (KYC submission, or a dedicated update)
   re-screens at full confidence and supersedes the degraded result.
 
+`POST /admin/merchants` (and `PATCH /admin/merchants/:id/tax-country`
+afterward) also accepts an optional `country` (ISO 3166-1 alpha-2) —
+this merchant's own tax residency/registration, deliberately a
+*separate* field from `kybCountry` below. KYB is CONNECTED-only, so a
+`PLATFORM` merchant (the common case — every merchant is one by
+default) would otherwise have no jurisdiction field at all.
+`TaxForm1099KService`'s annual sweep (see
+[`compliance-certification-roadmap.md#1099-k-information-return-reporting`](../technical/compliance-certification-roadmap.md#1099-k-information-return-reporting))
+only evaluates merchants with this set to `US`, excluding — never
+assuming non-US for — a merchant that's never set it.
+
 ### Step 2 — KYC, for CONNECTED merchants only
 
 A `CONNECTED` merchant additionally needs `POST

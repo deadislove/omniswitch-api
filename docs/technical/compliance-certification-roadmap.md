@@ -143,3 +143,64 @@ whether formal certification is pursued — real external-facing findings
 are useful regardless of audit status, and having at least one real
 pentest report on file is itself often what a security-conscious
 customer's vendor review asks for, short of a full SOC 2 report.
+
+## 1099-K information-return reporting
+
+A different kind of compliance deadline from SOC 2/PCI DSS above —
+not a certification a third-party auditor grants, but a real annual
+US tax filing obligation with its own real penalties for missing it.
+In the US, a payment processor settling more than a statutory
+threshold amount to a merchant in a calendar year must file a 1099-K
+information return with the IRS and furnish a copy to the merchant.
+Grouped here as another "modeled but not a substitute for the real
+thing" item, alongside SOC 2/PCI DSS above.
+
+`TaxForm1099KService` computes, for every merchant with `country` set
+to `US`, an annual illustrative 1099-K: Box 1a (gross amount, **not**
+reduced by refunds/chargebacks — the real IRS rule), a transaction
+count, and a Box 5a-5l monthly breakdown — reusing
+[`ledger-accounting.md`](../business-domain/ledger-accounting.md)'s
+merchant-statement machinery (`MerchantStatementService.computeBreakdowns()`)
+rather than re-deriving ledger-walking logic, since Box 1a's "gross
+amount of reportable payment transactions" is the same real number a
+merchant statement's own `grossVolume` already reconstructs.
+
+**This is never actually filed with the IRS.** Unlike
+`MatchReportingPort` (a real external integration this codebase
+chooses to mock end-to-end), there is deliberately no IRS-filing port
+or submission lifecycle here — an annual information-return filing is
+exactly the kind of real compliance deadline this project should be
+upfront about not actually submitting anything for, rather than
+inventing a fake confirmation number that would read as more real
+than it is. `reportable` (computed gross ≥ threshold) is as far as
+this goes; a merchant/operator can view the computed result
+(`GET /tax-forms/1099k`, `GET /admin/merchants/:id/tax-forms/1099k`)
+but there's no "file this" action to call.
+
+**The threshold is real, but has moved through a multi-year IRS
+phase-in** — the American Rescue Plan Act (2021) set the eventual
+threshold at $600 with no transaction-count minimum, but the IRS
+granted transition relief that phased it in gradually: $20,000/200
+transactions for 2023 (Notice 2023-74), $5,000 for 2024 (Notice
+2024-85), an anticipated $2,500 for 2025, and the full $600 statutory
+threshold from 2026 onward. Configurable via `IRS_1099K_THRESHOLD_USD`
+(default `600`) rather than hardcoded, specifically so modeling an
+earlier tax year doesn't require a code change — confirm the real
+figure for whatever year this gets used against before treating the
+default as authoritative.
+
+**`MerchantEntity.country` is new, and intentionally separate from
+`kybCountry`** (see [`merchants.md`](../business-domain/merchants.md)) —
+KYB is CONNECTED-only, so a `PLATFORM` merchant (the common case)
+would otherwise have no jurisdiction field at all to gate this
+against. `country` left unset is excluded from the annual sweep
+entirely rather than assumed non-US.
+
+**Known simplification: one form per merchant per year, in whichever
+currency had the largest volume.** A real 1099-K is a single
+USD-denominated form; this codebase has no real historical FX-rate
+reconstruction to correctly consolidate a merchant's multi-currency
+activity into one figure for a past year, so a merchant with genuine
+multi-currency activity gets the other currencies logged as an
+explicit, visible gap (`TaxForm1099KService`'s own warning log) rather
+than silently dropped or incorrectly summed across currencies.
