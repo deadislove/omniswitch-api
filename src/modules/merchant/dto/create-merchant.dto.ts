@@ -64,7 +64,7 @@ export class CreateMerchantDto {
   @ApiPropertyOptional({
     example: 'US',
     description:
-      'ISO 3166-1 alpha-2 country of tax residency/registration, if known at onboarding time — distinct from the CONNECTED-only KYB country, see MerchantEntity.country\'s own docblock.',
+      "ISO 3166-1 alpha-2 country of tax residency/registration, if known at onboarding time — distinct from the CONNECTED-only KYB country, see MerchantEntity.country's own docblock.",
   })
   @IsOptional()
   @IsString()
@@ -930,7 +930,7 @@ export class MerchantSummaryDto {
   @ApiPropertyOptional({
     example: 'US',
     nullable: true,
-    description: 'ISO 3166-1 alpha-2 tax-residency country, if known — see MerchantEntity.country\'s own docblock',
+    description: "ISO 3166-1 alpha-2 tax-residency country, if known — see MerchantEntity.country's own docblock",
   })
   country?: string | null;
 

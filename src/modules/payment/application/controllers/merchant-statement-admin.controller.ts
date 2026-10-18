@@ -5,7 +5,11 @@ import { RolesGuard } from '../../../../shared/guards/roles.guard';
 import { Roles, UserRole } from '../../../../shared/decorators/roles.decorator';
 import { MerchantStatementService } from '../services/merchant-statement.service';
 import { MerchantStatementPort } from '../../ports/outbound/merchant-statement.port';
-import { GenerateMerchantStatementDto, MerchantStatementResponseDto, toMerchantStatementResponseDto } from '../dto/merchant-statement.dto';
+import {
+  GenerateMerchantStatementDto,
+  MerchantStatementResponseDto,
+  toMerchantStatementResponseDto,
+} from '../dto/merchant-statement.dto';
 
 const toResponse = toMerchantStatementResponseDto;
 
@@ -39,7 +43,8 @@ export class MerchantStatementAdminController {
   @Post('generate')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Generate a statement for a merchant/period on demand — idempotent, returns the existing one if already generated',
+    summary:
+      'Generate a statement for a merchant/period on demand — idempotent, returns the existing one if already generated',
   })
   @ApiResponse({ status: 200, type: MerchantStatementResponseDto })
   async generate(

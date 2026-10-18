@@ -21,7 +21,11 @@ export abstract class MerchantStatementPort {
    * rather than recomputed, same "a closed period's history doesn't
    * change" posture as that service's own docblock.
    */
-  abstract findByMerchantAndPeriod(merchantId: string, periodStart: Date, periodEnd: Date): Promise<MerchantStatement | null>;
+  abstract findByMerchantAndPeriod(
+    merchantId: string,
+    periodStart: Date,
+    periodEnd: Date,
+  ): Promise<MerchantStatement | null>;
 
   abstract findByMerchantId(merchantId: string, filter?: FindStatementsFilter): Promise<MerchantStatement[]>;
 }

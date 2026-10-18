@@ -12,10 +12,13 @@ import { BnplOrderEntity } from '../src/modules/payment/adapters/persistence/ent
  * docs/business-domain/bnpl.md for the full lifecycle/settlement-shape
  * writeup. Exercised through the real HTTP surface against
  * scripts/mock-psp/server.js's `/klarna/...` routes; `klarnareject`/
- * `klarnacapturefail`/`klarnarefundfail` anywhere in `description`
- * (create) or `reason` (refund) are this mock's decline markers — same
- * "magic substring" convention as every other mocked PSP integration in
- * this codebase.
+ * `klarnacapturefail`/`klarnarefundfail` anywhere in the order's
+ * `description` *at creation time* are this mock's decline markers —
+ * same "magic substring" convention as every other mocked PSP
+ * integration in this codebase. All three live in `description` only:
+ * capture/refund failures are carried into the generated `order_id` at
+ * creation (see mock-psp/server.js), not read from the refund call's
+ * own `reason`.
  */
 describe('BNPL (Klarna) orders (e2e)', () => {
   let app: INestApplication;
@@ -197,7 +200,7 @@ describe('BNPL (Klarna) orders (e2e)', () => {
     expect(getRes.body.status).toBe('CAPTURED');
   });
 
-  it('a merchant cannot read another merchant\'s BNPL order', async () => {
+  it("a merchant cannot read another merchant's BNPL order", async () => {
     const owner = await seedMerchant(app, { merchantId: uniqueId('bnpl-owner') });
     const ownerToken = await login(app, owner.apiKeyId, owner.apiKeySecret);
     const intruder = await seedMerchant(app, { merchantId: uniqueId('bnpl-intruder') });
@@ -220,9 +223,7 @@ describe('BNPL (Klarna) orders (e2e)', () => {
     const idempotencyKey = randomUUID();
     const body = { amount: 80, currency: 'USD' };
 
-    const first = await signedRequest(merchant, token, 'post', '/api/v1/bnpl/orders', body, idempotencyKey).expect(
-      201,
-    );
+    const first = await signedRequest(merchant, token, 'post', '/api/v1/bnpl/orders', body, idempotencyKey).expect(201);
     const second = await signedRequest(merchant, token, 'post', '/api/v1/bnpl/orders', body, idempotencyKey).expect(
       201,
     );

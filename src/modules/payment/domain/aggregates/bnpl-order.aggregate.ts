@@ -126,7 +126,7 @@ export class BnplOrder {
     this._failureReason = reason;
   }
 
-  /** The point real Klarna actually pays the merchant — see `LedgerOutboxEvent.createBnplCaptureEntries()`, written in the same transaction as this status change by `BnplService.captureOrder()`. */
+  /** The point real Klarna actually pays the merchant — see `LedgerOutboxEvent.createBnplCaptureEntries()`, written in the same transaction as this status change by `BnplService.createOrder()`. */
   capture(providerCaptureId: string, now: Date): void {
     if (this._status !== 'AUTHORIZED') {
       throw new Error(`BNPL order ${this._id} is ${this._status}, cannot capture`);

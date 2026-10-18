@@ -71,7 +71,11 @@ export class MerchantStatementService {
    * `netSettlementMinorUnits` is the literal, always-reconciling sum of
    * every `MERCHANT` entry regardless of event shape.
    */
-  async computeBreakdowns(merchantId: string, periodStart: Date, periodEnd: Date): Promise<StatementCurrencyBreakdown[]> {
+  async computeBreakdowns(
+    merchantId: string,
+    periodStart: Date,
+    periodEnd: Date,
+  ): Promise<StatementCurrencyBreakdown[]> {
     const events = await this.ledgerOutbox.findCreatedBetween(periodStart, periodEnd);
     const byCurrency = new Map<string, MutableBreakdown>();
 
@@ -226,7 +230,11 @@ export class MerchantStatementService {
             skipped++;
             continue;
           }
-          const existing = await this.statementPort.findByMerchantAndPeriod(merchant.merchantId, periodStart, periodEnd);
+          const existing = await this.statementPort.findByMerchantAndPeriod(
+            merchant.merchantId,
+            periodStart,
+            periodEnd,
+          );
           if (existing) {
             skipped++;
             continue;

@@ -40,7 +40,11 @@ export class MerchantStatementTypeOrmRepository implements MerchantStatementPort
     return entity ? this.toDomain(entity) : null;
   }
 
-  async findByMerchantAndPeriod(merchantId: string, periodStart: Date, periodEnd: Date): Promise<MerchantStatement | null> {
+  async findByMerchantAndPeriod(
+    merchantId: string,
+    periodStart: Date,
+    periodEnd: Date,
+  ): Promise<MerchantStatement | null> {
     // Raw Date params are safe here (unlike dispute-typeorm.repository.ts's
     // countByMerchantSince()) — period_start/period_end are `timestamptz`
     // columns; the naive-TIMESTAMP timezone-shift bug that forces

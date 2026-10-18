@@ -92,7 +92,8 @@ export class TaxForm1099KService {
     }
 
     const grossWithSplits = (b: (typeof breakdowns)[number]) =>
-      b.grossVolume.amountMinorUnits + (b.marketplaceSplitProceedsMinorUnits > 0n ? b.marketplaceSplitProceedsMinorUnits : 0n);
+      b.grossVolume.amountMinorUnits +
+      (b.marketplaceSplitProceedsMinorUnits > 0n ? b.marketplaceSplitProceedsMinorUnits : 0n);
 
     const dominant = [...breakdowns].sort((a, b) => {
       const diff = grossWithSplits(b) - grossWithSplits(a);
@@ -118,7 +119,9 @@ export class TaxForm1099KService {
       const monthEnd = new Date(Date.UTC(taxYear, month + 1, 1));
       const monthBreakdowns = await this.merchantStatementService.computeBreakdowns(merchantId, monthStart, monthEnd);
       const monthBreakdown = monthBreakdowns.find((b) => b.currencyCode === currencyCode);
-      monthlyAmounts.push(monthBreakdown ? Money.fromMinorUnits(grossWithSplits(monthBreakdown), currencyCode) : Money.zero(currencyCode));
+      monthlyAmounts.push(
+        monthBreakdown ? Money.fromMinorUnits(grossWithSplits(monthBreakdown), currencyCode) : Money.zero(currencyCode),
+      );
     }
 
     // See this class's own docblock: the configured threshold is a plain

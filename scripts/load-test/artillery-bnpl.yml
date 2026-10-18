@@ -1,0 +1,33 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    - duration: 30
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 60
+      arrivalRate: 5
+      rampTo: 40
+      name: "Ramp up"
+    - duration: 120
+      arrivalRate: 40
+      name: "Sustained load"
+  processor: "./bnpl-processor.js"
+  http:
+    timeout: 10
+
+scenarios:
+  - name: "BNPL create+capture"
+    weight: 90
+    flow:
+      - post:
+          url: "/api/v1/bnpl/orders"
+          beforeRequest: "signBnplCreate"
+          capture:
+            - json: "$.id"
+              as: "orderId"
+
+  - name: "Health check"
+    weight: 10
+    flow:
+      - get:
+          url: "/health/ready"

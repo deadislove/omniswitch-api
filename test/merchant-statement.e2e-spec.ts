@@ -141,7 +141,7 @@ describe('Merchant statements (e2e)', () => {
     expect(usd.chargebackCount).toBe(0);
   });
 
-  it("a partial refund reduces net settlement without changing the already-booked grossVolume/platformFee", async () => {
+  it('a partial refund reduces net settlement without changing the already-booked grossVolume/platformFee', async () => {
     const merchant = await seedMerchant(app, { merchantId: uniqueId('stmt-refund') });
     const token = await login(app, merchant.apiKeyId, merchant.apiKeySecret);
     const periodStart = new Date(Date.now() - 5000);
@@ -210,7 +210,7 @@ describe('Merchant statements (e2e)', () => {
     expect(second.breakdowns[0].grossVolume).toBeCloseTo(50, 5);
   });
 
-  it('a merchant can list and fetch their own statements but not another merchant\'s', async () => {
+  it("a merchant can list and fetch their own statements but not another merchant's", async () => {
     const owner = await seedMerchant(app, { merchantId: uniqueId('stmt-owner') });
     const ownerToken = await login(app, owner.apiKeyId, owner.apiKeySecret);
     const intruder = await seedMerchant(app, { merchantId: uniqueId('stmt-intruder') });

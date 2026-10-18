@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Param, Body, Query, UseGuards, HttpCode, HttpStatus, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../shared/guards/roles.guard';
@@ -30,7 +41,10 @@ export class MerchantTaxForm1099KAdminController {
   @Get()
   @ApiOperation({ summary: "List a merchant's 1099-K forms, most recent tax year first" })
   @ApiResponse({ status: 200, type: [MerchantTaxForm1099KResponseDto] })
-  async list(@Param('id') merchantId: string, @Query('limit') limit?: string): Promise<MerchantTaxForm1099KResponseDto[]> {
+  async list(
+    @Param('id') merchantId: string,
+    @Query('limit') limit?: string,
+  ): Promise<MerchantTaxForm1099KResponseDto[]> {
     const forms = await this.taxFormPort.findByMerchantId(merchantId, { limit: limit ? Number(limit) : undefined });
     return forms.map(toMerchantTaxForm1099KResponseDto);
   }

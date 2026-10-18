@@ -81,9 +81,9 @@ describe('1099-K tax forms (e2e)', () => {
     await setCountry(merchant.merchantId, 'US');
 
     const payment = await chargeImmediate(merchant, token, 1000);
-    await signedRequest(merchant, token, 'post', `/api/v1/payments/${payment.paymentId}/refund`, { amount: 200 }).expect(
-      200,
-    );
+    await signedRequest(merchant, token, 'post', `/api/v1/payments/${payment.paymentId}/refund`, {
+      amount: 200,
+    }).expect(200);
 
     const form = await generateTaxForm(merchant.merchantId, taxYear);
     expect(form.currencyCode).toBe('USD');

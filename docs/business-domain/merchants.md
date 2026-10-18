@@ -225,9 +225,9 @@ to file a report into it, beyond just deactivating the account quietly.
 
 **`POST /admin/merchants/:id/terminate-for-cause`** (`{ reasonCode,
 reason }`) is the one way to reach this state. `reasonCode` must be
-one of a real Mastercard MATCH reason code — Laundering, Excessive
-Chargebacks, Fraud Conviction, Bankrupt, Merchant Collusion, Illegal
-Transactions (`match-reason-code.ts` — an illustrative subset of
+one of a real Mastercard MATCH reason code's six values — Laundering,
+Excessive Chargebacks, Fraud Conviction, Bankrupt, Merchant Collusion,
+Illegal Transactions (`match-reason-code.ts` — an illustrative subset of
 Mastercard's published list, trimmed to the grounds this codebase's
 own existing signals can plausibly justify, rather than the full
 published taxonomy). `reason` is free text, required and audited, same

@@ -240,7 +240,11 @@ export class MerchantService {
    * operator can still force-generate for a specific merchant on demand
    * regardless of this field).
    */
-  async findActiveByCountryBatch(country: string, afterId: string | undefined, limit: number): Promise<MerchantEntity[]> {
+  async findActiveByCountryBatch(
+    country: string,
+    afterId: string | undefined,
+    limit: number,
+  ): Promise<MerchantEntity[]> {
     const queryRunner = this.dataSource.createQueryRunner('master');
     try {
       return await queryRunner.manager
@@ -557,6 +561,18 @@ export class MerchantService {
     return merchant;
   }
 
+  /** See MerchantEntity.country's own docblock for why this exists separately from kybCountry. */
+  async updateCountry(merchantId: string, country: string | null): Promise<MerchantEntity> {
+    const merchant = await this.getOrThrow(merchantId);
+    const previous = merchant.country ?? '(none)';
+    merchant.country = country ? country.toUpperCase() : null;
+    await this.merchantRepo.save(merchant);
+    this.logger.log(
+      `Tax-residency country for merchant ${merchantId} changed from ${previous} to ${merchant.country ?? '(none)'}`,
+    );
+    return merchant;
+  }
+
   /**
    * Derives industryRiskCategory from mccCode via mcc-risk-lookup.ts and
    * stores both — see MerchantEntity.industryRiskCategory's docblock for
@@ -565,16 +581,6 @@ export class MerchantService {
    * fields back to "no MCC on file" (industryRiskCategory reverts to
    * UNKNOWN, the same as a merchant that never had one set).
    */
-  /** See MerchantEntity.country's own docblock for why this exists separately from kybCountry. */
-  async updateCountry(merchantId: string, country: string | null): Promise<MerchantEntity> {
-    const merchant = await this.getOrThrow(merchantId);
-    const previous = merchant.country ?? '(none)';
-    merchant.country = country ? country.toUpperCase() : null;
-    await this.merchantRepo.save(merchant);
-    this.logger.log(`Tax-residency country for merchant ${merchantId} changed from ${previous} to ${merchant.country ?? '(none)'}`);
-    return merchant;
-  }
-
   async updateMccCode(merchantId: string, mccCode: string | null): Promise<MerchantEntity> {
     const merchant = await this.getOrThrow(merchantId);
     const previous = `${merchant.mccCode ?? '(none)'}/${merchant.industryRiskCategory}`;

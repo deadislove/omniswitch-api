@@ -108,6 +108,26 @@ that's silently hanging (not erroring, just never responding) wouldn't
 trip the breaker until it actually started throwing, which could take
 up to 2.5 minutes at 5 required failures.
 
+**Multi-MID routing: the next layer down, not modeled.** Everything
+above picks a PSP (Stripe vs. Adyen). A large merchant, or a PSP acting
+as a PayFac for many sub-merchants, often holds multiple Merchant IDs
+(MIDs) with that *same* underlying acquirer — spreading volume across
+MIDs for risk/concentration reasons (a card network can cap volume per
+MID; an issuer can flag an unusually large single-MID volume), or
+routing by card brand/BIN to whichever MID has the better-negotiated
+rate. That would be a second, nested routing decision underneath
+`SmartRoutingStrategy`'s own choice — *which* Stripe MID, once Stripe
+has already been picked. This codebase doesn't model it: each PSP
+adapter is configured with exactly one API key/merchant account
+(`STRIPE_SECRET_KEY`/`ADYEN_MERCHANT_ACCOUNT`), full stop. Deliberately
+not built rather than partially modeled — multi-MID routing only
+matters at a transaction volume this reference implementation has no
+realistic way to simulate meaningfully (the whole point is spreading
+*real* volume across *real* negotiated-rate tiers this project has no
+such tiers to spread across), and faking it would mean inventing a
+second routing decision with no real data behind it to make it feel
+like more than an arbitrary `switch` statement.
+
 ## Reconciliation
 
 The mechanisms above (double-entry validation, the outbox pattern —

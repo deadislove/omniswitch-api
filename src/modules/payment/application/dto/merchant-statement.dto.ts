@@ -23,26 +23,33 @@ export class StatementCurrencyBreakdownDto {
   @ApiProperty({
     example: 4299.5,
     description:
-      'Full charged amount before any fee, from this merchant\'s own direct charges only — see this field\'s own docblock in merchant-statement.aggregate.ts for why a marketplace split is excluded here rather than estimated.',
+      "Full charged amount before any fee, from this merchant's own direct charges only — see this field's own docblock in merchant-statement.aggregate.ts for why a marketplace split is excluded here rather than estimated.",
   })
   grossVolume: number;
 
   @ApiProperty({ example: 64.49, description: "This platform's own fee, from the same direct charges as grossVolume" })
   platformFee: number;
 
-  @ApiProperty({ example: 17.16, description: 'BNPL provider (Klarna) merchant fee — 0 for a merchant with no BNPL activity' })
+  @ApiProperty({
+    example: 17.16,
+    description: 'BNPL provider (Klarna) merchant fee — 0 for a merchant with no BNPL activity',
+  })
   providerFee: number;
 
   @ApiProperty({
     example: 129.99,
-    description: 'Reversals in the period — covers both ordinary refunds and lost-dispute reversals (both book through the same ledger path)',
+    description:
+      'Reversals in the period — covers both ordinary refunds and lost-dispute reversals (both book through the same ledger path)',
   })
   refundedAmount: number;
 
   @ApiProperty({ example: 1, description: 'Disputes that resolved LOST and were received in this period' })
   chargebackCount: number;
 
-  @ApiProperty({ example: 89.99, description: "Those same LOST disputes' amount — already reflected inside refundedAmount too" })
+  @ApiProperty({
+    example: 89.99,
+    description: "Those same LOST disputes' amount — already reflected inside refundedAmount too",
+  })
   chargebackAmount: number;
 
   @ApiProperty({
@@ -55,7 +62,7 @@ export class StatementCurrencyBreakdownDto {
   @ApiProperty({
     example: 4087.86,
     description:
-      "The literal net balance of every MERCHANT-type ledger entry for this merchant in the period, regardless of event shape — always reconciles against the real ledger by construction. Can be negative.",
+      'The literal net balance of every MERCHANT-type ledger entry for this merchant in the period, regardless of event shape — always reconciles against the real ledger by construction. Can be negative.',
   })
   netSettlement: number;
 }

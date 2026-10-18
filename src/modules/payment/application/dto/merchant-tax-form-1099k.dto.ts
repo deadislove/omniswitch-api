@@ -26,11 +26,14 @@ export class MerchantTaxForm1099KResponseDto {
   @ApiProperty({
     example: 84250.0,
     description:
-      'IRS Box 1a — gross amount of reportable payment transactions, NOT reduced by refunds/chargebacks (the real IRS rule). Includes this merchant\'s own marketplace-split-sourced credits.',
+      "IRS Box 1a — gross amount of reportable payment transactions, NOT reduced by refunds/chargebacks (the real IRS rule). Includes this merchant's own marketplace-split-sourced credits.",
   })
   grossAmount: number;
 
-  @ApiProperty({ example: 412, description: "IRS Box 1b-equivalent — this merchant's own direct charge count for the year" })
+  @ApiProperty({
+    example: 412,
+    description: "IRS Box 1b-equivalent — this merchant's own direct charge count for the year",
+  })
   transactionCount: number;
 
   @ApiProperty({
@@ -42,13 +45,15 @@ export class MerchantTaxForm1099KResponseDto {
 
   @ApiProperty({
     example: 600,
-    description: 'The threshold actually applied when this form was generated — recorded on the form itself so a later config change never retroactively changes a past result',
+    description:
+      'The threshold actually applied when this form was generated — recorded on the form itself so a later config change never retroactively changes a past result',
   })
   thresholdApplied: number;
 
   @ApiProperty({
     example: true,
-    description: 'Whether grossAmount met or exceeded thresholdApplied — illustrative only, never actually filed with the IRS',
+    description:
+      'Whether grossAmount met or exceeded thresholdApplied — illustrative only, never actually filed with the IRS',
   })
   reportable: boolean;
 

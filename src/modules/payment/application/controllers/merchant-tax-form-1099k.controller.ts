@@ -40,7 +40,11 @@ export class MerchantTaxForm1099KController {
   async getByYear(@Param('taxYear') taxYearParam: string, @Req() req: any): Promise<MerchantTaxForm1099KResponseDto> {
     const taxYear = Number(taxYearParam);
     if (!Number.isInteger(taxYear) || taxYear < 2000 || taxYear > 2100) {
-      throw new BadRequestException({ statusCode: 400, error: 'taxYear must be a 4-digit year', code: 'INVALID_TAX_YEAR' });
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'taxYear must be a 4-digit year',
+        code: 'INVALID_TAX_YEAR',
+      });
     }
     const merchantId = req.user?.merchantId;
     const form = await this.taxFormPort.findByMerchantAndYear(merchantId, taxYear);
