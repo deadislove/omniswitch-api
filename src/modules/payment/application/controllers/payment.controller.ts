@@ -18,6 +18,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiHeader, ApiResponse } from '@nestjs/swagger';
@@ -439,9 +440,10 @@ export class PaymentController {
   @Roles(UserRole.MERCHANT, UserRole.ADMIN, UserRole.READONLY)
   @ApiOperation({ summary: 'Get payment details by ID' })
   @ApiResponse({ status: 200, type: PaymentDetailResponseDto })
+  @ApiResponse({ status: 400, description: 'id is not a valid UUID' })
   @ApiResponse({ status: 403, description: 'This payment belongs to a different merchant' })
   @ApiResponse({ status: 404, description: 'Payment not found' })
-  async getPayment(@Param('id') id: string, @Req() req: any): Promise<PaymentDetailResponseDto> {
+  async getPayment(@Param('id', ParseUUIDPipe) id: string, @Req() req: any): Promise<PaymentDetailResponseDto> {
     const payment = await this.paymentRepository.findById(id);
     if (!payment) {
       throw new NotFoundException({ statusCode: 404, error: 'Payment not found', code: 'PAYMENT_NOT_FOUND' });

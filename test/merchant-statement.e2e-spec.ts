@@ -237,4 +237,17 @@ describe('Merchant statements (e2e)', () => {
       .set('Authorization', `Bearer ${intruderToken}`)
       .expect(403);
   });
+
+  it('rejects a generate request whose periodEnd is before periodStart, rather than silently returning an empty statement', async () => {
+    const merchant = await seedMerchant(app, { merchantId: uniqueId('stmt-badrange') });
+    const periodStart = new Date(Date.now() + 5000);
+    const periodEnd = new Date(Date.now() - 5000);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/admin/merchants/${merchant.merchantId}/statements/generate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString() })
+      .expect(400);
+    expect(res.body.code).toBe('INVALID_PERIOD_RANGE');
+  });
 });

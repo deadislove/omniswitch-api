@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomUUID as uuidv4 } from 'crypto';
 import { LedgerOutboxPort } from '../../ports/outbound/ledger-outbox.port';
@@ -76,6 +76,17 @@ export class MerchantStatementService {
     periodStart: Date,
     periodEnd: Date,
   ): Promise<StatementCurrencyBreakdown[]> {
+    // A caller-supplied range reaches this far before any ledger query
+    // runs — `findCreatedBetween()` would otherwise just silently return
+    // nothing for an inverted range, reading as "no activity" rather than
+    // "the request itself didn't make sense."
+    if (periodEnd <= periodStart) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'periodEnd must be after periodStart',
+        code: 'INVALID_PERIOD_RANGE',
+      });
+    }
     const events = await this.ledgerOutbox.findCreatedBetween(periodStart, periodEnd);
     const byCurrency = new Map<string, MutableBreakdown>();
 

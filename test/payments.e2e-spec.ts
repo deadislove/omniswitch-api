@@ -504,4 +504,22 @@ describe('Payments: charge / refund / capture / cancel (e2e)', () => {
         .expect(403);
     });
   });
+
+  describe('GET /payments/:id', () => {
+    it('a malformed (non-UUID) id is rejected with a clean 400, not a raw 500', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/payments/not-a-real-uuid')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+      expect(res.body.statusCode).toBe(400);
+    });
+
+    it('a well-formed but nonexistent id returns a clean 404', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/payments/00000000-0000-0000-0000-000000000000')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+      expect(res.body.code).toBe('PAYMENT_NOT_FOUND');
+    });
+  });
 });
